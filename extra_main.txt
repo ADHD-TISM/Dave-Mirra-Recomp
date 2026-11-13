@@ -1,0 +1,44 @@
+80056af4  # libetc setjmp return point used as HookEntryInt target (trapIntr)
+8004c2a4 # ra=8004c274
+800635c4 # ra=80062cb8
+8003d89c # ra=80061c60
+80066694 # ra=800634b0
+800380fc # ra=80037758
+800381e4 # ra=80037758
+800399fc # ra=80063480
+80068954 # ra=80061dd4
+8001e5cc # ra=8001e96c
+80033c0c # ra=8003377c
+80017790 # ra=800bf820
+8001779c # ra=800c1afc
+80017924 # ra=800c1760
+80017954 # ra=800c17a0
+80017b68 # ra=800c17a8
+80017b74 # ra=800c17b4
+80017b80 # ra=800c17c0
+800178f4 # ra=800c1814
+80017984 # ra=800c1820
+8001799c # ra=800c182c
+80017804 # ra=800c1a20
+800178e4 # ra=800c1a2c
+800178ec # ra=800c1a38
+80039fb8 # ra=8005c570
+8003aa40 # ra=80054c1c
+80017770 # ra=800bf820
+800340f0 # ra=800339e4
+80025388 # ra=80025360
+8001bf50 # ra=8001e058
+8001c1ec # ra=8001e058
+8001cc58 # ra=8001dc2c
+8001cd14 # ra=8001dc2c
+800504d0 # ra=8004f7ac
+80060334 # ra=80056c40
+80066fa4 # memory card event callback
+80066fb8 # memory card event callback
+80066fcc # memory card event callback
+80066fe0 # memory card event callback
+80066ff4 # memory card event callback
+80067008 # memory card event callback
+8006701c # memory card event callback
+80067030 # memory card event callback
+80067850 # memory card event callback
