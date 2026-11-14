@@ -5,6 +5,7 @@
 set -e
 D=${1:-../disc}
 cd "$(dirname "$0")/.."
+[ -f "$D/SLUS_010.26" ] || { echo "not found: $D/SLUS_010.26"; exit 1; }
 rm -rf gen; mkdir -p gen
 : > gen/xref_main.txt
 prev=-1

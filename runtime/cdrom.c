@@ -86,10 +86,11 @@ static void xa_decode(const u8 *raw) {
     }
     if (!stereo) { memcpy(pcm[1], pcm[0], sizeof(s16) * (size_t)n[0]); n[1] = n[0]; }
     /* linear resample to 44100 */
-    static s16 out[2 * 6000]; int o = 0;
+    static s16 out[2 * 9600]; int o = 0;
     double step = (double)rate / 44100.0;
     int count = n[0];
-    while (xa_phase < count && o < 6000) {
+    if (xa_phase < 0) xa_phase = 0;
+    while (xa_phase < count && o < 9600) {
         int i = (int)xa_phase; double f = xa_phase - i;
         for (int ch = 0; ch < 2; ch++) {
             s16 a = i == 0 ? xa_last[ch] : pcm[ch][i - 1], b = pcm[ch][i];

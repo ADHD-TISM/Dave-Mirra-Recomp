@@ -227,7 +227,9 @@ static void mc_flush_events(void) {
 }
 static void mc_sum(u8 *f) { u8 x = 0; for (int i = 0; i < 127; i++) x ^= f[i]; f[127] = x; }
 __declspec(dllimport) int __stdcall MoveFileExA(const char *from, const char *to, unsigned long flags);
+static int mc_nosave[2];   /* set when an unrecognised card file could not be moved aside */
 static void mc_save(void) {
+    if (mc_nosave[mc_slot]) return;
     /* write a temporary file, then replace the card image, so a failed or interrupted write cannot destroy the old one */
     static int warned;
     char tmp[300]; snprintf(tmp, sizeof tmp, "%s.tmp", g_memcard_path[mc_slot]);
@@ -251,7 +253,16 @@ static void mc_open_image(void) {
     FILE *f = fopen(g_memcard_path[mc_slot], "rb");
     size_t n = f ? fread(mc, 1, MC_SIZE, f) : 0;
     if (f) fclose(f);
-    if (n != MC_SIZE || mc[0] != 'M' || mc[1] != 'C') mc_format();
+    if (n != MC_SIZE || mc[0] != 'M' || mc[1] != 'C') {
+        if (f) {   /* a file we do not recognise: keep it, never overwrite it with a blank card */
+            char bad[300]; snprintf(bad, sizeof bad, "%s.bad", g_memcard_path[mc_slot]);
+            if (MoveFileExA(g_memcard_path[mc_slot], bad, 0))
+                fprintf(stderr, "[card] %s is not a 128 KB memory card image; kept as %s, started a blank card\n", g_memcard_path[mc_slot], bad);
+            else
+                fprintf(stderr, "[card] %s is not a 128 KB memory card image and could not be moved aside; card will not be saved\n", g_memcard_path[mc_slot]), mc_nosave[mc_slot] = 1;
+        }
+        mc_format();
+    }
 }
 static u8 *mc_ent(int i) { return mc + (i + 1) * 128; }               /* directory entry 0..14 */
 static u32 mc_ent_state(int i) { u8 *e = mc_ent(i); return e[0] | (u32)e[1] << 8 | (u32)e[2] << 16 | (u32)e[3] << 24; }

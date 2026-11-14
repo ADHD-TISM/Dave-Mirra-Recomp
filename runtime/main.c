@@ -22,8 +22,10 @@ static int iso_find_root(const char *name, u32 *lba, u32 *size) {
     for (u32 s = 0; s < (rs + 2047) / 2048; s++) {
         u8 d[2048]; memcpy(d, sector_data(rl + s), 2048);
         for (u32 p = 0; p < 2048 && d[p];) {
-            u8 len = d[p], nl = d[p + 32];
-            if (len < 34 || p + len > 2048 || nl > 63 || 33u + nl > len) break;   /* malformed record */
+            u8 len = d[p], nl;
+            if (len < 34 || p + len > 2048) break;   /* malformed record */
+            nl = d[p + 32];
+            if (nl > 63 || 33u + nl > len) break;
             char n[64]; memcpy(n, d + p + 33, nl); n[nl] = 0;
             char *semi = strchr(n, ';'); if (semi) *semi = 0;
             if (!_stricmp(n, name)) { *lba = le32(d + p + 2); *size = le32(d + p + 10); return 1; }
