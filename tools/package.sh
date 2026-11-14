@@ -57,4 +57,9 @@ memcard1.mcd / memcard2.mcd (your saves) in this folder.
 This exe contains code translated from your own disc. Keep it for your own use.
 EOF
 rm -rf "$DISC"
+# desktop shortcut that starts in the output folder; skip with DM_SHORTCUT=0, replace an existing one with DM_SHORTCUT=force
+if [ "${DM_SHORTCUT:-1}" != 0 ] && command -v powershell > /dev/null 2>&1; then
+  FORCE=; [ "$DM_SHORTCUT" = force ] && FORCE=-Force
+  powershell -NoProfile -ExecutionPolicy Bypass -File "$ROOT/tools/make_shortcut.ps1" "$OUT/dmrecomp.exe" $FORCE || echo "(could not create the desktop shortcut)"
+fi
 echo "done: $OUT"

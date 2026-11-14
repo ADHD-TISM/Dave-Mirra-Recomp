@@ -116,9 +116,10 @@ void irq_raise(int n) { i_stat |= 1u << n; sched_kick(); }
 
 extern int g_cpu_assist;
 extern unsigned g_stat_flips;
+unsigned g_flip_total;   /* display flips since start; the stall watchdog watches it */
 static unsigned vb_since_flip;
 void cpu_flip(void) {
-    g_stat_flips++;
+    g_stat_flips++; g_flip_total++;
     vb_since_flip = 0;
     g_cpi = 2;
 }

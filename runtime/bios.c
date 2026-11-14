@@ -423,9 +423,25 @@ static void do_exec(u32 hdr, u32 p1, u32 p2) {
 /* -------------------------------------------------------------- A0 ----- */
 static u32 rand_seed = 0x24040001;
 
+/* the last few BIOS calls, for the stall watchdog's report */
+static struct { char tbl; u32 fn, a0, a1, a2, ra; } bios_ring[16]; static unsigned bios_ring_n;
+static void bios_note(char tbl, u32 fn) {
+    unsigned i = bios_ring_n++ & 15;
+    bios_ring[i].tbl = tbl; bios_ring[i].fn = fn; bios_ring[i].a0 = A0; bios_ring[i].a1 = A1; bios_ring[i].a2 = A2; bios_ring[i].ra = RA;
+}
+void bios_report_stall(void) {
+    fprintf(stderr, "[watchdog] card events queued=%d, last BIOS calls (oldest first):\n", mc_ev_n);
+    for (unsigned k = 0; k < 16; k++) {
+        unsigned i = (bios_ring_n + k) & 15;
+        if (!bios_ring[i].tbl) continue;
+        fprintf(stderr, "[watchdog]   %c(%02x) a0=%08x a1=%08x a2=%08x ra=%08x\n", bios_ring[i].tbl, bios_ring[i].fn, bios_ring[i].a0, bios_ring[i].a1, bios_ring[i].a2, bios_ring[i].ra);
+    }
+}
+
 void bios_call_a(void) {
     u32 fn = R[9] & 0xff;
     char s1[256];
+    bios_note('A', fn);
     if (g_log_bios) fprintf(stderr, "[bios] A(%02x) a0=%08x a1=%08x a2=%08x ra=%08x\n", fn, A0, A1, A2, RA);
     switch (fn) {
     case 0x0e: V0 = (s32)A0 < 0 ? -(s32)A0 : A0; break;
@@ -518,6 +534,7 @@ static void init_timer(u32 t, u32 reload, u32 flags) {
 
 void bios_call_b(void) {
     u32 fn = R[9] & 0xff;
+    if (fn != 0x0b && fn != 0x17) bios_note('B', fn);
     if (g_log_bios && fn != 0x0b) fprintf(stderr, "[bios] B(%02x) a0=%08x a1=%08x a2=%08x ra=%08x\n", fn, A0, A1, A2, RA);
     switch (fn) {
     case 0x00: V0 = hmalloc(A0); break;
@@ -593,6 +610,7 @@ void bios_call_b(void) {
 /* -------------------------------------------------------------- C0 ----- */
 void bios_call_c(void) {
     u32 fn = R[9] & 0xff;
+    bios_note('C', fn);
     if (g_log_bios) fprintf(stderr, "[bios] C(%02x) a0=%08x a1=%08x ra=%08x\n", fn, A0, A1, RA);
     switch (fn) {
     case 0x02: {

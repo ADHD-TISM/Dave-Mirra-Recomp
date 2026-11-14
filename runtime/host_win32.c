@@ -524,6 +524,19 @@ void host_frame(void) {
     if (t_last_exit != 0) t_guest += t_enter - t_last_exit;
     frame_no++;
     debug_frame(frame_no);
+    {   /* stall watchdog: no flips, movie frames or disc reads for 10 s means the game is stuck (a long load or movie still flips or finishes sooner) */
+        extern unsigned g_flip_total;
+        static unsigned last_flips, still;
+        unsigned prog = g_flip_total + g_stat_mdec + g_stat_sectors;   /* flips, movie frames and disc reads all count as progress */
+        if (prog != last_flips) { last_flips = prog; still = 0; }
+        else if (++still % 600 == 0) {
+            fprintf(stderr, "[watchdog] no flips, movie frames or disc reads for %u s: ra=%08x sp=%08x sr=%08x istat=%03x imask=%03x\n", still / 60, cpu.r[31], cpu.r[29], cpu.sr, i_stat, i_mask);
+            fprintf(stderr, "[watchdog] guest return addresses on the stack:");
+            int k = 0; for (u32 sp = cpu.r[29]; sp < 0x80200000u && k < 24; sp += 4) { u32 w = mr32(sp); if (w >= 0x80010000u && w < 0x80200000u && !(w & 3)) { fprintf(stderr, " %08x", w); k++; } }
+            fprintf(stderr, "\n");
+            bios_report_stall();
+        }
+    }
     if (g_stats && frame_no % 60 == 0) { fprintf(stderr, "[time] guest=%.0fms host=%.0fms per 60 frames\n", t_guest, t_host); t_guest = t_host = 0; }
     if (g_stats && frame_no % 60 == 0) {
         fprintf(stderr, "[stats] t=%us mdec=%u sectors=%u prims=%u flips=%u ra=%08x sp=%08x exc=%d sr=%08x istat=%03x imask=%03x\n", frame_no / 60, g_stat_mdec, g_stat_sectors, g_stat_prims, g_stat_flips, cpu.r[31], cpu.r[29], bios_in_exception, cpu.sr, i_stat, i_mask);
