@@ -1,6 +1,7 @@
 /* High-level emulation of the PS1 kernel (A0/B0/C0 tables, syscalls,
  * exception entry). No BIOS ROM is needed. */
 #include "hw.h"
+#include <errno.h>
 #include <setjmp.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -255,11 +256,21 @@ static void mc_open_image(void) {
     if (f) fclose(f);
     if (n != MC_SIZE || mc[0] != 'M' || mc[1] != 'C') {
         if (f) {   /* a file we do not recognise: keep it, never overwrite it with a blank card */
-            char bad[300]; snprintf(bad, sizeof bad, "%s.bad", g_memcard_path[mc_slot]);
-            if (MoveFileExA(g_memcard_path[mc_slot], bad, 0))
+            char bad[300]; int moved = 0;
+            for (int k = 0; k < 100 && !moved; k++) {   /* .bad, .bad1, .bad2 ... so an earlier .bad is never replaced */
+                if (k) snprintf(bad, sizeof bad, "%s.bad%d", g_memcard_path[mc_slot], k);
+                else snprintf(bad, sizeof bad, "%s.bad", g_memcard_path[mc_slot]);
+                moved = MoveFileExA(g_memcard_path[mc_slot], bad, 0);   /* flags 0: fails rather than replacing */
+            }
+            if (moved) {
                 fprintf(stderr, "[card] %s is not a 128 KB memory card image; kept as %s, started a blank card\n", g_memcard_path[mc_slot], bad);
-            else
-                fprintf(stderr, "[card] %s is not a 128 KB memory card image and could not be moved aside; card will not be saved\n", g_memcard_path[mc_slot]), mc_nosave[mc_slot] = 1;
+            } else {
+                fprintf(stderr, "[card] %s is not a 128 KB memory card image and could not be moved aside; card will not be saved\n", g_memcard_path[mc_slot]);
+                mc_nosave[mc_slot] = 1;
+            }
+        } else if (errno != ENOENT) {   /* exists but cannot be read: do not replace what we could not look at */
+            fprintf(stderr, "[card] cannot read %s (error %d); card will not be saved\n", g_memcard_path[mc_slot], errno);
+            mc_nosave[mc_slot] = 1;
         }
         mc_format();
     }

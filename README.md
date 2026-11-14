@@ -71,7 +71,9 @@ and drives the motors itself. It never switches the pads to analog mode, so the
 left stick acts as the d-pad.
 
 Memory card slots 1 and 2 are `memcard1.mcd` and `memcard2.mcd` (standard
-128 KB card images) in the working directory.
+128 KB card images) in the working directory. A file there that is not a card
+image is never overwritten: it is renamed to `memcard1.mcd.bad` (or `.bad1`,
+`.bad2`, ...) and a blank card is started.
 
 Not available: save states (recompiled code runs on the host call stack, which
 cannot be snapshotted).

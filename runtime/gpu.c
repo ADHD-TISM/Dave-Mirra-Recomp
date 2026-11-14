@@ -395,6 +395,7 @@ static void exec_cmd(void) {
         u16 col = (u16)(((c >> 3) & 31) | (((c >> 11) & 31) << 5) | (((c >> 19) & 31) << 10));
         int x = fifo[1] & 0x3f0, y = (fifo[1] >> 16) & 0x1ff;
         int ww = ((fifo[2] & 0x3ff) + 15) & ~15, hh = (fifo[2] >> 16) & 0x1ff;
+        hi_flush();   /* queued polygons sample textures from vram: draw them before it changes */
         for (int yy = 0; yy < hh; yy++) for (int xx = 0; xx < ww; xx++) VR(x + xx, y + yy) = col;
         if (HS > 1) { Cmd *k = hi_cmd(C_FILL); k->x = x; k->y = y; k->w = ww; k->h = hh; k->col = col; }
         return;
@@ -410,12 +411,12 @@ static void exec_cmd(void) {
     if (op >= 0x80 && op < 0xa0) {
         int sx = fifo[1] & 0x3ff, sy = (fifo[1] >> 16) & 0x1ff, dx = fifo[2] & 0x3ff, dy = (fifo[2] >> 16) & 0x1ff;
         int ww = ((fifo[3] - 1) & 0x3ff) + 1, hh = (((fifo[3] >> 16) - 1) & 0x1ff) + 1;
+        hi_flush();   /* before vram changes: queued polygons still need the old texture data */
         for (int yy = 0; yy < hh; yy++) for (int xx = 0; xx < ww; xx++) {
             u16 s = VR(sx + xx, sy + yy); u16 *d = &VR(dx + xx, dy + yy);
             if (g.check_mask && (*d & 0x8000)) continue;
             *d = s | (g.set_mask ? 0x8000 : 0);
         }
-        hi_flush();
         if (HS > 1) for (int yy = 0; yy < hh * HS; yy++) for (int xx = 0; xx < ww * HS; xx++) {
             u16 s = HV(sx * HS + xx, sy * HS + yy); u16 *d = &HV(dx * HS + xx, dy * HS + yy);
             if (g.check_mask && (*d & 0x8000)) continue;
@@ -427,6 +428,7 @@ static void exec_cmd(void) {
         xfer_in.x = fifo[1] & 0x3ff; xfer_in.y = (fifo[1] >> 16) & 0x1ff;
         xfer_in.w = ((fifo[2] - 1) & 0x3ff) + 1; xfer_in.h = (((fifo[2] >> 16) - 1) & 0x1ff) + 1;
         xfer_in.cx = xfer_in.cy = 0; xfer_in.active = 1;
+        hi_flush();   /* the upload rewrites vram pixel by pixel: draw queued polygons that sample it first */
         return;
     }
     if (op >= 0xc0 && op < 0xe0) {
