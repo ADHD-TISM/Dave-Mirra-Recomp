@@ -87,6 +87,11 @@ extracts the disc, regenerates `gen/`, builds, and writes `dist/` (or
 ship with Windows. It contains code translated from your disc, so keep it for
 your own use.
 
+If the game stops making progress (no display flips, movie frames or disc reads
+for 10 seconds), the console window prints a `[watchdog]` report: the guest's
+return addresses and the last BIOS calls. Leave the window open and send it along
+with a bug report.
+
 Test options: `--shot-window` (screenshots show the window contents instead of
 the internal picture), `--stats`, `--log-bios`, `--log-sio`, `--turbo`, `--auto-start N`
 (press Start every N frames until the script begins), `--shot-every N` (PNG every
