@@ -49,6 +49,7 @@ the original console picture; delete the file to get them back.
 | `fullscreen` | `0`, `1` | F11 or Alt+Enter |
 | `window_size` | `auto` (960x720) or `WxH` | |
 | `fullscreen_size` | `native` or `WxH`: switches the display to that mode | |
+| `widescreen` | `off`, `16:9`, `16:10`, `21:9` (experimental) | F10 |
 | `upscale` | `off`, `fsr` AMD FidelityFX Super Resolution 1 | F9 |
 | `fsr_sharpness` | `0`-`100`, how much sharpening FSR adds | |
 | `cpu_assist` | `1` hold 30 fps, `0` console timing | |
@@ -62,6 +63,10 @@ the original console picture; delete the file to get them back.
 Command line: `--scale N`, `--fullscreen`, `--console-cpu`, and
 `--set name=value` for any setting. Hotkey changes are not written back to the
 file.
+
+`widescreen` (experimental) squeezes the game's 3D projection horizontally and stretches the picture to the wider shape, so 3D keeps its
+proportions and the sides show more of the scene. It applies only while 3D is being drawn; menus stay 4:3. Text and other 2D elements drawn over a 3D
+scene (the HUD, pause and finish menus) are stretched wide, and anything the game itself leaves out beyond its normal view can pop in at the edges.
 
 `upscale = fsr` runs the picture through FSR 1 (edge-directed upscaling plus sharpening, as two OpenGL shaders) when the window is 
 larger than the game's internal picture; if the graphics driver lacks the needed OpenGL features it falls back to the plain picture. 

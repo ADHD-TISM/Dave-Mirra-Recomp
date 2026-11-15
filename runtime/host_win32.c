@@ -59,6 +59,9 @@ static int key(int vk) { return vk && (GetAsyncKeyState(vk) & 0x8000) != 0; }
 int g_fullscreen, g_integer_scale, g_filter, g_aspect;   /* filter: 0 nearest, 1 smooth; aspect: 0 = 4:3, 1 = stretch */
 int g_upscale, g_fsr_sharp = 80;                          /* upscale: 0 = plain, 1 = FSR 1; sharpness 0..100 */
 static int win_w = 960, win_h = 720;                      /* window_size */
+extern int g_ws_kq; extern unsigned g_gte_rtp;
+static double ws_ratio;   /* widescreen: 0 = off, else the width/height of the picture */
+static int ws_on;        /* the current frames are 3D, so the wide shape applies */
 static int fs_w, fs_h;                                    /* fullscreen_size; 0 = the desktop's own resolution */
 extern int g_cpu_assist;
 /* two keys per pad button, indexed by the pad's button bit */
@@ -118,6 +121,13 @@ int host_set_option(const char *name, const char *val) {
         if (fs) { fs_w = a; fs_h = b; } else { win_w = a; win_h = b; }
         return 1;
     }
+    if (!_stricmp(name, "widescreen")) {
+        int a, b;
+        if (!_stricmp(val, "off")) ws_ratio = 0;
+        else if (sscanf(val, "%d:%d", &a, &b) == 2 && a > 0 && b > 0 && a * 3 > b * 4 && a < b * 6) ws_ratio = (double)a / b;
+        else return 0;
+        return 1;
+    }
     if (!_stricmp(name, "upscale")) { if (!_stricmp(val, "off")) g_upscale = 0; else if (!_stricmp(val, "fsr")) g_upscale = 1; else return 0; return 1; }
     if (!_stricmp(name, "fsr_sharpness")) { int v = atoi(val); if (v < 0 || v > 100) return 0; g_fsr_sharp = v; return 1; }
     if (!_stricmp(name, "integer_scale")) { g_integer_scale = atoi(val) != 0; return 1; }
@@ -161,6 +171,8 @@ static void config_write_default(const char *path) {
                "window_size = auto\n"
                "# Fullscreen resolution (WxH) or native = the desktop's own resolution\n"
                "fullscreen_size = native\n"
+               "# Widescreen (experimental): off, or the shape such as 16:9, 16:10, 21:9. Shows more scenery at the sides in 3D scenes (F10 cycles)\n"
+               "widescreen = off\n"
                "# off = plain, fsr = AMD FidelityFX Super Resolution 1 (F9 toggles); fsr_sharpness 0..100\n"
                "upscale = off\n"
                "fsr_sharpness = 80\n"
@@ -337,6 +349,7 @@ static void show_settings(void) {
     char t[160];
     snprintf(t, sizeof t, "Dave Mirra Freestyle BMX (static recomp) - %dx resolution, %s, %s%s",
              g_gpu_scale, g_filter ? "smooth" : "sharp", g_aspect ? "stretched" : "4:3", g_upscale ? ", FSR" : "");
+    if (ws_ratio > 0) { char *e = t + strlen(t); snprintf(e, sizeof t - (size_t)(e - t), ", widescreen %.2f:1", ws_ratio); }
     SetWindowTextA(wnd, t);
 }
 static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
@@ -350,6 +363,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
         if (w == VK_F6) { g_gpu_scale = g_gpu_scale == 1 ? 2 : g_gpu_scale == 2 ? 4 : 1; gpu_set_scale(); show_settings(); return 0; }
         if (w == VK_F7) { g_filter = !g_filter; show_settings(); return 0; }
         if (w == VK_F8) { g_aspect = !g_aspect; show_settings(); return 0; }
+        if (w == VK_F10) { ws_ratio = ws_ratio == 0 ? 16.0 / 9 : ws_ratio < 2 ? 21.0 / 9 : 0; show_settings(); return 0; }
         if (w == VK_F9) { g_upscale = !g_upscale; show_settings(); return 0; }
         break;
     case WM_CLOSE: g_rumble = 0; host_pad_rumble(0, 0, 0); host_pad_rumble(1, 0, 0); ExitProcess(0);
@@ -654,9 +668,10 @@ static void present(void) {
     RECT cr; GetClientRect(wnd, &cr);
     int cw = cr.right, ch = cr.bottom, w = cw, h = ch;
     if (!g_aspect) {
-        h = cw * 3 / 4;
-        if (h > ch) { h = ch; w = ch * 4 / 3; }
-        if (g_integer_scale && h >= 240) { h -= h % 240; w = h * 4 / 3; }
+        double ar = ws_on ? ws_ratio : 4.0 / 3.0;
+        h = (int)(cw / ar);
+        if (h > ch) { h = ch; w = (int)(ch * ar); }
+        if (g_integer_scale && h >= 240) { h -= h % 240; w = (int)(h * ar); }
     }
     if (cw <= 0 || ch <= 0) return;
     if (gl_ok) { gl_present(cw, ch, w, h); return; }
@@ -778,6 +793,13 @@ void host_frame(void) {
     spu_render(mix, (int)n);
     host_audio_push(mix, (int)n);
 
+    {   /* widescreen applies while 3D is being drawn, not in menus */
+        static unsigned last_rtp, hot_until;
+        unsigned n = g_gte_rtp - last_rtp; last_rtp = g_gte_rtp;
+        if (ws_ratio > 0 && n > 15) hot_until = frame_no + 15;
+        ws_on = ws_ratio > 0 && frame_no < hot_until;
+        g_ws_kq = ws_on ? (int)(65536.0 * (4.0 / 3.0) / ws_ratio + 0.5) : 65536;
+    }
     static int skip;
     if (!turbo || (++skip & 7) == 0) present();
     if (g_shot_every && frame_no % (unsigned)g_shot_every == 0) {

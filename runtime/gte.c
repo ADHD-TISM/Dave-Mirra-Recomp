@@ -110,7 +110,12 @@ static u32 gte_divide(u32 h, u32 sz3) {
     return 0x1ffff;
 }
 
+/* Widescreen: the host squeezes the projected X by g_ws_kq/65536 about the screen centre, then stretches the
+   picture to the wider shape, so 3D keeps its proportions and the sides show more of the scene. */
+int g_ws_kq = 65536;
+unsigned g_gte_rtp;   /* projections done; the host uses it to tell 3D frames from menus */
 static void rtp(int v, int sh, int lm, int last) {
+    g_gte_rtp++;
     s64 x = VX(v), y = VY(v), z = VZ(v);
     s64 m1 = ((s64)TR(0) << 12) + M(0, 0, 0) * x + M(0, 0, 1) * y + M(0, 0, 2) * z;
     s64 m2 = ((s64)TR(1) << 12) + M(0, 1, 0) * x + M(0, 1, 1) * y + M(0, 1, 2) * z;
@@ -124,7 +129,9 @@ static void rtp(int v, int sh, int lm, int last) {
     SZ(0) = SZ(1); SZ(1) = SZ(2); SZ(2) = SZ(3);
     SZ(3) = LmD(A(3, m3) >> 12);
     u32 n = gte_divide(H, (u32)SZ(3));
-    s64 sx = F((s64)n * IR1 + OFX), sy;
+    s64 px = (s64)n * IR1;
+    if (g_ws_kq != 65536) px = (px * g_ws_kq) >> 16;
+    s64 sx = F(px + OFX), sy;
     s32 X = LmG(1, sx >> 16);
     sy = F((s64)n * IR2 + OFY);
     s32 Y = LmG(2, sy >> 16);

@@ -599,6 +599,8 @@ SETTINGS = [
     ("fullscreen_size", "Video", "Fullscreen resolution", "combo", ["native", "1024x768", "1280x960", "1280x720",
                                                                      "1600x1200", "1920x1080", "2560x1440", "3840x2160"], "native",
      "Fullscreen resolution (WxH) or native = the desktop's own resolution"),
+    ("widescreen", "Video", "Widescreen (experimental)", "choice", ["off", "16:9", "16:10", "21:9"], "off",
+     "Widescreen (experimental): off, or the shape such as 16:9, 16:10, 21:9. Shows more scenery at the sides in 3D scenes (F10 cycles)"),
     ("upscale", "Video", "Upscaler", "choice", ["off", "fsr"], "off",
      "off = plain, fsr = AMD FidelityFX Super Resolution 1 (F9 toggles); fsr_sharpness 0..100"),
     ("fsr_sharpness", "Video", "FSR sharpness (0-100)", "combo", ["0", "25", "50", "80", "100"], "80", None),
