@@ -2,7 +2,8 @@
 # Boot-test loop: run the game; when it stops on a missing recompiled entry,
 # add the address to that module's extra_<mod>.txt, regenerate, rebuild, retry.
 # usage: [DM_GAME=<id>] tools/iterate.sh <image.cue> [seconds] [max_rounds]
-# DM_GAME is the game profile in games/ (default dmbmx); its disc must be extracted in ../disc
+# The game is the one gen/ was built for (gen/game.h) and its disc must be extracted in ../disc;
+# DM_GAME is an optional check that it is the one you meant.
 # The game runs in testrun/ so its memory cards, settings and logs stay apart
 # from the ones used for real play. <image.cue> must be an absolute path.
 cd "$(dirname "$0")/.."

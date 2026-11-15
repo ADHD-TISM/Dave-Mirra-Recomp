@@ -106,8 +106,8 @@ cannot be snapshotted).
 `launcher/dmlauncher.py` is a small window with a game list at the top (it chooses the game from your disc image) (Python with Tk, or the one-file exe) that does the
 setup for you on Windows: **Update** downloads the project and a C compiler (about 200 MB) into
 folders next to the launcher, **Build** checks your disc image, translates the code and builds
-`game/dmrecomp.exe` (steps that are up to date are skipped), **Play** shows what is ready and starts
-the game, and **Settings** edits `game/dmrecomp.ini`. The launcher makes a **Dave Mirra BMX** folder next to itself: put your .cue and .bin there and they are found automatically. **Close the launcher when the game starts** is a checkbox on the Play tab. A **Dark mode** checkbox (it starts from your Windows setting) switches the window's colours. Updates never touch `game/`, so settings and
+`game/<id>/dmrecomp.exe` (steps that are up to date are skipped), **Play** shows what is ready and starts
+the game, and **Settings** edits `game/<id>/dmrecomp.ini`. The launcher makes a **Dave Mirra BMX** folder next to itself: put your .cue and .bin there and they are found automatically. **Close the launcher when the game starts** is a checkbox on the Play tab. A **Dark mode** checkbox (it starts from your Windows setting) switches the window's colours. Updates never touch `game/`, so settings and
 saves are kept. `python launcher/dmlauncher.py status|download|update|build|play|update-launcher`
 does the same without a window. `sh launcher/build_exe.sh` (needs PyInstaller) packs it into one file,
 `launcher/dist/DaveMirraLauncher.exe`, which needs no Python installed and holds no game code,

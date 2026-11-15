@@ -867,8 +867,8 @@ def select_game(P, C, gid):
 
 def adopt_disc(P, C, switch=False):
     """Use the images in the disc folder for any game that has no working one chosen. True if the selected game's changed.
-    With switch, a selected game that has no image gives way to a game that has one (only at start-up, and never when
-    the user chose the game: --game, or the game list)."""
+    With switch, a selected game that has no image gives way to a game that has one. That is only for a first run,
+    before any game has been chosen; a game chosen with --game, the game list or Browse is never given up."""
     changed = False
     found = find_discs(P, C)
     for gid, path in found.items():
@@ -896,6 +896,8 @@ def migrate_layout(P):
     moves += [(os.path.join(P.root, "game", "dmrecomp.exe"), first.exe),
               (os.path.join(P.work, "gen"), first.gen), (os.path.join(P.work, "obj"), first.obj)]
     for src, dst in moves:
+        if src.endswith(".mcd") and os.path.exists(src) and os.path.exists(dst):
+            return "there is a memory card at both %s and %s; compare them and keep the one with your saves in %s" % (src, dst, dst)
         if os.path.exists(src) and not os.path.exists(dst):
             try:
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -939,6 +941,7 @@ def open_session(root, disc=None, game=None):
     remembered one; the disc is remembered for it. Returns (P, C, note); raises Fail for a bad game or image."""
     P = Paths(root or default_root())
     C = Config(P.cfg)
+    first_run = "game" not in C.d       # no game has ever been chosen
     note = migrate_layout(P)
     P.use(C.game)
     ids = [i for i, _n, _e in game_list(P)]
@@ -955,7 +958,7 @@ def open_session(root, disc=None, game=None):
             select_game(P, C, gid)
         C.set("disc", os.path.abspath(disc))
     else:
-        adopt_disc(P, C, switch=not game)
+        adopt_disc(P, C, switch=first_run and not game)
     return P, C, note
 
 
@@ -1029,13 +1032,14 @@ def system_prefers_dark():
     except OSError:
         return False
 
-def gui(root_dir, pinned=False):
+def gui(root_dir, pinned=False, notice=None):
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
     import queue
 
     P = Paths(root_dir)
     C = Config(P.cfg)
+    first_run = "game" not in C.d       # no game has ever been chosen
     migrate_note = migrate_layout(P)
     P.use(C.game)
     win = tk.Tk()
@@ -1171,7 +1175,7 @@ def gui(root_dir, pinned=False):
 
     # ---- Build tab
     b = tabs["Build"]
-    adopt_disc(P, C, switch=not pinned)
+    adopt_disc(P, C, switch=first_run and not pinned)
     if migrate_note:
         log("warning: " + migrate_note)
     disc_title = ttk.Label(b, text="")
@@ -1480,6 +1484,9 @@ def gui(root_dir, pinned=False):
     first = refresh()
     nb.select(tabs["Play"] if ready_to_play(P, C) else tabs[first or "Update"])
     pump()
+    if notice:
+        log("ERROR: " + notice)
+        win.after(300, lambda: messagebox.showerror("Dave Mirra launcher", notice))
     win.mainloop()
     return 0
 
@@ -1493,13 +1500,13 @@ def main(argv):
     def opt(name):
         return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else None
     root, disc, game = opt("--root"), opt("--disc"), opt("--game")
+    notice = None
     if disc or game:
         try:
             open_session(root, disc, game)      # remembers the choice; the window then starts from it
         except Fail as e:
-            print("error: %s" % e)
-            return 1
-    return gui(root or default_root(), pinned=bool(game))
+            notice = str(e)                     # a packaged launcher has no console: say it in the window
+    return gui(root or default_root(), pinned=bool(game), notice=notice)
 
 
 if __name__ == "__main__":
