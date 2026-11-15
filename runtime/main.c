@@ -62,7 +62,7 @@ static void resolve_image(const char *in, char *out, size_t cap) {
 
 static const char *default_images[] = {
     "game.cue", "game.bin",
-    GAME_NAME " [" GAME_SERIAL "].cue",
+    GAME_FILE " [" GAME_SERIAL "].cue",
     NULL };
 
 int main(int argc, char **argv) {

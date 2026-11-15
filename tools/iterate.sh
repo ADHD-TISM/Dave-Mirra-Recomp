@@ -6,7 +6,10 @@
 # The game runs in testrun/ so its memory cards, settings and logs stay apart
 # from the ones used for real play. <image.cue> must be an absolute path.
 cd "$(dirname "$0")/.."
-IMG=$1; SECS=${2:-20}; MAX=${3:-20}; G=${DM_GAME:-dmbmx}
+IMG=$1; SECS=${2:-20}; MAX=${3:-20}
+# the game under test is the one gen/ was last built for; DM_GAME may only confirm it
+G=$(grep '^#define GAME_ID' gen/game.h 2>/dev/null | cut -d'"' -f2); G=${G:-dmbmx}
+if [ -n "$DM_GAME" ] && [ "$DM_GAME" != "$G" ]; then echo "DM_GAME=$DM_GAME but gen/ is for $G: run tools/regen.sh <disc> $DM_GAME and build first"; exit 1; fi
 T=testrun; mkdir -p $T
 for i in $(seq 1 "$MAX"); do
   rm -f $T/missing_entries.txt

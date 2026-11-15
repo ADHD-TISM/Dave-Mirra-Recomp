@@ -105,7 +105,9 @@ def main(argv):
     run(py + [d(g['movie']), 'movie', gen, '--extra', ex('movie')])
     with open(os.path.join(gen, 'game.h'), 'w') as f:
         f.write('/* written by tools/regen.py */\n#define GAME_ID "%s"\n#define GAME_NAME "%s"\n'
-                '#define GAME_SERIAL "%s"\n#define GAME_EXE "%s"\n' % (g['id'], g['name'], g['serial'], g['exe']))
+                '#define GAME_SERIAL "%s"\n#define GAME_EXE "%s"\n'
+                '#define GAME_FILE "%s"   /* the name as it can appear in a Windows file name */\n'
+                % (g['id'], g['name'], g['serial'], g['exe'], g['name'].replace(':', ' -')))
     print('translated %s (%s)' % (g['name'], g['serial']))
     return 0
 

@@ -8,6 +8,7 @@
 #include <ctype.h>
 #include <math.h>
 #include "hw.h"
+#include "game.h"   /* GAME_NAME: written into gen/ by tools/regen.py */
 
 static HWND wnd;
 static u32 *fb; static int fb_w = 640, fb_h = 480;
@@ -347,7 +348,7 @@ static void set_fullscreen(int on) {
 }
 static void show_settings(void) {
     char t[160];
-    snprintf(t, sizeof t, "Dave Mirra Freestyle BMX (static recomp) - %dx resolution, %s, %s%s",
+    snprintf(t, sizeof t, GAME_NAME " (static recomp) - %dx resolution, %s, %s%s",
              g_gpu_scale, g_filter ? "smooth" : "sharp", g_aspect ? "stretched" : "4:3", g_upscale ? ", FSR" : "");
     if (ws_ratio > 0) { char *e = t + strlen(t); snprintf(e, sizeof t - (size_t)(e - t), ", widescreen %.2f:1", ws_ratio); }
     SetWindowTextA(wnd, t);
@@ -388,7 +389,7 @@ void host_init(void) {
     RegisterClassA(&wc);
     RECT r = { 0, 0, win_w, win_h };
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
-    wnd = CreateWindowA("dmrecomp", "Dave Mirra Freestyle BMX (static recomp)", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+    wnd = CreateWindowA("dmrecomp", GAME_NAME " (static recomp)", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                         CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
     fb = calloc((size_t)1024 * 4 * 512 * 4, 4);   /* room for the largest internal resolution */
     gl_init();

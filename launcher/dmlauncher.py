@@ -817,12 +817,15 @@ def iso_root_files(bin_path):
 def identify_disc(P, C, path):
     """The game executable's name on this disc (e.g. SLUS_010.26), or "" if it has none. Cached per image."""
     fp = disc_fingerprint(path)
-    cache = C.d.setdefault("ident", {})
-    if fp not in cache:
+    with C.lock:
+        cached = C.d.get("ident", {}).get(fp)
+    if cached is None:
         exes = [n for n in iso_root_files(resolve_bin(path)) if EXE_NAME.match(n)]
-        cache[fp] = exes[0] if exes else ""
-        C.save()
-    return cache[fp]
+        cached = exes[0] if exes else ""
+        with C.lock:
+            C.d.setdefault("ident", {})[fp] = cached
+            C.save()
+    return cached
 
 
 def game_for_exe(P, exe):
@@ -862,8 +865,10 @@ def select_game(P, C, gid):
     C.use(gid)
 
 
-def adopt_disc(P, C):
-    """Use the images in the disc folder for any game that has no working one chosen. True if the selected game's changed."""
+def adopt_disc(P, C, switch=False):
+    """Use the images in the disc folder for any game that has no working one chosen. True if the selected game's changed.
+    With switch, a selected game that has no image gives way to a game that has one (only at start-up, and never when
+    the user chose the game: --game, or the game list)."""
     changed = False
     found = find_discs(P, C)
     for gid, path in found.items():
@@ -876,25 +881,28 @@ def adopt_disc(P, C):
             pass
         C.gset(gid, "disc", os.path.abspath(path))
         changed = changed or gid == P.gid
-    if found and not C.get("disc"):          # the selected game has no image but another game does
+    if switch and found and not C.get("disc"):          # the selected game has no image but another game does
         select_game(P, C, next(iter(found)))
         changed = True
     return changed
 
 
 def migrate_layout(P):
-    """Move what an older launcher left directly under work/ and game/ into the first game's folders."""
+    """Move what an older launcher left directly under work/ and game/ into the first game's folders.
+    Memory cards go first and the move stops at the first failure, so saves are never stranded behind a new blank card.
+    Returns a message if something could not be moved, else None."""
     first = Paths(P.root, "dmbmx")
-    moves = [(os.path.join(P.work, "gen"), first.gen), (os.path.join(P.work, "obj"), first.obj)]
-    for n in ("dmrecomp.exe", "dmrecomp.ini", "memcard1.mcd", "memcard2.mcd"):
-        moves.append((os.path.join(P.root, "game", n), os.path.join(first.game, n)))
+    moves = [(os.path.join(P.root, "game", n), os.path.join(first.game, n)) for n in ("memcard1.mcd", "memcard2.mcd", "dmrecomp.ini")]
+    moves += [(os.path.join(P.root, "game", "dmrecomp.exe"), first.exe),
+              (os.path.join(P.work, "gen"), first.gen), (os.path.join(P.work, "obj"), first.obj)]
     for src, dst in moves:
         if os.path.exists(src) and not os.path.exists(dst):
             try:
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 shutil.move(src, dst)
-            except OSError:
-                pass
+            except OSError as e:
+                return "could not move %s to %s (%s); close anything using it and start the launcher again" % (src, dst, e)
+    return None
 
 
 # ---------------------------------------------------------------- status
@@ -926,6 +934,31 @@ def ready_to_play(P, C):
 
 # ---------------------------------------------------------------- command line
 
+def open_session(root, disc=None, game=None):
+    """Paths and Config for a run. The game is --game if given, else the game the --disc image is, else the
+    remembered one; the disc is remembered for it. Returns (P, C, note); raises Fail for a bad game or image."""
+    P = Paths(root or default_root())
+    C = Config(P.cfg)
+    note = migrate_layout(P)
+    P.use(C.game)
+    ids = [i for i, _n, _e in game_list(P)]
+    if game:
+        if game not in ids:
+            raise Fail("unknown game \"%s\"; try: %s" % (game, ", ".join(ids)))
+        select_game(P, C, game)
+    if disc:
+        try:
+            gid = game_for_exe(P, identify_disc(P, C, disc))
+        except OSError as e:
+            raise Fail(str(e))
+        if gid and not game:
+            select_game(P, C, gid)
+        C.set("disc", os.path.abspath(disc))
+    else:
+        adopt_disc(P, C, switch=not game)
+    return P, C, note
+
+
 def cli(argv):
     root, disc, game, cmd = None, None, None, []
     it = iter(argv)
@@ -938,26 +971,13 @@ def cli(argv):
             game = next(it, None)
         else:
             cmd.append(a)
-    P = Paths(root or default_root())
-    C = Config(P.cfg)
-    migrate_layout(P)
-    P.use(C.game)
-    if game:
-        if game not in [i for i, _n, _e in game_list(P)]:
-            print("unknown game \"%s\"; try: %s" % (game, ", ".join(i for i, _n, _e in game_list(P))))
-            return 1
-        select_game(P, C, game)
-    if disc:
-        try:
-            gid = game_for_exe(P, identify_disc(P, C, disc))
-        except (Fail, OSError) as e:
-            print("error: %s" % e)
-            return 1
-        if gid and not game:
-            select_game(P, C, gid)
-        C.set("disc", os.path.abspath(disc))
-    else:
-        adopt_disc(P, C)
+    try:
+        P, C, note = open_session(root, disc, game)
+    except Fail as e:
+        print("error: %s" % e)
+        return 1
+    if note:
+        print("warning: %s" % note)
     log = lambda s: print(s, flush=True)
     what = cmd[0] if cmd else "status"
     try:
@@ -1009,14 +1029,14 @@ def system_prefers_dark():
     except OSError:
         return False
 
-def gui(root_dir):
+def gui(root_dir, pinned=False):
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
     import queue
 
     P = Paths(root_dir)
     C = Config(P.cfg)
-    migrate_layout(P)
+    migrate_note = migrate_layout(P)
     P.use(C.game)
     win = tk.Tk()
     win.title("Dave Mirra BMX Recomp launcher")
@@ -1151,7 +1171,9 @@ def gui(root_dir):
 
     # ---- Build tab
     b = tabs["Build"]
-    adopt_disc(P, C)
+    adopt_disc(P, C, switch=not pinned)
+    if migrate_note:
+        log("warning: " + migrate_note)
     disc_title = ttk.Label(b, text="")
     disc_title.pack(anchor="w")
     ttk.Label(b, style="Muted.TLabel", wraplength=660,
@@ -1163,6 +1185,8 @@ def gui(root_dir):
     ttk.Entry(row, textvariable=disc_var).pack(side="left", fill="x", expand=True)
 
     def browse():
+        if busy.is_set():
+            return                      # the game must not change under a running build
         f = filedialog.askopenfilename(title="Choose the disc image",
                                        filetypes=[("Disc image", "*.cue *.bin"), ("All files", "*.*")])
         if f:
@@ -1466,16 +1490,16 @@ def main(argv):
     cmds = {"status", "games", "download", "update", "build", "play", "update-launcher", "-h", "--help", "help"}
     if any(a in cmds for a in argv):
         return cli(argv)
-    root = None
-    if "--root" in argv:
-        i = argv.index("--root")
-        root = argv[i + 1] if i + 1 < len(argv) else None
-    if "--disc" in argv:
-        i = argv.index("--disc")
-        if i + 1 < len(argv):
-            P = Paths(root or default_root())
-            Config(P.cfg).set("disc", os.path.abspath(argv[i + 1]))
-    return gui(root or default_root())
+    def opt(name):
+        return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else None
+    root, disc, game = opt("--root"), opt("--disc"), opt("--game")
+    if disc or game:
+        try:
+            open_session(root, disc, game)      # remembers the choice; the window then starts from it
+        except Fail as e:
+            print("error: %s" % e)
+            return 1
+    return gui(root or default_root(), pinned=bool(game))
 
 
 if __name__ == "__main__":
