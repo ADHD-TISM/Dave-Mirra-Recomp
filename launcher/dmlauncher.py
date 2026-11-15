@@ -296,7 +296,7 @@ def fetch_project_zip(P, tag, log):
 
 def install_project(P, C, log, force=False):
     """Download the newest project version unless that one is already installed."""
-    tag = latest_tag(log, strict=not project_ok(P))
+    tag = latest_tag(log, strict=not (project_ok(P) and C.get("tag")))
     have = C.get("tag")
     if project_ok(P) and not force and have and (tag is None or tag == have):
         log("project is up to date (%s)" % have)
@@ -320,7 +320,7 @@ def update_launcher(P, C, log):
     if FROZEN:
         raise Fail("This is the packaged launcher: download the new launcher from the project's releases page.")
     here = os.path.dirname(os.path.abspath(__file__))
-    if os.path.isdir(os.path.join(here, "..", ".git")):
+    if os.path.exists(os.path.join(here, "..", ".git")):
         raise Fail("this launcher is inside a git checkout; update it with git pull instead")
     tag = latest_tag(log, strict=True)
     z = fetch_project_zip(P, tag, log)
@@ -680,9 +680,9 @@ def valid_setting(key, val):
         return val.lower() in [c.lower() for c in s[4]]
     if s[3] == "combo":
         if key == "fsr_sharpness":
-            return val.isdigit() and 0 <= int(val) <= 100
+            return val.isdecimal() and val.isascii() and 0 <= int(val) <= 100
         m = re.fullmatch(r"(\d{3,5})x(\d{3,5})", val)   # the game wants a lower-case x and at most 16384
-        return val == s[5] or bool(m and 320 <= int(m.group(1)) <= 16384 and 240 <= int(m.group(2)) <= 16384)
+        return val.lower() == s[5] or bool(m and 320 <= int(m.group(1)) <= 16384 and 240 <= int(m.group(2)) <= 16384)
     parts = [p.strip() for p in val.split(",")]
     if not 1 <= len(parts) <= 2:
         return False
@@ -1116,9 +1116,10 @@ def gui(root_dir):
                 messagebox.showerror("Settings", "%s: \"%s\" is not a valid value." % (k, v))
                 return
         write_ini(P.ini, vals)
-        C.d["debug_console"] = bool(dc.get())
-        C.d["debug_flags"] = [f for f, v in dflags.items() if v.get()]
-        C.save()
+        with C.lock:
+            C.d["debug_console"] = bool(dc.get())
+            C.d["debug_flags"] = [f for f, v in dflags.items() if v.get()]
+            C.save()
         log("settings saved to %s" % P.ini)
 
     def reset_settings():
