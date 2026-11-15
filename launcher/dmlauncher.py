@@ -34,7 +34,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 REPO = "ADHD-TISM/Dave-Mirra-Recomp"
-LAUNCHER_VERSION = "1"
+LAUNCHER_VERSION = "2"
 
 # Build tools: llvm-mingw (clang + a MinGW-w64 UCRT sysroot), pinned and checked.
 LLVM_NAME = "llvm-mingw-20261104-ucrt-x86_64"
@@ -95,6 +95,7 @@ class Paths:
 class Config:
     def __init__(self, path):
         self.path = path
+        self.lock = threading.RLock()   # the worker thread and the window both save
         self.d = {}
         try:
             with open(path, encoding="utf-8") as f:
@@ -106,15 +107,17 @@ class Config:
         return self.d.get(k, default)
 
     def set(self, k, v):
-        self.d[k] = v
-        self.save()
+        with self.lock:
+            self.d[k] = v
+            self.save()
 
     def save(self):
-        tmp = self.path + ".tmp"
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self.d, f, indent=1, sort_keys=True)
-        os.replace(tmp, self.path)
+        with self.lock:
+            tmp = self.path + ".tmp"
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self.d, f, indent=1, sort_keys=True)
+            os.replace(tmp, self.path)
 
 
 # ---------------------------------------------------------------- helpers
@@ -228,13 +231,16 @@ def version_tuple(tag):
     return tuple(int(x) for x in m.group(1).split(".")) if m else None
 
 
-def latest_tag(log):
-    """Newest vX.Y.Z tag of the project, or None if it has none or GitHub is unreachable."""
+def latest_tag(log, strict=False):
+    """Newest vX.Y.Z tag of the project. None if the project has no tags; if GitHub cannot be
+    reached that is None too, or a Fail when strict (so a failed lookup never falls back to main)."""
     try:
         req = urllib.request.Request("https://api.github.com/repos/%s/tags?per_page=100" % REPO, headers=UA)
         with urllib.request.urlopen(req, timeout=20) as r:
             tags = [t["name"] for t in json.load(r)]
     except (urllib.error.URLError, OSError, ValueError, TimeoutError) as e:
+        if strict:
+            raise Fail("could not look up the newest version (%s). Try again in a few minutes." % e)
         log("could not look up the newest version: %s" % e)
         return None
     tags = [t for t in tags if version_tuple(t)]
@@ -290,7 +296,7 @@ def fetch_project_zip(P, tag, log):
 
 def install_project(P, C, log, force=False):
     """Download the newest project version unless that one is already installed."""
-    tag = latest_tag(log)
+    tag = latest_tag(log, strict=not project_ok(P))
     have = C.get("tag")
     if project_ok(P) and not force and have and (tag is None or tag == have):
         log("project is up to date (%s)" % have)
@@ -313,7 +319,10 @@ def update_launcher(P, C, log):
     """Replace this file with the launcher from the project's newest version."""
     if FROZEN:
         raise Fail("This is the packaged launcher: download the new launcher from the project's releases page.")
-    tag = latest_tag(log)
+    here = os.path.dirname(os.path.abspath(__file__))
+    if os.path.isdir(os.path.join(here, "..", ".git")):
+        raise Fail("this launcher is inside a git checkout; update it with git pull instead")
+    tag = latest_tag(log, strict=True)
     z = fetch_project_zip(P, tag, log)
     try:
         with zipfile.ZipFile(z) as zf:
@@ -327,8 +336,12 @@ def update_launcher(P, C, log):
     if new == file_bytes(me):
         log("the launcher is already the newest")
         return False
-    if b"LAUNCHER_VERSION" not in new:
+    m = re.search(rb'^LAUNCHER_VERSION = "(\d+)"', new, re.M)
+    if not m:
         raise Fail("the downloaded launcher looks wrong; not replacing this one")
+    if int(m.group(1)) <= int(LAUNCHER_VERSION):
+        log("the launcher is already the newest (version %s)" % LAUNCHER_VERSION)
+        return False
     tmp = me + ".new"
     with open(tmp, "wb") as f:
         f.write(new)
@@ -666,11 +679,10 @@ def valid_setting(key, val):
     if s[3] in ("choice", "bool"):
         return val.lower() in [c.lower() for c in s[4]]
     if s[3] == "combo":
-        v = val.lower()
         if key == "fsr_sharpness":
-            return v.isdigit() and 0 <= int(v) <= 100
-        m = re.fullmatch(r"(\d{3,5})x(\d{3,5})", v)
-        return v in ("auto", "native") and v == s[5] or bool(m and int(m.group(1)) >= 320 and int(m.group(2)) >= 240)
+            return val.isdigit() and 0 <= int(val) <= 100
+        m = re.fullmatch(r"(\d{3,5})x(\d{3,5})", val)   # the game wants a lower-case x and at most 16384
+        return val == s[5] or bool(m and 320 <= int(m.group(1)) <= 16384 and 240 <= int(m.group(2)) <= 16384)
     parts = [p.strip() for p in val.split(",")]
     if not 1 <= len(parts) <= 2:
         return False
@@ -1248,7 +1260,6 @@ def gui(root_dir):
                         messagebox.showerror("Dave Mirra launcher", val)
                     else:
                         log(val)
-                    reload_settings()
                     refresh()
         except queue.Empty:
             pass

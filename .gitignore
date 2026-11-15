@@ -22,3 +22,9 @@ dist/
 .code-review-graph/
 launcher/dist/
 __pycache__/
+launcher/tools/
+launcher/project/
+launcher/work/
+launcher/game/
+launcher/launcher.json
+launcher/Dave Mirra BMX/

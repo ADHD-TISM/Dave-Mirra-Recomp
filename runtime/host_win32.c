@@ -401,6 +401,20 @@ void host_init(void) {
    enlarging (and the smooth filter). Without OpenGL, GDI stretches it. */
 static HDC gl_dc; static int gl_ok, gl_tw, gl_th; static GLuint gl_tex;
 
+/* The two shaders below are ported from AMD FidelityFX Super Resolution 1.0 (ffx_fsr1.h):
+
+   Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
+   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+   associated documentation files (the "Software"), to deal in the Software without restriction, including
+   without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+   following conditions: The above copyright notice and this permission notice shall be included in all
+   copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+   ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+   FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+   LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+   ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+*/
 /* FSR 1 (AMD FidelityFX Super Resolution, MIT licence): EASU upscales the picture to
    the size it will have on screen, then RCAS sharpens it. Both are fragment shaders;
    the GL 2.0 / FBO entry points are looked up at run time, and if anything is missing
