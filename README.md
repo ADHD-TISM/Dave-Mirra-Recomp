@@ -78,6 +78,19 @@ image is never overwritten: it is renamed to `memcard1.mcd.bad` (or `.bad1`,
 Not available: save states (recompiled code runs on the host call stack, which
 cannot be snapshotted).
 
+## Launcher
+
+`launcher/dmlauncher.py` is a small window (Python with Tk, or the one-file exe) that does the
+setup for you on Windows: **Update** downloads the project and a C compiler (about 200 MB) into
+folders next to the launcher, **Build** checks your disc image, translates the code and builds
+`game/dmrecomp.exe` (steps that are up to date are skipped), **Play** shows what is ready and starts
+the game, and **Settings** edits `game/dmrecomp.ini`. Updates never touch `game/`, so settings and
+saves are kept. `python launcher/dmlauncher.py status|download|update|build|play|update-launcher`
+does the same without a window. `sh launcher/build_exe.sh` (needs PyInstaller) packs it into one file,
+`launcher/dist/DaveMirraLauncher.exe`, which needs no Python installed and holds no game code,
+so it can be shared; put it in its own folder and run it. Linux and Steam Deck are not supported yet: the game itself only
+has a Windows front end.
+
 ## Packaging
 
 ```

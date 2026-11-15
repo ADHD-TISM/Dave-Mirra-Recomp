@@ -20,3 +20,5 @@ dmrecomp.ini
 testrun/
 dist/
 .code-review-graph/
+launcher/dist/
+__pycache__/
