@@ -28,9 +28,12 @@ DISC=$ROOT/build/package_disc
 rm -rf "$DISC"; mkdir -p "$DISC"
 echo "1/4 extracting the disc"
 python -I tools/extract_iso.py "$BIN" "$DISC" > /dev/null
-[ -f "$DISC/SLUS_010.26" ] || { echo "SLUS_010.26 is not on this disc: wrong game or region"; exit 1; }
 echo "2/4 translating the game code"
-sh tools/regen.sh "$DISC" > /dev/null
+# the game is the one whose executable is on the disc (see games/*.json); set GAME=<id> to force one
+sh tools/regen.sh "$DISC" $GAME > build/regen.log 2>&1 || { tail -5 build/regen.log; echo "this disc is not a game this project knows: wrong game or region"; exit 1; }
+GAME_NAME=$(grep '^#define GAME_NAME' gen/game.h | cut -d'"' -f2)
+GAME_SERIAL=$(grep '^#define GAME_SERIAL' gen/game.h | cut -d'"' -f2)
+echo "   $GAME_NAME [$GAME_SERIAL]"
 echo "3/4 building (this takes a few minutes the first time)"
 cmake -S . -B build -G "MinGW Makefiles" > /dev/null
 mkdir -p build
@@ -38,8 +41,8 @@ cmake --build build -j 8 > build/build.log 2>&1 || { tail -20 build/build.log; e
 echo "4/4 writing $OUT"
 mkdir -p "$OUT"
 cp build/dmrecomp.exe "$OUT/"
-cat > "$OUT/README.txt" <<'EOF'
-Dave Mirra Freestyle BMX (PS1, SLUS-01026) - static recompilation for Windows
+cat > "$OUT/README.txt" <<EOF
+$GAME_NAME (PS1, $GAME_SERIAL) - static recompilation for Windows
 
 To play: put your disc image next to dmrecomp.exe as game.cue + its .bin (or
 game.bin), then run dmrecomp.exe. You can also drag the .cue onto the exe.

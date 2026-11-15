@@ -8,14 +8,16 @@ this file, and nothing is written outside that folder.
 
     python dmlauncher.py                      open the window
     python dmlauncher.py status               what is ready (no window)
+    python dmlauncher.py games                the games it can build
     python dmlauncher.py download|update|build|play|update-launcher
+    python dmlauncher.py --game ID ...        pick the game (dmbmx, maxremix) instead of the remembered one
     python dmlauncher.py --root DIR ...       keep everything in DIR instead
     python dmlauncher.py --disc FILE.cue ...  use this disc image
 
 Folders under the root: tools/ (compiler, downloaded), project/ (the game's
-source, downloaded), work/ (generated code, objects, caches) and game/ (the
-built dmrecomp.exe, dmrecomp.ini and your memory cards). Updates never touch
-game/, so settings and saves are kept.
+source, downloaded), work/<game>/ (generated code, objects, caches) and
+game/<game>/ (the built dmrecomp.exe, dmrecomp.ini and your memory cards for
+that game). Updates never touch game/, so settings and saves are kept.
 
 Windows only for now: the game itself has only a Windows front end so far.
 """
@@ -24,6 +26,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import threading
@@ -34,7 +37,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 REPO = "ADHD-TISM/Dave-Mirra-Recomp"
-LAUNCHER_VERSION = "2"
+LAUNCHER_VERSION = "3"
 
 # Build tools: llvm-mingw (clang + a MinGW-w64 UCRT sysroot), pinned and checked.
 LLVM_NAME = "llvm-mingw-20261104-ucrt-x86_64"
@@ -66,20 +69,25 @@ def default_root():
 
 
 class Paths:
-    def __init__(self, root):
+    def __init__(self, root, gid="dmbmx"):
         self.root = os.path.abspath(root)
         self.tools = os.path.join(self.root, "tools")
         self.project = os.path.join(self.root, "project")
         self.work = os.path.join(self.root, "work")
-        self.game = os.path.join(self.root, "game")
-        self.gen = os.path.join(self.work, "gen")
-        self.obj = os.path.join(self.work, "obj")
-        self.disc = os.path.join(self.work, "disc")
         self.dl = os.path.join(self.work, "dl")
         self.llvm = os.path.join(self.tools, "llvm-mingw")
         self.pydir = os.path.join(self.tools, "python")
         self.discdir = os.path.join(self.root, "Dave Mirra BMX")   # where people put their disc image
         self.cfg = os.path.join(self.root, "launcher.json")
+        self.use(gid)
+
+    def use(self, gid):
+        """Switch to a game: each game has its own generated code, objects and game folder (exe, settings, saves)."""
+        self.gid = gid
+        self.game = os.path.join(self.root, "game", gid)
+        self.gen = os.path.join(self.work, gid, "gen")
+        self.obj = os.path.join(self.work, gid, "obj")
+        self.disc = os.path.join(self.work, gid, "disc")
         self.exe = os.path.join(self.game, "dmrecomp.exe")
         self.ini = os.path.join(self.game, "dmrecomp.ini")
 
@@ -92,6 +100,9 @@ class Paths:
         return os.path.join(self.pydir, "python.exe") if FROZEN else sys.executable
 
 
+PER_GAME = ("disc", "regen_key", "build_key")   # kept separately for each game
+
+
 class Config:
     def __init__(self, path):
         self.path = path
@@ -102,11 +113,33 @@ class Config:
                 self.d = json.load(f)
         except (OSError, ValueError):
             self.d = {}
+        for k in PER_GAME:              # settings from before there was more than one game belong to the first
+            if k in self.d:
+                self.d.setdefault("games", {}).setdefault("dmbmx", {}).setdefault(k, self.d.pop(k))
+        self.game = self.d.get("game") or "dmbmx"
+
+    def use(self, gid):
+        with self.lock:
+            self.game = gid
+            self.d["game"] = gid
+            self.save()
+
+    def gget(self, gid, k, default=None):
+        return self.d.get("games", {}).get(gid, {}).get(k, default)
+
+    def gset(self, gid, k, v):
+        with self.lock:
+            self.d.setdefault("games", {}).setdefault(gid, {})[k] = v
+            self.save()
 
     def get(self, k, default=None):
+        if k in PER_GAME:
+            return self.gget(self.game, k, default)
         return self.d.get(k, default)
 
     def set(self, k, v):
+        if k in PER_GAME:
+            return self.gset(self.game, k, v)
         with self.lock:
             self.d[k] = v
             self.save()
@@ -281,8 +314,47 @@ def install_toolchain(P, log):
         raise Fail("the compiler did not unpack correctly; delete the tools folder and try again")
 
 
+# Games the launcher knows by name before the project is downloaded; the project's games/*.json have the details.
+BUILTIN_GAMES = [("dmbmx", "Dave Mirra Freestyle BMX", "SLUS_010.26"),
+                 ("maxremix", "Dave Mirra Freestyle BMX: Maximum Remix", "SLUS_013.47")]
+
+
+def load_profiles(P):
+    out = {}
+    gd = os.path.join(P.project, "games")
+    try:
+        names = sorted(os.listdir(gd))
+    except OSError:
+        return out
+    for n in names:
+        if n.endswith(".json"):
+            try:
+                with open(os.path.join(gd, n), encoding="utf-8") as f:
+                    g = json.load(f)
+                out[g["id"]] = g
+            except (OSError, ValueError, KeyError):
+                continue
+    return out
+
+
+def game_list(P):
+    """[(id, name, exe)] from the project if it is downloaded, else the built-in list."""
+    pr = load_profiles(P)
+    if pr:
+        return [(g["id"], g["name"], g["exe"]) for g in pr.values()]
+    return list(BUILTIN_GAMES)
+
+
+def get_profile(P):
+    g = load_profiles(P).get(P.gid)
+    if not g:
+        raise Fail("this version of the project does not know the game \"%s\" (Update tab)" % P.gid)
+    return g
+
+
 def project_ok(P):
-    return os.path.isfile(os.path.join(P.project, "tools", "recomp.py"))
+    return (all(os.path.isfile(os.path.join(P.project, "tools", n)) for n in ("recomp.py", "regen.py", "extract_iso.py"))
+            and bool(load_profiles(P)))
 
 
 def fetch_project_zip(P, tag, log):
@@ -380,9 +452,12 @@ def disc_fingerprint(path):
 
 def regen_key(P, disc_path):
     pr = P.project
-    parts = [disc_fingerprint(disc_path), "regen1", file_bytes(os.path.join(pr, "tools", "recomp.py"))]
+    g = get_profile(P)
+    parts = [disc_fingerprint(disc_path), "regen2", P.gid]
+    for rel in (os.path.join("tools", "recomp.py"), os.path.join("tools", "regen.py"), os.path.join("games", P.gid + ".json")):
+        parts.append(file_bytes(os.path.join(pr, rel)))
     for n in ("main", "ai", "fr", "movie"):
-        p = os.path.join(pr, "extra_%s.txt" % n)
+        p = os.path.join(pr, g["extras"], "extra_%s.txt" % n)
         parts.append(file_bytes(p) if os.path.isfile(p) else b"")
     return key_of(*parts)
 
@@ -409,7 +484,14 @@ def generate(P, C, disc_path, log):
         log("generated code is up to date")
         return
     if not project_ok(P):
-        raise Fail("the project is not downloaded yet (Update tab)")
+        raise Fail("the project is not downloaded, or is too old for this launcher (Update tab)")
+    g = get_profile(P)
+    have = identify_disc(P, C, disc_path)
+    if have.lower() != g["exe"].lower():
+        other = game_for_exe(P, have)
+        raise Fail("this disc image is %s, not %s [%s]%s" % (
+            dict((i, n) for i, n, _e in game_list(P)).get(other, have or "an unknown disc"), g["name"], g["serial"],
+            "; choose it in the Game list" if other else ""))
     bin_path = resolve_bin(disc_path)
     key = regen_key(P, disc_path)           # also checks the image size
     py = P.tool_python
@@ -418,46 +500,11 @@ def generate(P, C, disc_path, log):
     os.makedirs(P.disc)
     log("reading the disc image")
     run([py, "-I", os.path.join(P.project, "tools", "extract_iso.py"), bin_path, P.disc], log, cwd=P.project)
-    D = P.disc
-    for need in ("SLUS_010.26", "AITEXT.BIN", "FRTEXT.BIN", "PLAYMOV.EXE"):
-        if not os.path.isfile(os.path.join(D, need)):
-            raise Fail("%s is not on this disc: wrong game or region (need Dave Mirra Freestyle BMX, SLUS-01026)" % need)
-    shutil.rmtree(P.gen, ignore_errors=True)
-    os.makedirs(P.gen)
-    rc = [py, "-I", os.path.join(P.project, "tools", "recomp.py")]
-    gen = P.gen
-    xref = os.path.join(gen, "xref_main.txt")
-    open(xref, "w").close()
-    ex = lambda n: os.path.join(P.project, "extra_%s.txt" % n)
-    d = lambda n: os.path.join(D, n)
+    for need in [g["exe"], g["movie"]] + [o["file"] for o in g["overlays"].values()]:
+        if not os.path.isfile(os.path.join(P.disc, need)):
+            raise Fail("%s is not on this disc: wrong game or region (need %s, %s)" % (need, g["name"], g["serial"]))
     log("translating the game code (a minute or two)")
-    prev = -1
-    for rnd in range(1, 9):
-        log("  pass %d" % rnd)
-        run(rc + [d("SLUS_010.26"), "main", gen, "--scan", d("AITEXT.BIN"), "--scan", d("FRTEXT.BIN"),
-                  "--scan", d("AISDATA.BIN"), "--scan", d("FRSDATA.BIN"),
-                  "--extra", ex("main"), "--extra", xref, "--fullcost", "80059a9c"], log, cwd=P.project)
-        run(rc + [d("AITEXT.BIN"), "ai", gen, "--raw", "800bbb6c", "--scan", d("SLUS_010.26"),
-                  "--scan", d("AISDATA.BIN"), "--roots", os.path.join(gen, "main_unresolved.txt"),
-                  "--extra", ex("ai"), "--extern", os.path.join(gen, "main_entries.txt")], log, cwd=P.project)
-        run(rc + [d("FRTEXT.BIN"), "fr", gen, "--raw", "800bbb6c", "--scan", d("SLUS_010.26"),
-                  "--scan", d("FRSDATA.BIN"), "--roots", os.path.join(gen, "main_unresolved.txt"),
-                  "--extra", ex("fr"), "--extern", os.path.join(gen, "main_entries.txt")], log, cwd=P.project)
-        keep = set()
-        for src in (os.path.join(gen, "ai_unresolved.txt"), os.path.join(gen, "fr_unresolved.txt"), xref):
-            for l in _lines(src):
-                f = l.split()
-                if f and f[0] < "800bbb6c":
-                    keep.add(l)
-        with open(xref, "w") as f:
-            f.write("".join(l + "\n" for l in sorted(keep)))
-        n = len(_lines(os.path.join(gen, "main_entries.txt")))
-        if n == prev:
-            break
-        prev = n
-    else:
-        raise Fail("code translation did not settle after 8 passes")
-    run(rc + [d("PLAYMOV.EXE"), "movie", gen, "--extra", ex("movie")], log, cwd=P.project)
+    run([py, "-I", os.path.join(P.project, "tools", "regen.py"), "--game", P.gid, P.disc, P.gen], log, cwd=P.project)
     shutil.rmtree(P.disc, ignore_errors=True)
     C.set("regen_key", key)
     log("code translated")
@@ -736,44 +783,118 @@ def play(P, C, disc_path, log):
 
 # ---------------------------------------------------------------- disc folder
 
-def find_disc(P):
-    """A .cue (else .bin) in the "Dave Mirra BMX" folder, or in a folder one level inside it."""
+EXE_NAME = re.compile(r"^S[A-Z]{3}_\d{3}\.\d{2}$")
+
+
+def iso_root_files(bin_path):
+    """File names in the root directory of a raw 2352-byte-sector PS1 image."""
+    with open(bin_path, "rb") as f:
+        def sector(lba):
+            f.seek(lba * 2352)
+            raw = f.read(2352)
+            if len(raw) < 2352:
+                return b""
+            return raw[24:24 + 2048] if raw[15] == 2 else raw[16:16 + 2048]
+        pvd = sector(16)
+        if pvd[1:6] != b"CD001" or len(pvd) < 190:
+            return []
+        lba, size = struct.unpack_from("<I", pvd, 158)[0], struct.unpack_from("<I", pvd, 166)[0]
+        if not 0 < size <= 1 << 20:
+            return []
+        data = b"".join(sector(lba + i) for i in range((size + 2047) // 2048))[:size]
+    names, p = [], 0
+    while p + 34 < len(data):
+        n = data[p]
+        if n == 0:
+            p = (p // 2048 + 1) * 2048
+            continue
+        k = data[p + 32]
+        names.append(data[p + 33:p + 33 + k].decode("ascii", "replace").split(";")[0])
+        p += n
+    return names
+
+
+def identify_disc(P, C, path):
+    """The game executable's name on this disc (e.g. SLUS_010.26), or "" if it has none. Cached per image."""
+    fp = disc_fingerprint(path)
+    cache = C.d.setdefault("ident", {})
+    if fp not in cache:
+        exes = [n for n in iso_root_files(resolve_bin(path)) if EXE_NAME.match(n)]
+        cache[fp] = exes[0] if exes else ""
+        C.save()
+    return cache[fp]
+
+
+def game_for_exe(P, exe):
+    for gid, _n, e in game_list(P):
+        if e.lower() == exe.lower():
+            return gid
+    return None
+
+
+def find_discs(P, C):
+    """{game id: image path} for the images in the "Dave Mirra BMX" folder (or one folder inside it)."""
+    found = {}
     try:
         os.makedirs(P.discdir, exist_ok=True)
-        found = {".cue": [], ".bin": []}
+        cands = {".cue": [], ".bin": []}
         for dirpath, dirs, files in os.walk(P.discdir):
             if os.path.relpath(dirpath, P.discdir).count(os.sep) >= 1:
                 dirs[:] = []
             for n in sorted(files):
                 ext = os.path.splitext(n)[1].lower()
-                if ext in found:
-                    found[ext].append(os.path.join(dirpath, n))
-        for ext in (".cue", ".bin"):
-            for path in found[ext]:
-                try:
-                    disc_fingerprint(path)
-                    return path
-                except Fail:
-                    continue
+                if ext in cands:
+                    cands[ext].append(os.path.join(dirpath, n))
+        for path in cands[".cue"] + cands[".bin"]:
+            try:
+                gid = game_for_exe(P, identify_disc(P, C, path))
+            except (Fail, OSError):
+                continue
+            if gid and gid not in found:
+                found[gid] = path
     except OSError:
         pass
-    return None
+    return found
+
+
+def select_game(P, C, gid):
+    P.use(gid)
+    C.use(gid)
 
 
 def adopt_disc(P, C):
-    """Use the image in the disc folder when no working one is chosen. True if it changed the choice."""
-    cur = C.get("disc")
-    try:
-        if cur:
-            disc_fingerprint(cur)
-            return False
-    except Fail:
-        pass
-    found = find_disc(P)
-    if found and os.path.abspath(found) != cur:
-        C.set("disc", os.path.abspath(found))
-        return True
-    return False
+    """Use the images in the disc folder for any game that has no working one chosen. True if the selected game's changed."""
+    changed = False
+    found = find_discs(P, C)
+    for gid, path in found.items():
+        cur = C.gget(gid, "disc")
+        try:
+            if cur:
+                disc_fingerprint(cur)
+                continue
+        except Fail:
+            pass
+        C.gset(gid, "disc", os.path.abspath(path))
+        changed = changed or gid == P.gid
+    if found and not C.get("disc"):          # the selected game has no image but another game does
+        select_game(P, C, next(iter(found)))
+        changed = True
+    return changed
+
+
+def migrate_layout(P):
+    """Move what an older launcher left directly under work/ and game/ into the first game's folders."""
+    first = Paths(P.root, "dmbmx")
+    moves = [(os.path.join(P.work, "gen"), first.gen), (os.path.join(P.work, "obj"), first.obj)]
+    for n in ("dmrecomp.exe", "dmrecomp.ini", "memcard1.mcd", "memcard2.mcd"):
+        moves.append((os.path.join(P.root, "game", n), os.path.join(first.game, n)))
+    for src, dst in moves:
+        if os.path.exists(src) and not os.path.exists(dst):
+            try:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.move(src, dst)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------- status
@@ -785,8 +906,9 @@ def status(P, C):
     try:
         if disc:
             disc_fingerprint(disc)
-            disc_ok = True
-    except Fail:
+            want = dict((i, e) for i, _n, e in game_list(P)).get(P.gid, "")
+            disc_ok = not want or identify_disc(P, C, disc).lower() == want.lower()
+    except (Fail, OSError):
         pass
     return [
         ("tools", "Build tools", toolchain_ok(P), "Update"),
@@ -805,25 +927,45 @@ def ready_to_play(P, C):
 # ---------------------------------------------------------------- command line
 
 def cli(argv):
-    root, disc, cmd = None, None, []
+    root, disc, game, cmd = None, None, None, []
     it = iter(argv)
     for a in it:
         if a == "--root":
             root = next(it, None)
         elif a == "--disc":
             disc = next(it, None)
+        elif a == "--game":
+            game = next(it, None)
         else:
             cmd.append(a)
     P = Paths(root or default_root())
     C = Config(P.cfg)
+    migrate_layout(P)
+    P.use(C.game)
+    if game:
+        if game not in [i for i, _n, _e in game_list(P)]:
+            print("unknown game \"%s\"; try: %s" % (game, ", ".join(i for i, _n, _e in game_list(P))))
+            return 1
+        select_game(P, C, game)
     if disc:
+        try:
+            gid = game_for_exe(P, identify_disc(P, C, disc))
+        except (Fail, OSError) as e:
+            print("error: %s" % e)
+            return 1
+        if gid and not game:
+            select_game(P, C, gid)
         C.set("disc", os.path.abspath(disc))
     else:
         adopt_disc(P, C)
     log = lambda s: print(s, flush=True)
     what = cmd[0] if cmd else "status"
     try:
-        if what == "status":
+        if what == "games":
+            for gid, name, exe in game_list(P):
+                print("%s %-9s %s [%s]" % ("*" if gid == P.gid else " ", gid, name, exe))
+        elif what == "status":
+            print("game: %s" % dict((i, n) for i, n, _e in game_list(P)).get(P.gid, P.gid))
             for _k, label, ok, tab in status(P, C):
                 print("%s %s%s" % ("OK " if ok else "-- ", label, "" if ok else "   (%s tab)" % tab))
             print("project version: %s" % C.get("tag", "none"))
@@ -874,6 +1016,8 @@ def gui(root_dir):
 
     P = Paths(root_dir)
     C = Config(P.cfg)
+    migrate_layout(P)
+    P.use(C.game)
     win = tk.Tk()
     win.title("Dave Mirra BMX Recomp launcher")
     win.geometry("760x640")
@@ -933,9 +1077,29 @@ def gui(root_dir):
 
     top = ttk.Frame(win, padding=(10, 8))
     top.pack(fill="x")
-    ttk.Label(top, text="Dave Mirra Freestyle BMX", font=("Segoe UI", 14, "bold")).pack(side="left")
+    ttk.Label(top, text="Dave Mirra BMX", font=("Segoe UI", 14, "bold")).pack(side="left")
+    game_var = tk.StringVar()
+    game_box = ttk.Combobox(top, textvariable=game_var, state="readonly", width=42)
+    game_box.pack(side="left", padx=(16, 0))
     ver = ttk.Label(top, text="")
     ver.pack(side="right")
+    shown_gid = [None]
+
+    def sync_game_box():
+        names = dict((i, n) for i, n, _e in game_list(P))
+        game_box.configure(values=list(names.values()))
+        game_var.set(names.get(P.gid, P.gid))
+
+    def on_game(_e=None):
+        gid = next((i for i, n, _e2 in game_list(P) if n == game_var.get()), None)
+        if gid and gid != P.gid and not busy.is_set():
+            select_game(P, C, gid)
+            disc_var.set(C.get("disc", ""))
+            refresh()
+        else:
+            sync_game_box()
+
+    game_box.bind("<<ComboboxSelected>>", on_game)
 
     def toggle_dark():
         C.set("dark", bool(dark_var.get()))
@@ -988,7 +1152,8 @@ def gui(root_dir):
     # ---- Build tab
     b = tabs["Build"]
     adopt_disc(P, C)
-    ttk.Label(b, text="Your disc image: Dave Mirra Freestyle BMX [SLUS-01026] (.cue or .bin)").pack(anchor="w")
+    disc_title = ttk.Label(b, text="")
+    disc_title.pack(anchor="w")
     ttk.Label(b, style="Muted.TLabel", wraplength=660,
               text="Put the .cue and .bin in the \"Dave Mirra BMX\" folder next to the launcher and it is found "
                    "automatically, or browse to them anywhere.").pack(anchor="w")
@@ -1001,6 +1166,12 @@ def gui(root_dir):
         f = filedialog.askopenfilename(title="Choose the disc image",
                                        filetypes=[("Disc image", "*.cue *.bin"), ("All files", "*.*")])
         if f:
+            try:                      # an image of the other game switches to that game
+                gid = game_for_exe(P, identify_disc(P, C, f))
+            except (Fail, OSError):
+                gid = None
+            if gid and gid != P.gid:
+                select_game(P, C, gid)
             disc_var.set(os.path.normpath(f))
             C.set("disc", disc_var.get())
             refresh()
@@ -1138,13 +1309,22 @@ def gui(root_dir):
     ttk.Button(sbtn, text="Save", command=save_settings).pack(side="left")
     ttk.Button(sbtn, text="Reset to defaults", command=reset_settings).pack(side="left", padx=6)
     ttk.Button(sbtn, text="Reload", command=reload_settings).pack(side="left")
-    ttk.Label(sbtn, text="(edits %s)" % P.ini, style="Muted.TLabel").pack(side="left", padx=8)
+    edits_lbl = ttk.Label(sbtn, text="", style="Muted.TLabel")
+    edits_lbl.pack(side="left", padx=8)
 
     # ---- plumbing
     def refresh():
         if not busy.is_set() and adopt_disc(P, C):
             disc_var.set(C.get("disc", ""))
             log("found your disc image: %s" % C.get("disc"))
+        sync_game_box()
+        if shown_gid[0] != P.gid:      # a different game: its settings file, its disc image
+            shown_gid[0] = P.gid
+            disc_var.set(C.get("disc", ""))
+            reload_settings()
+            edits_lbl.configure(text="(edits %s)" % P.ini)
+        gname = dict((i, n) for i, n, _e in game_list(P)).get(P.gid, P.gid)
+        disc_title.configure(text="Your disc image for %s (.cue or .bin)" % gname)
         st = status(P, C)
         ok_all = True
         first_bad = None
@@ -1164,8 +1344,13 @@ def gui(root_dir):
         if d:
             try:
                 disc_fingerprint(d)
-                disc_msg.configure(text="Image found: %s" % os.path.basename(resolve_bin(d)), foreground=pal["ok"])
-            except Fail as e:
+                other = game_for_exe(P, identify_disc(P, C, d))
+                if other and other != P.gid:
+                    disc_msg.configure(text="This image is %s: choose it in the game list at the top." % dict(
+                        (i, n) for i, n, _e in game_list(P)).get(other, other), foreground=pal["bad"])
+                else:
+                    disc_msg.configure(text="Image found: %s" % os.path.basename(resolve_bin(d)), foreground=pal["ok"])
+            except (Fail, OSError) as e:
                 disc_msg.configure(text=str(e), foreground=pal["bad"])
         else:
             disc_msg.configure(text="No image chosen yet.", foreground=pal["muted"])
@@ -1246,7 +1431,7 @@ def gui(root_dir):
                     bar.configure(mode="determinate", maximum=max(1, val[1]), value=val[0])
                 elif kind == "latest":
                     have = C.get("tag")
-                    if val and have and val != have:
+                    if val and have and version_tuple(val) and (version_tuple(have) or (0,)) < version_tuple(val):
                         upd_note.configure(text="A newer project version is available: %s (Update tab)." % val)
                     elif val and not have:
                         upd_note.configure(text="Start with the Update tab: Download.")
@@ -1278,7 +1463,7 @@ def gui(root_dir):
 def main(argv):
     if sys.stdout is None:          # packaged without a console window
         sys.stdout = sys.stderr = open(os.devnull, "w")
-    cmds = {"status", "download", "update", "build", "play", "update-launcher", "-h", "--help", "help"}
+    cmds = {"status", "games", "download", "update", "build", "play", "update-launcher", "-h", "--help", "help"}
     if any(a in cmds for a in argv):
         return cli(argv)
     root = None

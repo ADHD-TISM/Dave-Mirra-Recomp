@@ -1,18 +1,27 @@
 # dmrecomp
 
-Static recompilation of Dave Mirra Freestyle BMX (PS1, NTSC-U, SLUS-01026) for Windows.
+Static recompilation of Dave Mirra Freestyle BMX (PS1, NTSC-U, SLUS-01026) and Dave Mirra Freestyle BMX: Maximum Remix
+(SLUS-01347) for Windows.
 
 The game's MIPS code is translated to C ahead of time and linked against a small
 runtime that stands in for the PS1 hardware. No game code or assets are stored
 here: `gen/` is produced from your own disc image, and the game reads everything
 else from that image when it runs. The repository does carry a few game-specific
 numbers: the addresses of functions in the game's executable that static
-analysis cannot find (`extra_*.txt`) and some constants in the tools and
+analysis cannot find (`games/*/extra_*.txt`) and some constants in the tools and
 runtime. You need your own copy of the game; this project is not affiliated
 with its publisher or developer, and Dave Mirra Freestyle BMX is their trademark.
 No BIOS file is needed.
 
 Released under the MIT license (see `LICENSE`).
+
+## Games
+
+Each supported game has a profile in `games/<id>.json` (its executable, overlays, overlay load address, the one
+function the CPU assist must not speed up) and its entry-point lists in `games/<id>/extra_*.txt`. `tools/regen.py`
+translates the game whose executable is on the disc and writes `gen/game.h`, which tells the runtime which game
+it was built for. `dmbmx` is Dave Mirra Freestyle BMX, `maxremix` is Maximum Remix. The launcher builds each into its
+own folder (`game/<id>/`, with its own settings and saves) and picks the game from the disc image.
 
 ## Build
 
@@ -20,7 +29,7 @@ Needs Python 3, CMake, MinGW-w64 gcc, and Git Bash (or MSYS2) for the `sh` scrip
 
 ```
 python tools/extract_iso.py "<your image>.bin" ../disc
-sh tools/regen.sh ../disc
+sh tools/regen.sh ../disc        # add a game id (dmbmx, maxremix) to force one
 cmake -S . -B build -G "MinGW Makefiles"
 cmake --build build -j
 ```
@@ -94,7 +103,7 @@ cannot be snapshotted).
 
 ## Launcher
 
-`launcher/dmlauncher.py` is a small window (Python with Tk, or the one-file exe) that does the
+`launcher/dmlauncher.py` is a small window with a game list at the top (it chooses the game from your disc image) (Python with Tk, or the one-file exe) that does the
 setup for you on Windows: **Update** downloads the project and a C compiler (about 200 MB) into
 folders next to the launcher, **Build** checks your disc image, translates the code and builds
 `game/dmrecomp.exe` (steps that are up to date are skipped), **Play** shows what is ready and starts
@@ -135,18 +144,18 @@ vblanks (30 fps) and slows down when a frame's work runs past the second one.
 By default, instructions executed between the first and second vblank after a
 display flip are charged half the console's time, which removes those dips
 without ever letting the game run faster than 30 fps. The libetc VSync wait
-loop is excluded (`--fullcost 80059a9c` in `tools/regen.sh`) because its
+loop is excluded (`fullcost` in `games/dmbmx.json`) because its
 iteration-count timeout would fire early. `--stats` prints `flips=` (frames
 the game showed in the last second).
 
 ## Layout
 
 - `tools/recomp.py` — MIPS R3000A to C recompiler (PS-X EXE and raw overlays).
-- `tools/regen.sh` — regenerates `gen/` for the main EXE, both overlays and the movie player.
+- `tools/regen.py` (`regen.sh`) — regenerates `gen/` for the main EXE, both overlays and the movie player, from a game profile.
 - `tools/iterate.sh` — runs the game (in `testrun/`, apart from your saves and settings) and adds any missing function entry to `extra_<module>.txt`.
 - `tools/sweep.py` — coverage sweep: scripted runs through every mode, level and menu, each under `iterate.sh`.
 - `tools/package.sh` — disc image to ready-to-run folder.
-- `extra_*.txt` — entry points the static analysis can't find (function pointers, setjmp targets).
+- `games/` — one profile and one set of `extra_*.txt` entry-point lists (function pointers, setjmp targets the static analysis can't find) per game.
 - `runtime/` — CPU glue and scheduler, HLE BIOS, GPU (software), GTE, CD-ROM, MDEC, SPU, Win32 host.
 
 ## Modules

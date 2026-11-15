@@ -1,5 +1,6 @@
-/* Boot: open the disc, load SLUS_010.26 into RAM, run the recompiled entry. */
+/* Boot: open the disc, load the game's main executable into RAM, run the recompiled entry. */
 #include "hw.h"
+#include "game.h"   /* GAME_NAME, GAME_SERIAL, GAME_EXE: written into gen/ by tools/regen.py */
 #include <stdlib.h>
 #include <ctype.h>
 
@@ -61,7 +62,7 @@ static void resolve_image(const char *in, char *out, size_t cap) {
 
 static const char *default_images[] = {
     "game.cue", "game.bin",
-    "Dave Mirra Freestyle BMX [SLUS-01026].cue",
+    GAME_NAME " [" GAME_SERIAL "].cue",
     NULL };
 
 int main(int argc, char **argv) {
@@ -99,18 +100,18 @@ int main(int argc, char **argv) {
         if (f) { fclose(f); img = default_images[i]; break; }
     }
     host_init();
-    if (!img) host_fatal("Pass the path to your Dave Mirra Freestyle BMX (SLUS-01026) .cue or .bin,\n"
+    if (!img) host_fatal("Pass the path to your " GAME_NAME " (" GAME_SERIAL ") .cue or .bin,\n"
                          "or place it next to the executable as game.cue / game.bin.");
     char bin[1024]; resolve_image(img, bin, sizeof bin);
     cd_init(bin);
 
     u32 lba, size;
-    if (!iso_find_root("SLUS_010.26", &lba, &size)) host_fatal("SLUS_010.26 not found on disc: wrong game or region?");
-    if (size < 0x800 || size > 0x200000) host_fatal("SLUS_010.26 has an implausible size: wrong game or region?");
+    if (!iso_find_root(GAME_EXE, &lba, &size)) host_fatal(GAME_EXE " not found on disc: wrong game or region? This build is for " GAME_NAME " (" GAME_SERIAL ").");
+    if (size < 0x800 || size > 0x200000) host_fatal(GAME_EXE " has an implausible size: wrong game or region?");
     u8 *exe = malloc(size + 2048);
     if (!exe) host_fatal("Out of memory.");
     for (u32 s = 0; s < (size + 2047) / 2048; s++) memcpy(exe + s * 2048, sector_data(lba + s), 2048);
-    if (memcmp(exe, "PS-X EXE", 8)) host_fatal("SLUS_010.26 is not a PS-X EXE");
+    if (memcmp(exe, "PS-X EXE", 8)) host_fatal(GAME_EXE " is not a PS-X EXE");
     u32 pc0 = le32(exe + 0x10), gp = le32(exe + 0x14), t_addr = le32(exe + 0x18), t_size = le32(exe + 0x1c);
     u32 s_addr = le32(exe + 0x30), s_size = le32(exe + 0x34);
     if (pc0 != main_entry || t_addr != main_base) host_fatal("Disc executable does not match the recompiled build.");

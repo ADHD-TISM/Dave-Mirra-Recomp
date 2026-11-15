@@ -1,0 +1,13 @@
+800c2498  # matched from first game 800c0004
+800c269c  # matched from first game 800c0208
+800c36c0  # matched from first game 800c122c
+800c25a0  # matched from first game 800c010c
+800c45fc  # matched from first game 800c208c
+800c5030  # matched from first game 800c2ab0
+800c578c  # matched from first game 800c3210
+800cad4c  # matched from first game 800c7b0c
+800cab7c  # matched from first game 800c793c
+800c5e28  # matched from first game 800c38b4
+800ce3cc  # matched from first game 800cb1d4
+800d1e78  # matched from first game 800ce628
+800d2094  # matched from first game 800ce844

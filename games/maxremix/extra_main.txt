@@ -1,0 +1,34 @@
+8005a54c  # libetc setjmp return point (hook entry target)
+8004d140  # matched from first game 8004c2a4
+80064788  # matched from first game 800635c4
+8003e69c  # matched from first game 8003d89c
+80067858  # matched from first game 80066694
+80038de8  # matched from first game 800380fc
+8003a6ec  # matched from first game 800399fc
+80069b18  # matched from first game 80068954
+8001e654  # matched from first game 8001e5cc
+800177f4  # matched from first game 80017790
+800179b8  # matched from first game 80017954
+80017bcc  # matched from first game 80017b68
+80017bd8  # matched from first game 80017b74
+80017be4  # matched from first game 80017b80
+800179e8  # matched from first game 80017984
+80017a00  # matched from first game 8001799c
+80017868  # matched from first game 80017804
+80017948  # matched from first game 800178e4
+8003aca8  # matched from first game 80039fb8
+8003b850  # matched from first game 8003aa40
+800177d4  # matched from first game 80017770
+8001cca8  # matched from first game 8001cc58
+8001cd64  # matched from first game 8001cd14
+80051664  # matched from first game 800504d0
+800614f8  # matched from first game 80060334
+80068168  # memory card event callback
+8006817c  # memory card event callback
+80068190  # memory card event callback
+800681a4  # memory card event callback
+800681b8  # memory card event callback
+800681cc  # memory card event callback
+800681e0  # memory card event callback
+800681f4  # memory card event callback
+80068a14  # memory card event callback

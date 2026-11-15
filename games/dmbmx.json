@@ -1,0 +1,14 @@
+{
+  "id": "dmbmx",
+  "name": "Dave Mirra Freestyle BMX",
+  "serial": "SLUS-01026",
+  "exe": "SLUS_010.26",
+  "overlay_base": "800bbb6c",
+  "overlays": {
+    "ai": {"file": "AITEXT.BIN", "data": "AISDATA.BIN"},
+    "fr": {"file": "FRTEXT.BIN", "data": "FRSDATA.BIN"}
+  },
+  "movie": "PLAYMOV.EXE",
+  "fullcost": ["80059a9c"],
+  "extras": "games/dmbmx"
+}

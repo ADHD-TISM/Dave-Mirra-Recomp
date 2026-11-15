@@ -1,0 +1,14 @@
+{
+  "id": "maxremix",
+  "name": "Dave Mirra Freestyle BMX: Maximum Remix",
+  "serial": "SLUS-01347",
+  "exe": "SLUS_013.47",
+  "overlay_base": "800bdc60",
+  "overlays": {
+    "ai": {"file": "AITEXT.BIN", "data": "AISDATA.BIN"},
+    "fr": {"file": "FRTEXT.BIN", "data": "FRSDATA.BIN"}
+  },
+  "movie": "PLAYMOV.EXE",
+  "fullcost": ["8005a290"],
+  "extras": "games/maxremix"
+}
