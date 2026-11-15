@@ -775,6 +775,24 @@ def cli(argv):
 
 # ---------------------------------------------------------------- window
 
+LIGHT = dict(bg="#f0f0f0", fg="#000000", field="#ffffff", btn="#e1e1e1", btn_hot="#d0d0d0", line="#adadad",
+             muted="#6b6b6b", warn="#b36b00", ok="#1a7f37", bad="#c62828", accent="#0078d7")
+DARK = dict(bg="#1e1f22", fg="#e6e6e6", field="#2b2d31", btn="#3a3c42", btn_hot="#4a4d55", line="#4a4d55",
+            muted="#9a9da5", warn="#e0a030", ok="#4cc366", bad="#ff6b6b", accent="#3b82f6")
+
+
+def system_prefers_dark():
+    """Windows' own app theme (Settings > Personalization > Colors); light elsewhere."""
+    if not WINDOWS:
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+            return winreg.QueryValueEx(k, "AppsUseLightTheme")[0] == 0
+    except OSError:
+        return False
+
 def gui(root_dir):
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
@@ -792,11 +810,65 @@ def gui(root_dir):
     def log(s):
         q.put(("log", s))
 
+    style = ttk.Style(win)
+    native_theme = style.theme_use()
+    plain = []          # classic tk widgets that ttk's theme does not colour
+    pal = dict(LIGHT)
+
+    def apply_theme(dark):
+        pal.update(DARK if dark else LIGHT)
+        if dark:
+            style.theme_use("clam")
+            style.configure(".", background=pal["bg"], foreground=pal["fg"], fieldbackground=pal["field"],
+                            bordercolor=pal["line"], lightcolor=pal["bg"], darkcolor=pal["bg"],
+                            troughcolor=pal["field"], insertcolor=pal["fg"], focuscolor=pal["bg"])
+            style.map(".", foreground=[("disabled", pal["muted"])])
+            style.configure("TButton", background=pal["btn"], padding=(8, 3))
+            style.map("TButton", background=[("active", pal["btn_hot"]), ("disabled", pal["bg"])])
+            style.configure("TNotebook", background=pal["bg"])
+            style.configure("TNotebook.Tab", background=pal["btn"], foreground=pal["fg"], padding=(10, 3))
+            style.map("TNotebook.Tab", background=[("selected", pal["bg"])])
+            style.configure("TCombobox", arrowcolor=pal["fg"], selectbackground=pal["field"], selectforeground=pal["fg"])
+            style.map("TCombobox", fieldbackground=[("readonly", pal["field"])], foreground=[("readonly", pal["fg"])])
+            style.configure("TCheckbutton", indicatorbackground=pal["field"], indicatorforeground=pal["fg"])
+            style.configure("TProgressbar", background=pal["accent"])
+            win.option_add("*TCombobox*Listbox.background", pal["field"])
+            win.option_add("*TCombobox*Listbox.foreground", pal["fg"])
+            win.option_add("*TCombobox*Listbox.selectBackground", pal["accent"])
+        else:
+            style.theme_use(native_theme)
+            win.option_add("*TCombobox*Listbox.background", "white")
+            win.option_add("*TCombobox*Listbox.foreground", "black")
+            win.option_add("*TCombobox*Listbox.selectBackground", "#0078d7")
+        style.configure("Muted.TLabel", foreground=pal["muted"])
+        style.configure("Warn.TLabel", foreground=pal["warn"])
+        win.configure(background=pal["bg"] if dark else style.lookup("TFrame", "background") or pal["bg"])
+        for w in plain:
+            w.configure(background=pal["field"] if isinstance(w, tk.Text) else pal["bg"])
+            if isinstance(w, tk.Text):
+                w.configure(foreground=pal["fg"], insertbackground=pal["fg"])
+        try:                       # dark title bar on Windows 10/11
+            import ctypes
+            hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+            v = ctypes.c_int(1 if dark else 0)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(v), 4)
+        except Exception:
+            pass
+
+    dark_var = tk.BooleanVar(value=C.get("dark", system_prefers_dark()))
+
     top = ttk.Frame(win, padding=(10, 8))
     top.pack(fill="x")
     ttk.Label(top, text="Dave Mirra Freestyle BMX", font=("Segoe UI", 14, "bold")).pack(side="left")
     ver = ttk.Label(top, text="")
     ver.pack(side="right")
+
+    def toggle_dark():
+        C.set("dark", bool(dark_var.get()))
+        apply_theme(dark_var.get())
+        refresh()
+
+    ttk.Checkbutton(top, text="Dark mode", variable=dark_var, command=toggle_dark).pack(side="right", padx=16)
 
     nb = ttk.Notebook(win)
     nb.pack(fill="both", expand=True, padx=10)
@@ -810,6 +882,7 @@ def gui(root_dir):
     bar.pack(fill="x", padx=10, pady=(6, 0))
     logbox = tk.Text(win, height=9, wrap="word", state="disabled", font=("Consolas", 9))
     logbox.pack(fill="both", padx=10, pady=8)
+    plain.append(logbox)
 
     buttons = []
 
@@ -825,10 +898,10 @@ def gui(root_dir):
         l = ttk.Label(p, text=label, cursor="hand2", font=("Segoe UI", 11))
         l.pack(anchor="w", pady=2)
         rows[key] = l
-    ttk.Label(p, text="A ✗ can be clicked to go where it is fixed.", foreground="gray").pack(anchor="w", pady=(0, 10))
+    ttk.Label(p, text="A ✗ can be clicked to go where it is fixed.", style="Muted.TLabel").pack(anchor="w", pady=(0, 10))
     play_btn = lock(ttk.Button(p, text="Play"))
     play_btn.pack(anchor="w", ipadx=24, ipady=6)
-    upd_note = ttk.Label(p, text="", foreground="#b36b00")
+    upd_note = ttk.Label(p, text="", style="Warn.TLabel")
     upd_note.pack(anchor="w", pady=8)
 
     # ---- Build tab
@@ -852,7 +925,7 @@ def gui(root_dir):
     disc_msg.pack(anchor="w", pady=4)
     build_btn = lock(ttk.Button(b, text="Build the game"))
     build_btn.pack(anchor="w", pady=6, ipadx=16, ipady=4)
-    ttk.Label(b, wraplength=660, foreground="gray",
+    ttk.Label(b, wraplength=660, style="Muted.TLabel",
               text="Checks the image, translates the game code and builds dmrecomp.exe into the game folder. "
                    "Steps that are already up to date are skipped. The first build takes a few minutes.").pack(anchor="w")
 
@@ -866,7 +939,7 @@ def gui(root_dir):
     up_btn.pack(anchor="w", pady=4, ipadx=8, ipady=3)
     ul_btn = lock(ttk.Button(u, text="Update launcher"))
     ul_btn.pack(anchor="w", pady=4, ipadx=8, ipady=3)
-    ttk.Label(u, wraplength=660, foreground="gray",
+    ttk.Label(u, wraplength=660, style="Muted.TLabel",
               text="Updates never touch your settings or saves. After updating the project, build again.").pack(anchor="w", pady=8)
 
     # ---- Settings tab
@@ -884,7 +957,8 @@ def gui(root_dir):
         stabs[name] = fr
 
     def scrolled(parent):
-        cv = tk.Canvas(parent, highlightthickness=0)
+        cv = tk.Canvas(parent, highlightthickness=0, background=pal["bg"])
+        plain.append(cv)
         sb = ttk.Scrollbar(parent, orient="vertical", command=cv.yview)
         inner = ttk.Frame(cv)
         inner.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
@@ -914,7 +988,7 @@ def gui(root_dir):
                 widget_for(inner, key, label, r)
                 r += 1
         if name == "Input":
-            ttk.Label(inner, foreground="gray", wraplength=520,
+            ttk.Label(inner, style="Muted.TLabel", wraplength=520,
                       text="Keys: a letter or digit, or up down left right enter backspace tab space lshift rshift "
                            "lctrl rctrl lalt ralt comma period slash semicolon num0..num9 none. Two keys separated by a comma.").grid(
                 row=r, column=0, columnspan=2, sticky="w", pady=6)
@@ -927,7 +1001,7 @@ def gui(root_dir):
         v = tk.BooleanVar(value=flag in C.get("debug_flags", []))
         dflags[flag] = v
         ttk.Checkbutton(dbg, text="%s   %s" % (flag, text), variable=v).pack(anchor="w", pady=2)
-    ttk.Label(dbg, foreground="gray", wraplength=560,
+    ttk.Label(dbg, style="Muted.TLabel", wraplength=560,
               text="These are launcher options, not part of dmrecomp.ini. The console window shows the stall "
                    "watchdog report if the game ever stops responding.").pack(anchor="w", pady=8)
 
@@ -970,7 +1044,7 @@ def gui(root_dir):
     ttk.Button(sbtn, text="Save", command=save_settings).pack(side="left")
     ttk.Button(sbtn, text="Reset to defaults", command=reset_settings).pack(side="left", padx=6)
     ttk.Button(sbtn, text="Reload", command=reload_settings).pack(side="left")
-    ttk.Label(sbtn, text="(edits %s)" % P.ini, foreground="gray").pack(side="left", padx=8)
+    ttk.Label(sbtn, text="(edits %s)" % P.ini, style="Muted.TLabel").pack(side="left", padx=8)
 
     # ---- plumbing
     def refresh():
@@ -979,7 +1053,7 @@ def gui(root_dir):
         first_bad = None
         for key, label, ok, tab in st:
             rows[key].configure(text=("✓  " if ok else "✗  ") + label,
-                                foreground="#1a7f37" if ok else "#c62828")
+                                foreground=pal["ok"] if ok else pal["bad"])
             rows[key].tab = tab
             rows[key].bind("<Button-1>", lambda e, t=tab: nb.select(tabs[t]))
             if not ok:
@@ -993,11 +1067,11 @@ def gui(root_dir):
         if d:
             try:
                 disc_fingerprint(d)
-                disc_msg.configure(text="Image found: %s" % os.path.basename(resolve_bin(d)), foreground="#1a7f37")
+                disc_msg.configure(text="Image found: %s" % os.path.basename(resolve_bin(d)), foreground=pal["ok"])
             except Fail as e:
-                disc_msg.configure(text=str(e), foreground="#c62828")
+                disc_msg.configure(text=str(e), foreground=pal["bad"])
         else:
-            disc_msg.configure(text="No image chosen yet.", foreground="gray")
+            disc_msg.configure(text="No image chosen yet.", foreground=pal["muted"])
         return first_bad
 
     def work(fn, done_msg):
@@ -1093,6 +1167,7 @@ def gui(root_dir):
             pass
         win.after(100, pump)
 
+    apply_theme(dark_var.get())
     first = refresh()
     nb.select(tabs["Play"] if ready_to_play(P, C) else tabs[first or "Update"])
     pump()
