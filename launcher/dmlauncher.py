@@ -78,6 +78,7 @@ class Paths:
         self.dl = os.path.join(self.work, "dl")
         self.llvm = os.path.join(self.tools, "llvm-mingw")
         self.pydir = os.path.join(self.tools, "python")
+        self.discdir = os.path.join(self.root, "Dave Mirra BMX")   # where people put their disc image
         self.cfg = os.path.join(self.root, "launcher.json")
         self.exe = os.path.join(self.game, "dmrecomp.exe")
         self.ini = os.path.join(self.game, "dmrecomp.ini")
@@ -704,6 +705,48 @@ def play(P, C, disc_path, log):
     log("started the game")
 
 
+# ---------------------------------------------------------------- disc folder
+
+def find_disc(P):
+    """A .cue (else .bin) in the "Dave Mirra BMX" folder, or in a folder one level inside it."""
+    try:
+        os.makedirs(P.discdir, exist_ok=True)
+        found = {".cue": [], ".bin": []}
+        for dirpath, dirs, files in os.walk(P.discdir):
+            if os.path.relpath(dirpath, P.discdir).count(os.sep) >= 1:
+                dirs[:] = []
+            for n in sorted(files):
+                ext = os.path.splitext(n)[1].lower()
+                if ext in found:
+                    found[ext].append(os.path.join(dirpath, n))
+        for ext in (".cue", ".bin"):
+            for path in found[ext]:
+                try:
+                    disc_fingerprint(path)
+                    return path
+                except Fail:
+                    continue
+    except OSError:
+        pass
+    return None
+
+
+def adopt_disc(P, C):
+    """Use the image in the disc folder when no working one is chosen. True if it changed the choice."""
+    cur = C.get("disc")
+    try:
+        if cur:
+            disc_fingerprint(cur)
+            return False
+    except Fail:
+        pass
+    found = find_disc(P)
+    if found and os.path.abspath(found) != cur:
+        C.set("disc", os.path.abspath(found))
+        return True
+    return False
+
+
 # ---------------------------------------------------------------- status
 
 def status(P, C):
@@ -746,6 +789,8 @@ def cli(argv):
     C = Config(P.cfg)
     if disc:
         C.set("disc", os.path.abspath(disc))
+    else:
+        adopt_disc(P, C)
     log = lambda s: print(s, flush=True)
     what = cmd[0] if cmd else "status"
     try:
@@ -901,12 +946,23 @@ def gui(root_dir):
     ttk.Label(p, text="A ✗ can be clicked to go where it is fixed.", style="Muted.TLabel").pack(anchor="w", pady=(0, 10))
     play_btn = lock(ttk.Button(p, text="Play"))
     play_btn.pack(anchor="w", ipadx=24, ipady=6)
+    close_var = tk.BooleanVar(value=C.get("close_on_play", False))
+
+    def set_close():
+        C.set("close_on_play", bool(close_var.get()))
+
+    ttk.Checkbutton(p, text="Close the launcher when the game starts", variable=close_var,
+                    command=set_close).pack(anchor="w", pady=(8, 0))
     upd_note = ttk.Label(p, text="", style="Warn.TLabel")
     upd_note.pack(anchor="w", pady=8)
 
     # ---- Build tab
     b = tabs["Build"]
+    adopt_disc(P, C)
     ttk.Label(b, text="Your disc image: Dave Mirra Freestyle BMX [SLUS-01026] (.cue or .bin)").pack(anchor="w")
+    ttk.Label(b, style="Muted.TLabel", wraplength=660,
+              text="Put the .cue and .bin in the \"Dave Mirra BMX\" folder next to the launcher and it is found "
+                   "automatically, or browse to them anywhere.").pack(anchor="w")
     disc_var = tk.StringVar(value=C.get("disc", ""))
     row = ttk.Frame(b)
     row.pack(fill="x", pady=4)
@@ -920,7 +976,13 @@ def gui(root_dir):
             C.set("disc", disc_var.get())
             refresh()
 
+    def open_discdir():
+        os.makedirs(P.discdir, exist_ok=True)
+        if WINDOWS:
+            os.startfile(P.discdir)
+
     ttk.Button(row, text="Browse...", command=browse).pack(side="left", padx=(6, 0))
+    ttk.Button(row, text="Open folder", command=open_discdir).pack(side="left", padx=(6, 0))
     disc_msg = ttk.Label(b, text="", wraplength=640)
     disc_msg.pack(anchor="w", pady=4)
     build_btn = lock(ttk.Button(b, text="Build the game"))
@@ -1048,6 +1110,9 @@ def gui(root_dir):
 
     # ---- plumbing
     def refresh():
+        if not busy.is_set() and adopt_disc(P, C):
+            disc_var.set(C.get("disc", ""))
+            log("found your disc image: %s" % C.get("disc"))
         st = status(P, C)
         ok_all = True
         first_bad = None
@@ -1117,6 +1182,9 @@ def gui(root_dir):
             play(P, C, C.get("disc"), log)
         except Fail as e:
             messagebox.showerror("Play", str(e))
+            return
+        if close_var.get():
+            win.after(500, win.destroy)
 
     play_btn.configure(command=do_play)
     build_btn.configure(command=do_build)
@@ -1168,6 +1236,7 @@ def gui(root_dir):
         win.after(100, pump)
 
     apply_theme(dark_var.get())
+    win.bind("<FocusIn>", lambda e: refresh() if e.widget is win else None)   # picks up a disc image just dropped in the folder
     first = refresh()
     nb.select(tabs["Play"] if ready_to_play(P, C) else tabs[first or "Update"])
     pump()
