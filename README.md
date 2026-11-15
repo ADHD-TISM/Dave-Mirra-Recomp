@@ -47,6 +47,10 @@ the original console picture; delete the file to get them back.
 | `aspect` | `4:3`, `stretch` | F8 |
 | `integer_scale` | `0`, `1` whole multiples of 240 lines only | |
 | `fullscreen` | `0`, `1` | F11 or Alt+Enter |
+| `window_size` | `auto` (960x720) or `WxH` | |
+| `fullscreen_size` | `native` or `WxH`: switches the display to that mode | |
+| `upscale` | `off`, `fsr` AMD FidelityFX Super Resolution 1 | F9 |
+| `fsr_sharpness` | `0`-`100`, how much sharpening FSR adds | |
 | `cpu_assist` | `1` hold 30 fps, `0` console timing | |
 | `reverb` | `1` console echo effect, `0` dry | |
 | `dualshock` | `1` DualShock (sticks, rumble), `0` plain digital pad | |
@@ -58,6 +62,11 @@ the original console picture; delete the file to get them back.
 Command line: `--scale N`, `--fullscreen`, `--console-cpu`, and
 `--set name=value` for any setting. Hotkey changes are not written back to the
 file.
+
+`upscale = fsr` runs the picture through FSR 1 (edge-directed upscaling plus sharpening, as two OpenGL shaders) when the window is 
+larger than the game's internal picture; if the graphics driver lacks the needed OpenGL features it falls back to the plain picture. 
+It only changes how the finished picture is enlarged, so it works at any internal `scale`. DirectX 12 and DLSS are not used: the game draws on the CPU, 
+and DLSS needs motion and depth data that a software renderer does not have.
 
 At `scale` 1 the picture is pixel-identical to the console-resolution renderer.
 At 2 and 4, polygons are drawn a second time into a larger copy of video memory

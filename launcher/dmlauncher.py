@@ -593,6 +593,15 @@ SETTINGS = [
      "1 = only enlarge by whole multiples of 240 lines"),
     ("fullscreen", "Video", "Start in fullscreen", "bool", B01, "0",
      "1 = start in fullscreen (F11 or Alt+Enter toggles)"),
+    ("window_size", "Video", "Window size", "combo", ["auto", "640x480", "800x600", "960x720", "1280x960", "1600x1200",
+                                                      "1280x720", "1600x900", "1920x1080"], "auto",
+     "Window size in pixels (WxH), e.g. 1280x960. auto = 960x720"),
+    ("fullscreen_size", "Video", "Fullscreen resolution", "combo", ["native", "1024x768", "1280x960", "1280x720",
+                                                                     "1600x1200", "1920x1080", "2560x1440", "3840x2160"], "native",
+     "Fullscreen resolution (WxH) or native = the desktop's own resolution"),
+    ("upscale", "Video", "Upscaler", "choice", ["off", "fsr"], "off",
+     "off = plain, fsr = AMD FidelityFX Super Resolution 1 (F9 toggles); fsr_sharpness 0..100"),
+    ("fsr_sharpness", "Video", "FSR sharpness (0-100)", "combo", ["0", "25", "50", "80", "100"], "80", None),
     ("cpu_assist", "Gameplay", "Hold 30 fps in busy scenes", "bool", B01, "1",
      "1 = hold 30 fps in busy scenes, 0 = console CPU timing with its slowdowns"),
     ("reverb", "Audio", "Console echo effect (reverb)", "bool", B01, "1",
@@ -654,6 +663,12 @@ def valid_setting(key, val):
         return True
     if s[3] in ("choice", "bool"):
         return val.lower() in [c.lower() for c in s[4]]
+    if s[3] == "combo":
+        v = val.lower()
+        if key == "fsr_sharpness":
+            return v.isdigit() and 0 <= int(v) <= 100
+        m = re.fullmatch(r"(\d{3,5})x(\d{3,5})", v)
+        return v in ("auto", "native") and v == s[5] or bool(m and int(m.group(1)) >= 320 and int(m.group(2)) >= 240)
     parts = [p.strip() for p in val.split(",")]
     if not 1 <= len(parts) <= 2:
         return False
@@ -1038,6 +1053,8 @@ def gui(root_dir):
             w = ttk.Checkbutton(parent, variable=var, onvalue="1", offvalue="0")
         elif sc and sc[3] == "choice":
             w = ttk.Combobox(parent, textvariable=var, values=sc[4], state="readonly", width=14)
+        elif sc and sc[3] == "combo":
+            w = ttk.Combobox(parent, textvariable=var, values=sc[4], width=14)   # editable: pick one or type WxH
         else:
             w = ttk.Entry(parent, textvariable=var, width=24)
         w.grid(row=r, column=1, sticky="w", pady=2)
