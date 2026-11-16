@@ -58,6 +58,7 @@ static int key(int vk) { return vk && (GetAsyncKeyState(vk) & 0x8000) != 0; }
    defaults on first run), then from the command line. The defaults reproduce
    the console picture; F6/F7/F8/F11 change the display while playing. */
 int g_fullscreen, g_integer_scale, g_filter, g_aspect;   /* filter: 0 nearest, 1 smooth; aspect: 0 = 4:3, 1 = stretch */
+int g_scale_auto = 1;   /* step the internal resolution down when the machine cannot keep up */
 int g_upscale, g_fsr_sharp = 80;                          /* upscale: 0 = plain, 1 = FSR 1; sharpness 0..100 */
 static int win_w = 960, win_h = 720;                      /* window_size */
 extern int g_ws_kq; extern unsigned g_gte_rtp;
@@ -113,6 +114,7 @@ static char *trim(char *s) {
 /* one "name = value" setting; returns 0 when the name or value is not understood */
 int host_set_option(const char *name, const char *val) {
     if (!_stricmp(name, "scale")) { int v = atoi(val); if (v != 1 && v != 2 && v != 4) return 0; g_gpu_scale = v; return 1; }
+    if (!_stricmp(name, "scale_auto")) { g_scale_auto = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "filter")) { if (!_stricmp(val, "nearest")) g_filter = 0; else if (!_stricmp(val, "smooth")) g_filter = 1; else return 0; return 1; }
     if (!_stricmp(name, "aspect")) { if (!_stricmp(val, "4:3")) g_aspect = 0; else if (!_stricmp(val, "stretch")) g_aspect = 1; else return 0; return 1; }
     if (!_stricmp(name, "window_size") || !_stricmp(name, "fullscreen_size")) {
@@ -160,6 +162,8 @@ static void config_write_default(const char *path) {
                "# The defaults give the original console picture.\n\n"
                "# Internal 3D resolution: 1 = original, 2 or 4 = sharper (F6 cycles while playing)\n"
                "scale = 1\n"
+               "# 1 = drop to a lower scale by itself when the game cannot hold full speed at 2 or 4\n"
+               "scale_auto = 1\n"
                "# How the picture is enlarged to the window: nearest = sharp pixels, smooth = blended (F7)\n"
                "filter = nearest\n"
                "# 4:3 = console shape with black bars, stretch = fill the window (F8)\n"
@@ -829,9 +833,20 @@ void host_frame(void) {
     /* pace to 59.94 Hz */
     LONGLONG target = qpf.QuadPart * 1001 / 60000;
     LARGE_INTEGER now;
-    for (;;) {
+    for (int first = 1;; first = 0) {
         QueryPerformanceCounter(&now);
         LONGLONG el = now.QuadPart - last_frame.QuadPart;
+        if (first) {   /* no time left over: this frame ran late. Half of 120 frames late at scale 2 or 4 means the CPU is too slow for it. */
+            static int late, seen;
+            if (el > target + target / 8) late++;
+            if (++seen == 120) {
+                if (g_scale_auto && g_gpu_scale > 1 && late >= 60) {
+                    g_gpu_scale = g_gpu_scale == 4 ? 2 : 1; gpu_set_scale(); show_settings();
+                    fprintf(stderr, "[scale] could not hold full speed; internal resolution lowered to %dx (scale_auto = 0 turns this off)\n", g_gpu_scale);
+                }
+                late = seen = 0;
+            }
+        }
         if (el >= target) break;
         if (target - el > qpf.QuadPart / 500) Sleep(1);
     }

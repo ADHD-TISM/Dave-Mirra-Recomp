@@ -51,7 +51,8 @@ the original console picture; delete the file to get them back.
 
 | Setting | Values | Key while playing |
 | --- | --- | --- |
-| `scale` | `1` original, `2`, `4` internal 3D resolution | F6 cycles |
+| `scale` | `1` original, `2`, `4` internal 3D resolution. The CPU draws it, and 4 is 16 times the pixels: use 2 on a laptop | F6 cycles |
+| `scale_auto` | `1` drops `scale` by itself when the game cannot hold full speed, `0` never | |
 | `filter` | `nearest` sharp pixels, `smooth` blended | F7 |
 | `aspect` | `4:3`, `stretch` | F8 |
 | `integer_scale` | `0`, `1` whole multiples of 240 lines only | |
@@ -153,7 +154,7 @@ the game showed in the last second).
 - `tools/recomp.py` — MIPS R3000A to C recompiler (PS-X EXE and raw overlays).
 - `tools/regen.py` (`regen.sh`) — regenerates `gen/` for the main EXE, both overlays and the movie player, from a game profile.
 - `tools/iterate.sh` — runs the game (in `testrun/`, apart from your saves and settings) and adds any missing function entry to `extra_<module>.txt`.
-- `tools/sweep.py` — coverage sweep: scripted runs through every mode, level and menu, each under `iterate.sh`.
+- `tools/sweep.py` — coverage sweep: scripted runs through every mode, level and menu, each under `iterate.sh`. Works for either game (the one `gen/` was built for). `--card FILE --unlocked` plays each level unlocked on a save, `--probe MODE` writes a contact sheet of the level list; see its header.
 - `tools/package.sh` — disc image to ready-to-run folder.
 - `games/` — one profile and one set of `extra_*.txt` entry-point lists (function pointers, setjmp targets the static analysis can't find) per game.
 - `runtime/` — CPU glue and scheduler, HLE BIOS, GPU (software), GTE, CD-ROM, MDEC, SPU, Win32 host.

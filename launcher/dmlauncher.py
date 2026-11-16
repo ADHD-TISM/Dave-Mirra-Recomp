@@ -644,7 +644,9 @@ B01 = ["0", "1"]
 # (key, tab, label, kind, choices, default, comment)
 SETTINGS = [
     ("scale", "Video", "Internal 3D resolution", "choice", ["1", "2", "4"], "1",
-     "Internal 3D resolution: 1 = original, 2 or 4 = sharper (F6 cycles while playing)"),
+     "Internal 3D resolution: 1 = original, 2 or 4 = sharper (F6 cycles while playing). The CPU draws it: 4 is 16 times the work, so use 2 on a laptop"),
+    ("scale_auto", "Video", "Lower it when too slow", "bool", B01, "1",
+     "1 = drop to a lower internal resolution by itself when the game cannot hold full speed at 2 or 4"),
     ("filter", "Video", "Picture filter", "choice", ["nearest", "smooth"], "nearest",
      "How the picture is enlarged to the window: nearest = sharp pixels, smooth = blended (F7)"),
     ("aspect", "Video", "Aspect ratio", "choice", ["4:3", "stretch"], "4:3",

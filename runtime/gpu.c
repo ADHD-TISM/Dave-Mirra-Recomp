@@ -220,6 +220,29 @@ static void tri(const DS *ds, const Vtx *a0, const Vtx *a1, const Vtx *a2, int t
         s64 e0 = e[0] + A[0] * (xa - minx), e1 = e[1] + A[1] * (xa - minx), e2 = e[2] + A[2] * (xa - minx);
         u16 *row = S == 1 ? &vram[(y & 511) << 10] : hv + (size_t)(y & (512 * S - 1)) * (size_t)(1024 * S);
         int xmask = 1024 * S - 1;
+        if (S > 1) {
+            /* high-resolution copy: every colour and texture coordinate is linear in x, so step them
+               across the span instead of rebuilding them from the three edge values at each pixel
+               (this copy is drawn 4 or 16 times as many pixels as the console picture) */
+            double cr = (e0 * v0->r + e1 * v1->r + e2 * v2->r) * inv, sr = (A[0] * v0->r + A[1] * v1->r + A[2] * v2->r) * inv;
+            double cg = (e0 * v0->g + e1 * v1->g + e2 * v2->g) * inv, sg = (A[0] * v0->g + A[1] * v1->g + A[2] * v2->g) * inv;
+            double cb = (e0 * v0->b + e1 * v1->b + e2 * v2->b) * inv, sb = (A[0] * v0->b + A[1] * v1->b + A[2] * v2->b) * inv;
+            double cu = (e0 * v0->u + e1 * v1->u + e2 * v2->u) * inv, su = (A[0] * v0->u + A[1] * v1->u + A[2] * v2->u) * inv;
+            double cv = (e0 * v0->v + e1 * v1->v + e2 * v2->v) * inv, sv = (A[0] * v0->v + A[1] * v1->v + A[2] * v2->v) * inv;
+            if (!gouraud) { cr = v0->r; cg = v0->g; cb = v0->b; sr = sg = sb = 0; }
+            for (int x = xa; x <= xb; x++, cr += sr, cg += sg, cb += sb, cu += su, cv += sv) {
+                int r = (int)(cr + 0.5), gg = (int)(cg + 0.5), b = (int)(cb + 0.5);
+                if (textured) {
+                    u16 t = texel(ds, ti, (int)cu, (int)cv);
+                    if (!t) continue;
+                    u16 c = raw ? t : modulate(t, r, gg, b, x, y, dith);
+                    put(ds, &row[x & xmask], c, semi && (t & 0x8000), semimode);
+                } else {
+                    put(ds, &row[x & xmask], shade(r, gg, b, x, y, dith), semi, semimode);
+                }
+            }
+            continue;
+        }
         for (int x = xa; x <= xb; x++, e0 += A[0], e1 += A[1], e2 += A[2]) {
             double w0 = e0 * inv, w1 = e1 * inv, w2 = e2 * inv;
             int r = v0->r, gg = v0->g, b = v0->b;
