@@ -37,7 +37,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 REPO = "ADHD-TISM/Dave-Mirra-Recomp"
-LAUNCHER_VERSION = "3"
+LAUNCHER_VERSION = "4"
 
 # Build tools: llvm-mingw (clang + a MinGW-w64 UCRT sysroot), pinned and checked.
 LLVM_NAME = "llvm-mingw-20261104-ucrt-x86_64"
