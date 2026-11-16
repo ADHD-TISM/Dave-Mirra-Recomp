@@ -172,6 +172,8 @@ the game showed in the last second).
 
 ## Status
 
+**In progress: lower-end hardware.** The 2x and 4x internal resolutions are drawn by the CPU and lag on laptops. `scale_auto` (on by default) now steps the resolution down when the game cannot hold full speed, and the 2x/4x drawing is somewhat faster. More work on slow machines is planned; use `scale = 1` or `2` on a laptop for now.
+
 Boots through the intro movies and the front end into gameplay. Scripted runs
 (random pedalling, steering, tricks, pause menu) complete without a missing
 function in ProQuest, Session and Freeride, in the Options and Cool Stuff
