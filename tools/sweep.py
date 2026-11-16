@@ -51,9 +51,10 @@ def level_run(mode, level, riders, post, seed, poke=True, lsteps=0):
     ev = ['760:se'] + ['%d:%s' % (790 + 60 * i, k) for i, k in enumerate(nav)]
     ev += ['%d:x' % (850 + b)] + ['%d:r' % (970 + b + 40 * i) for i in range(riders)]
     # the accept press moves later when R presses go before it
-    ev += ['%d:x' % (t + b) for t in (1100, 1350, 1600, max(2100, 1950 + 70 * lsteps) if lsteps else 1900, 2300, 2600, 2900)]
+    late = max(2100, 1950 + 70 * lsteps) - 1900 if lsteps else 0   # R presses push the accept and everything after it later
+    ev += ['%d:x' % (t + b + (late if t >= 1900 else 0)) for t in (1100, 1350, 1600, 1900, 2300, 2600, 2900)]
     ev += ['%d:r' % (1750 + b + 70 * i) for i in range(lsteps)]   # level icon: R moves through the levels, locked ones included
-    f = 3100 + b
+    f = 3100 + b + late
     next_pause = f + rnd.choice([2500, 4000, 6000])
     while f < 17000 + b:
         if f >= next_pause:
@@ -119,9 +120,10 @@ def unlocked(game, p=0):
 def prepare(ev, shift, card):
     """Menu inputs wait for the menu: shift them, and start from a fresh copy of the card."""
     ev = [e if int(e.split(':')[0]) < 790 else '%d:%s' % (int(e.split(':')[0]) + shift, e.split(':')[1]) for e in ev]
+    data = open(card, 'rb').read() if card else None   # read first: the card may be one of the files cleared below
     for f in os.listdir(RUN):
         if f.startswith('shot_') or f.endswith('.mcd'): os.remove(os.path.join(RUN, f))
-    if card: shutil.copyfile(card, os.path.join(RUN, 'memcard1.mcd'))
+    if data is not None: open(os.path.join(RUN, 'memcard1.mcd'), 'wb').write(data)
     open(os.path.join(RUN, 's.txt'), 'w').write(','.join(ev))
 
 
@@ -131,10 +133,11 @@ def probe(cue, mode, n, shift, card):
     except ImportError: sys.exit('--probe needs Pillow (pip install pillow)')
     ev, _ = level_run(mode, None, 0, 0, 1, False, n)
     t = lambda e: int(e.split(':')[0])
-    ev = [e for e in ev if t(e) < 1650 + 60 or (e.endswith(':r') and t(e) < 1750 + 70 * n + 60)]   # no accept press
+    b = 60 * len(NAV[mode])
+    ev = [e for e in ev if t(e) < 1650 + b + 60 or (e.endswith(':r') and t(e) < 1750 + b + 70 * n + 60)]   # no accept press
     os.makedirs(RUN, exist_ok=True)
     prepare(ev, shift, card)
-    t0 = 1650 + shift - 100
+    t0 = 1650 + b + shift - 100
     try:
         subprocess.run([os.path.join(ROOT, 'build', 'dmrecomp.exe'), '--turbo', '--auto-start', '90', '--shot-every', '40',
                         '--script-file', 's.txt', cue], cwd=RUN, stdout=open(os.path.join(RUN, 'run.log'), 'w'),

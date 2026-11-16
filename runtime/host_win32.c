@@ -837,9 +837,10 @@ void host_frame(void) {
         QueryPerformanceCounter(&now);
         LONGLONG el = now.QuadPart - last_frame.QuadPart;
         if (first) {   /* no time left over: this frame ran late. Half of 120 frames late at scale 2 or 4 means the CPU is too slow for it. */
-            static int late, seen;
-            if (el > target + target / 8) late++;
-            if (++seen == 120) {
+            static int late, seen, last_scale;
+            if (g_gpu_scale != last_scale) { last_scale = g_gpu_scale; late = seen = 0; }   /* F6 or an earlier drop: count afresh */
+            if (g_gpu_scale > 1 && el > target + target / 8) late++;
+            if (g_gpu_scale > 1 && ++seen == 120) {
                 if (g_scale_auto && g_gpu_scale > 1 && late >= 60) {
                     g_gpu_scale = g_gpu_scale == 4 ? 2 : 1; gpu_set_scale(); show_settings();
                     fprintf(stderr, "[scale] could not hold full speed; internal resolution lowered to %dx (scale_auto = 0 turns this off)\n", g_gpu_scale);
