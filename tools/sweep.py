@@ -47,7 +47,7 @@ def level_run(mode, level, riders, post, seed, poke=True, lsteps=0):
     """Menu -> rider -> level -> a full run with pause-menu visits -> the Run Finished menu.
     level is poked into memory (poke) or reached with lsteps presses of R on the level icon."""
     rnd = random.Random(seed)
-    nav = NAV[mode]; b = 60 * len(nav)
+    nav = NAV[mode]; b = menu_offset(mode)
     ev = ['760:se'] + ['%d:%s' % (790 + 60 * i, k) for i, k in enumerate(nav)]
     ev += ['%d:x' % (850 + b)] + ['%d:r' % (970 + b + 40 * i) for i in range(riders)]
     # the accept press moves later when R presses go before it
@@ -117,13 +117,18 @@ def unlocked(game, p=0):
             yield '%s_U%d_p%d' % (mode, st, p), level_run(mode, None, (st + p) % 5, (st + 2 * p) % 6, 800 + st + 17 * p + 1000 * p, False, st)
 
 
+def menu_offset(mode):
+    """Frames the menu steps before the mode's entry add to every later press (level_run and probe both use it)."""
+    return 60 * len(NAV[mode])
+
+
 def prepare(ev, shift, card):
-    """Menu inputs wait for the menu: shift them, and start from a fresh copy of the card."""
+    """Menu inputs wait for the menu: shift them, and start from a fresh copy of the card.
+    card is the card's bytes, taken once in main(). Only the game's own memcard1/2.mcd are cleared, so a --card file kept in testrun/ survives."""
     ev = [e if int(e.split(':')[0]) < 790 else '%d:%s' % (int(e.split(':')[0]) + shift, e.split(':')[1]) for e in ev]
-    data = open(card, 'rb').read() if card else None   # read first: the card may be one of the files cleared below
     for f in os.listdir(RUN):
-        if f.startswith('shot_') or f.endswith('.mcd'): os.remove(os.path.join(RUN, f))
-    if data is not None: open(os.path.join(RUN, 'memcard1.mcd'), 'wb').write(data)
+        if f.startswith('shot_') or f in ('memcard1.mcd', 'memcard2.mcd'): os.remove(os.path.join(RUN, f))
+    if card is not None: open(os.path.join(RUN, 'memcard1.mcd'), 'wb').write(card)
     open(os.path.join(RUN, 's.txt'), 'w').write(','.join(ev))
 
 
@@ -133,7 +138,7 @@ def probe(cue, mode, n, shift, card):
     except ImportError: sys.exit('--probe needs Pillow (pip install pillow)')
     ev, _ = level_run(mode, None, 0, 0, 1, False, n)
     t = lambda e: int(e.split(':')[0])
-    b = 60 * len(NAV[mode])
+    b = menu_offset(mode)
     ev = [e for e in ev if t(e) < 1650 + b + 60 or (e.endswith(':r') and t(e) < 1750 + b + 70 * n + 60)]   # no accept press
     os.makedirs(RUN, exist_ok=True)
     prepare(ev, shift, card)
@@ -169,6 +174,7 @@ def main(argv):
     if opts['card'] and not os.path.isfile(opts['card']): sys.exit('no such card: %s' % opts['card'])
     if opts['unlocked'] and not opts['card']: sys.exit('--unlocked needs --card')
     cue = pos[0]
+    if opts['card']: opts['card'] = open(opts['card'], 'rb').read()   # one snapshot: every run starts from the card as it was given
     shift = opts['shift'] if opts['shift'] is not None else GAMES[game]['shift'] + (GAMES[game]['card'] if opts['card'] else 0)
     os.makedirs(RUN, exist_ok=True)
     if opts['probe']:
