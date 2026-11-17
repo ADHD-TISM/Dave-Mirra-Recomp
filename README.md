@@ -34,6 +34,13 @@ cmake -S . -B build -G "MinGW Makefiles"
 cmake --build build -j
 ```
 
+**Linux / Steam Deck (early work in progress, expect rough edges):** the game has an SDL2 front end (`runtime/plat_sdl.c`). It needs gcc, CMake,
+SDL2 and OpenGL development files (Debian/Ubuntu: `build-essential cmake libsdl2-dev libgl-dev`), then the same two
+`cmake` lines without `-G`. Tested on Ubuntu 22.04 under WSL: scripted runs give the same picture and sound as the
+Windows build, at 1x and 2x, with and without OpenGL. Not yet tried: real Linux hardware or a Steam Deck, and sound
+output and gamepads there. `cmake -DDM_SDL=ON` builds
+this front end on Windows too (with SDL2's MinGW package on `CMAKE_PREFIX_PATH`).
+
 ## Run
 
 ```
@@ -112,8 +119,10 @@ the game, and **Settings** edits `game/<id>/dmrecomp.ini`. The launcher makes a 
 saves are kept. `python launcher/dmlauncher.py status|download|update|build|play|update-launcher`
 does the same without a window. `sh launcher/build_exe.sh` (needs PyInstaller) packs it into one file,
 `launcher/dist/DaveMirraLauncher.exe`, which needs no Python installed and holds no game code,
-so it can be shared; put it in its own folder and run it. Linux and Steam Deck are not supported yet: the game itself only
-has a Windows front end.
+so it can be shared; put it in its own folder and run it. On Linux run the script, `python3 launcher/dmlauncher.py`
+(the window needs Tkinter, `python3-tk` on Debian/Ubuntu; `status`, `download`, `build` and `play` work without it). There it
+uses the system's compiler and SDL2 instead of downloading a compiler, and says what to install when they are missing.
+Tested under WSL from the command line only; the Steam Deck, which has no compiler of its own, is not handled yet.
 
 ## Packaging
 
@@ -157,7 +166,7 @@ the game showed in the last second).
 - `tools/sweep.py` — coverage sweep: scripted runs through every mode, level and menu, each under `iterate.sh`. Works for either game (the one `gen/` was built for). `--card FILE --unlocked` plays each level unlocked on a save, `--probe MODE` writes a contact sheet of the level list; see its header.
 - `tools/package.sh` — disc image to ready-to-run folder.
 - `games/` — one profile and one set of `extra_*.txt` entry-point lists (function pointers, setjmp targets the static analysis can't find) per game.
-- `runtime/` — CPU glue and scheduler, HLE BIOS, GPU (software), GTE, CD-ROM, MDEC, SPU, Win32 host.
+- `runtime/` — CPU glue and scheduler, HLE BIOS, GPU (software), GTE, CD-ROM, MDEC, SPU, and the host: `host_common.c` (settings, input mapping, presentation, pacing) on top of one platform file, `plat_win32.c` or `plat_sdl.c` (`host.h` is the interface between them).
 
 ## Modules
 

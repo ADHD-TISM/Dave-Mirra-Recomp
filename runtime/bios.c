@@ -227,7 +227,17 @@ static void mc_flush_events(void) {
     mc_ev_n = 0;
 }
 static void mc_sum(u8 *f) { u8 x = 0; for (int i = 0; i < 127; i++) x ^= f[i]; f[127] = x; }
+/* move a file; replace = 0 fails when the target exists instead of replacing it */
+#ifdef _WIN32
 __declspec(dllimport) int __stdcall MoveFileExA(const char *from, const char *to, unsigned long flags);
+static int file_move(const char *from, const char *to, int replace) { return MoveFileExA(from, to, replace ? 1 /* MOVEFILE_REPLACE_EXISTING */ : 0); }
+#else
+#include <unistd.h>
+static int file_move(const char *from, const char *to, int replace) {
+    if (!replace && access(to, F_OK) == 0) return 0;
+    return rename(from, to) == 0;   /* replaces the target in one step */
+}
+#endif
 static int mc_nosave[2];   /* set when an unrecognised card file could not be moved aside */
 static void mc_save(void) {
     if (mc_nosave[mc_slot]) return;
@@ -237,7 +247,7 @@ static void mc_save(void) {
     FILE *f = fopen(tmp, "wb");
     int ok = f && fwrite(mc, 1, MC_SIZE, f) == MC_SIZE;
     if (f && fclose(f)) ok = 0;
-    if (ok) ok = MoveFileExA(tmp, g_memcard_path[mc_slot], 1 /* MOVEFILE_REPLACE_EXISTING */);
+    if (ok) ok = file_move(tmp, g_memcard_path[mc_slot], 1);
     if (!ok && !warned) { warned = 1; fprintf(stderr, "[card] cannot write %s: saves will not persist\n", g_memcard_path[mc_slot]); }
 }
 static void mc_format(void) {
@@ -260,7 +270,7 @@ static void mc_open_image(void) {
             for (int k = 0; k < 100 && !moved; k++) {   /* .bad, .bad1, .bad2 ... so an earlier .bad is never replaced */
                 if (k) snprintf(bad, sizeof bad, "%s.bad%d", g_memcard_path[mc_slot], k);
                 else snprintf(bad, sizeof bad, "%s.bad", g_memcard_path[mc_slot]);
-                moved = MoveFileExA(g_memcard_path[mc_slot], bad, 0);   /* flags 0: fails rather than replacing */
+                moved = file_move(g_memcard_path[mc_slot], bad, 0);   /* fails rather than replacing */
             }
             if (moved) {
                 fprintf(stderr, "[card] %s is not a 128 KB memory card image; kept as %s, started a blank card\n", g_memcard_path[mc_slot], bad);

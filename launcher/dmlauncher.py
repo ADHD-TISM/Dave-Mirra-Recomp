@@ -16,10 +16,11 @@ this file, and nothing is written outside that folder.
 
 Folders under the root: tools/ (compiler, downloaded), project/ (the game's
 source, downloaded), work/<game>/ (generated code, objects, caches) and
-game/<game>/ (the built dmrecomp.exe, dmrecomp.ini and your memory cards for
+game/<game>/ (the built game, dmrecomp.ini and your memory cards for
 that game). Updates never touch game/, so settings and saves are kept.
 
-Windows only for now: the game itself has only a Windows front end so far.
+Windows and Linux. On Windows the compiler is downloaded; on Linux the system's own compiler and
+SDL2 development files are used (the Update tab says what to install if they are missing).
 """
 import hashlib
 import json
@@ -37,7 +38,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 REPO = "ADHD-TISM/Dave-Mirra-Recomp"
-LAUNCHER_VERSION = "4"
+LAUNCHER_VERSION = "5"
 
 # Build tools: llvm-mingw (clang + a MinGW-w64 UCRT sysroot), pinned and checked.
 LLVM_NAME = "llvm-mingw-20261104-ucrt-x86_64"
@@ -53,6 +54,7 @@ FROZEN = bool(getattr(sys, "frozen", False))
 WINDOWS = sys.platform == "win32"
 NO_WINDOW = 0x08000000 if WINDOWS else 0
 NEW_CONSOLE = 0x00000010 if WINDOWS else 0
+EXE_FILE = "dmrecomp.exe" if WINDOWS else "dmrecomp"
 UA = {"User-Agent": "dmrecomp-launcher"}
 
 
@@ -88,11 +90,14 @@ class Paths:
         self.gen = os.path.join(self.work, gid, "gen")
         self.obj = os.path.join(self.work, gid, "obj")
         self.disc = os.path.join(self.work, gid, "disc")
-        self.exe = os.path.join(self.game, "dmrecomp.exe")
+        self.exe = os.path.join(self.game, EXE_FILE)
         self.ini = os.path.join(self.game, "dmrecomp.ini")
 
     @property
     def clang(self):
+        """The C compiler: the downloaded llvm-mingw on Windows, the system's own elsewhere."""
+        if not WINDOWS:
+            return shutil.which("cc") or shutil.which("gcc") or shutil.which("clang") or ""
         return os.path.join(self.llvm, "bin", "x86_64-w64-mingw32-clang.exe")
 
     @property
@@ -280,7 +285,37 @@ def latest_tag(log, strict=False):
     return max(tags, key=version_tuple) if tags else None
 
 
+# Linux: the build uses the system's compiler and SDL2 instead of downloading them.
+LINUX_HINT = ("Install them with your package manager, then try again:\n"
+              "  Debian/Ubuntu:  sudo apt install build-essential libsdl2-dev libgl-dev\n"
+              "  Fedora:         sudo dnf install gcc SDL2-devel mesa-libGL-devel\n"
+              "  Arch:           sudo pacman -S base-devel sdl2")
+_sdl = {}
+
+
+def linux_missing():
+    """What the build needs from the system and does not find."""
+    miss = []
+    if not (shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")):
+        miss.append("a C compiler (gcc)")
+    if not shutil.which("sdl2-config"):
+        miss.append("the SDL2 development files")
+    return miss
+
+
+def sdl_flags(which):
+    """sdl2-config --cflags or --libs, as a list."""
+    if which not in _sdl:
+        r = subprocess.run(["sdl2-config", which], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise Fail("sdl2-config %s failed: %s" % (which, r.stderr.strip()))
+        _sdl[which] = r.stdout.split()
+    return _sdl[which]
+
+
 def toolchain_ok(P):
+    if not WINDOWS:
+        return not linux_missing()
     ok = os.path.isfile(P.clang)
     if FROZEN:
         ok = ok and os.path.isfile(P.tool_python)
@@ -289,7 +324,11 @@ def toolchain_ok(P):
 
 def install_toolchain(P, log):
     if not WINDOWS:
-        raise Fail("The game only has a Windows front end so far, so there is nothing to build here yet.")
+        miss = linux_missing()
+        if miss:
+            raise Fail("Not found on this system: %s.\n%s" % (", ".join(miss), LINUX_HINT))
+        log("build tools found: %s, SDL2 %s" % (P.clang, " ".join(sdl_flags("--version"))))
+        return
     if not os.path.isfile(P.clang):
         z = os.path.join(P.dl, LLVM_NAME + ".zip")
         if not (os.path.isfile(z) and sha256_file(z) == LLVM_SHA256):
@@ -514,7 +553,12 @@ def generate(P, C, disc_path, log):
 
 def _sources(P):
     rt = os.path.join(P.project, "runtime")
-    src = [("rt", os.path.join(rt, n)) for n in sorted(os.listdir(rt)) if n.endswith(".c")]
+    # one platform file goes with the shared runtime: Win32 on Windows, SDL2 elsewhere
+    plat = "plat_win32.c" if WINDOWS else "plat_sdl.c"
+    names = [n for n in sorted(os.listdir(rt)) if n.endswith(".c") and (not n.startswith("plat_") or n == plat)]
+    if not WINDOWS and plat not in names:
+        raise Fail("this version of the project has no Linux front end: use Update to get a newer one")
+    src = [("rt", os.path.join(rt, n)) for n in names]
     src += [("gen", os.path.join(P.gen, n)) for n in sorted(os.listdir(P.gen)) if n.endswith(".c")]
     hdr = [os.path.join(rt, n) for n in sorted(os.listdir(rt)) if n.endswith(".h")]
     hdr += [os.path.join(P.gen, n) for n in sorted(os.listdir(P.gen)) if n.endswith(".h")]
@@ -527,6 +571,8 @@ def _flags(P, kind):
          "-Wall", "-Wno-unused-function", "-fno-strict-aliasing"]
     if kind == "gen":
         f += ["-O1", "-w"]
+    if not WINDOWS:
+        f += ["-DDM_SDL"] + sdl_flags("--cflags")
     return f
 
 
@@ -570,7 +616,8 @@ def compile_game(P, C, log, progress=None):
     except (OSError, ValueError):
         keys = {}
     env = dict(os.environ)
-    env["PATH"] = os.path.join(P.llvm, "bin") + os.pathsep + env.get("PATH", "")
+    if WINDOWS:
+        env["PATH"] = os.path.join(P.llvm, "bin") + os.pathsep + env.get("PATH", "")
     todo, objs, newkeys = [], [], {}
     for kind, p in src:
         name = os.path.basename(p)
@@ -614,13 +661,21 @@ def compile_game(P, C, log, progress=None):
     log("linking")
     os.makedirs(P.game, exist_ok=True)
     tmp = P.exe + ".new"
-    run([P.clang] + objs + ["-o", tmp, "-static", "-Wl,--stack,16777216", "-lwinmm", "-lopengl32", "-lgdi32"],
-        log, cwd=P.root, env=env)
+    if WINDOWS:
+        libs = ["-static", "-Wl,--stack,16777216", "-lwinmm", "-lopengl32", "-lgdi32"]
+    else:
+        libs = sdl_flags("--libs") + ["-lGL", "-lm", "-lpthread"]
+    try:
+        run([P.clang] + objs + ["-o", tmp] + libs, log, cwd=P.root, env=env)
+    except Fail as e:
+        if WINDOWS:
+            raise
+        raise Fail("%s\nIf a library was not found, its development files are missing.\n%s" % (e, LINUX_HINT))
     try:
         os.replace(tmp, P.exe)
     except OSError:
         os.remove(tmp)
-        raise Fail("dmrecomp.exe is in use: close the game and build again")
+        raise Fail("%s is in use: close the game and build again" % EXE_FILE)
     C.set("build_key", build_key(P))
     log("game built: %s" % P.exe)
 
@@ -1035,8 +1090,14 @@ def system_prefers_dark():
         return False
 
 def gui(root_dir, pinned=False, notice=None):
-    import tkinter as tk
-    from tkinter import filedialog, messagebox, ttk
+    try:
+        import tkinter as tk
+        from tkinter import filedialog, messagebox, ttk
+    except ImportError:    # some Linux systems package Tk apart from Python
+        print("The launcher window needs Tkinter, which this Python does not have.\n"
+              "  Debian/Ubuntu: sudo apt install python3-tk     Fedora: sudo dnf install python3-tkinter     Arch: sudo pacman -S tk\n"
+              "Or use it without a window:  python3 dmlauncher.py [--disc <image.cue>] status | download | build | play")
+        return 1
     import queue
 
     P = Paths(root_dir)
@@ -1210,6 +1271,11 @@ def gui(root_dir, pinned=False, notice=None):
         os.makedirs(P.discdir, exist_ok=True)
         if WINDOWS:
             os.startfile(P.discdir)
+        else:
+            try:
+                subprocess.Popen(["xdg-open", P.discdir])
+            except OSError:
+                log("your disc folder is %s" % P.discdir)
 
     ttk.Button(row, text="Browse...", command=browse).pack(side="left", padx=(6, 0))
     ttk.Button(row, text="Open folder", command=open_discdir).pack(side="left", padx=(6, 0))
@@ -1218,14 +1284,15 @@ def gui(root_dir, pinned=False, notice=None):
     build_btn = lock(ttk.Button(b, text="Build the game"))
     build_btn.pack(anchor="w", pady=6, ipadx=16, ipady=4)
     ttk.Label(b, wraplength=660, style="Muted.TLabel",
-              text="Checks the image, translates the game code and builds dmrecomp.exe into the game folder. "
+              text="Checks the image, translates the game code and builds the game into the game folder. "
                    "Steps that are already up to date are skipped. The first build takes a few minutes.").pack(anchor="w")
 
     # ---- Update tab
     u = tabs["Update"]
     info = ttk.Label(u, text="", justify="left")
     info.pack(anchor="w", pady=(0, 8))
-    dl_btn = lock(ttk.Button(u, text="Download (build tools and project, about 200 MB)"))
+    dl_btn = lock(ttk.Button(u, text="Download (build tools and project, about 200 MB)" if WINDOWS
+                             else "Download (the project; checks this system's build tools)"))
     dl_btn.pack(anchor="w", pady=4, ipadx=8, ipady=3)
     up_btn = lock(ttk.Button(u, text="Update the project"))
     up_btn.pack(anchor="w", pady=4, ipadx=8, ipady=3)
@@ -1442,10 +1509,7 @@ def gui(root_dir, pinned=False, notice=None):
     def check_updates():
         t = latest_tag(lambda s: None)
         q.put(("latest", t))
-    if WINDOWS:
-        threading.Thread(target=check_updates, daemon=True).start()
-    else:
-        log("The game only has a Windows front end so far; building and playing are not available here yet.")
+    threading.Thread(target=check_updates, daemon=True).start()
 
     def pump():
         try:

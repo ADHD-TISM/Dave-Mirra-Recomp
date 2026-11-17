@@ -1,6 +1,13 @@
 /* Software implementation of the PS1 GPU (GP0/GP1) rendering into VRAM. */
+/* worker threads; these headers go before hw.h, whose R macro clashes with them */
+#if defined(_WIN32) && !defined(DM_PTHREAD)   /* DM_PTHREAD: use the POSIX threads on Windows too (a test aid) */
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>   /* worker threads; before hw.h, whose R macro clashes with it */
+#include <windows.h>
+#else
+#include <pthread.h>
+#include <semaphore.h>
+#include <unistd.h>
+#endif
 #include <stdlib.h>
 #include "hw.h"
 
@@ -104,27 +111,59 @@ typedef struct {
 #define MAX_WORKERS 8
 static Cmd *q; static int qn;
 static int n_workers;
-static HANDLE w_start[MAX_WORKERS], w_done[MAX_WORKERS];
 static void hi_run(int id, int n);
+/* each worker waits for its start signal, draws its bands, and signals done */
+#if defined(_WIN32) && !defined(DM_PTHREAD)
+static HANDLE w_start[MAX_WORKERS], w_done[MAX_WORKERS];
 static DWORD WINAPI worker_main(LPVOID arg) {
     int id = (int)(INT_PTR)arg;
     for (;;) { WaitForSingleObject(w_start[id], INFINITE); hi_run(id, n_workers); SetEvent(w_done[id]); }
     return 0;
 }
+static int cpu_count(void) { SYSTEM_INFO si; GetSystemInfo(&si); return (int)si.dwNumberOfProcessors; }
+static void worker_start(int i) {
+    w_start[i] = CreateEventA(NULL, FALSE, FALSE, NULL); w_done[i] = CreateEventA(NULL, FALSE, FALSE, NULL);
+    CloseHandle(CreateThread(NULL, 0, worker_main, (LPVOID)(INT_PTR)i, 0, NULL));
+}
+static void workers_run(void) {
+    for (int i = 0; i < n_workers; i++) SetEvent(w_start[i]);
+    WaitForMultipleObjects((DWORD)n_workers, w_done, TRUE, INFINITE);
+}
+#else
+static sem_t w_start[MAX_WORKERS], w_done[MAX_WORKERS];
+static void sem_take(sem_t *s) { while (sem_wait(s) != 0) { } }   /* again after a signal interrupts the wait */
+static void *worker_main(void *arg) {
+    int id = (int)(intptr_t)arg;
+    for (;;) { sem_take(&w_start[id]); hi_run(id, n_workers); sem_post(&w_done[id]); }
+    return NULL;
+}
+static int cpu_count(void) {
+#ifdef _SC_NPROCESSORS_ONLN
+    long n = sysconf(_SC_NPROCESSORS_ONLN); return n > 0 ? (int)n : 1;
+#else
+    return 4;
+#endif
+}
+static void worker_start(int i) {
+    pthread_t t;
+    sem_init(&w_start[i], 0, 0); sem_init(&w_done[i], 0, 0);
+    if (pthread_create(&t, NULL, worker_main, (void *)(intptr_t)i) != 0) host_fatal("Cannot start a drawing thread.");
+    pthread_detach(t);
+}
+static void workers_run(void) {
+    for (int i = 0; i < n_workers; i++) sem_post(&w_start[i]);
+    for (int i = 0; i < n_workers; i++) sem_take(&w_done[i]);
+}
+#endif
 static void hi_flush(void) {
     if (!qn) return;
     if (!n_workers) {
-        SYSTEM_INFO si; GetSystemInfo(&si);
-        int n = (int)si.dwNumberOfProcessors - 1;
+        int n = cpu_count() - 1;
         if (n < 1) n = 1; if (n > MAX_WORKERS) n = MAX_WORKERS;
         n_workers = n;
-        for (int i = 0; i < n; i++) {
-            w_start[i] = CreateEventA(NULL, FALSE, FALSE, NULL); w_done[i] = CreateEventA(NULL, FALSE, FALSE, NULL);
-            CloseHandle(CreateThread(NULL, 0, worker_main, (LPVOID)(INT_PTR)i, 0, NULL));
-        }
+        for (int i = 0; i < n; i++) worker_start(i);
     }
-    for (int i = 0; i < n_workers; i++) SetEvent(w_start[i]);
-    WaitForMultipleObjects((DWORD)n_workers, w_done, TRUE, INFINITE);
+    workers_run();
     qn = 0;
 }
 static Cmd *hi_cmd(int type) {

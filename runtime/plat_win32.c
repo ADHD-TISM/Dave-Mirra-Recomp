@@ -1,0 +1,190 @@
+/* Win32 platform: window, OpenGL context, keys, XInput gamepads, waveOut sound, clock. */
+#if defined(_WIN32) && !defined(DM_SDL)   /* the whole file: see plat_sdl.c */
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <mmsystem.h>
+#include <GL/gl.h>
+#include <stdio.h>
+#include <string.h>
+#include "host.h"
+
+static HWND wnd;
+static HDC dc;
+static LARGE_INTEGER qpf;
+
+/* ------------------------------------------------------------ input --- */
+typedef struct { WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; } XPad;
+typedef struct { DWORD packet; XPad pad; } XState;
+typedef struct { WORD left, right; } XVib;
+typedef DWORD (WINAPI *XInputGetState_t)(DWORD, XState *);
+typedef DWORD (WINAPI *XInputSetState_t)(DWORD, XVib *);
+static XInputGetState_t xinput_get;
+static XInputSetState_t xinput_set;
+
+static const int vk_of[HK_COUNT - 256] = {
+    [HK_UP - 256] = VK_UP, [HK_DOWN - 256] = VK_DOWN, [HK_LEFT - 256] = VK_LEFT, [HK_RIGHT - 256] = VK_RIGHT,
+    [HK_ENTER - 256] = VK_RETURN, [HK_BACKSPACE - 256] = VK_BACK, [HK_TAB - 256] = VK_TAB, [HK_SPACE - 256] = VK_SPACE,
+    [HK_LSHIFT - 256] = VK_LSHIFT, [HK_RSHIFT - 256] = VK_RSHIFT, [HK_LCTRL - 256] = VK_LCONTROL, [HK_RCTRL - 256] = VK_RCONTROL,
+    [HK_LALT - 256] = VK_LMENU, [HK_RALT - 256] = VK_RMENU, [HK_COMMA - 256] = VK_OEM_COMMA, [HK_PERIOD - 256] = VK_OEM_PERIOD,
+    [HK_SLASH - 256] = VK_OEM_2, [HK_SEMICOLON - 256] = VK_OEM_1,
+    [HK_NUM0 - 256] = VK_NUMPAD0, [HK_NUM1 - 256] = VK_NUMPAD1, [HK_NUM2 - 256] = VK_NUMPAD2, [HK_NUM3 - 256] = VK_NUMPAD3,
+    [HK_NUM4 - 256] = VK_NUMPAD4, [HK_NUM5 - 256] = VK_NUMPAD5, [HK_NUM6 - 256] = VK_NUMPAD6, [HK_NUM7 - 256] = VK_NUMPAD7,
+    [HK_NUM8 - 256] = VK_NUMPAD8, [HK_NUM9 - 256] = VK_NUMPAD9 };
+int plat_key(int code) {
+    int vk = code < 256 ? code : code < HK_COUNT ? vk_of[code - 256] : 0;   /* letters and digits are their own virtual-key codes */
+    return vk && GetForegroundWindow() == wnd && (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
+int plat_pad(int n, HostPad *p) {
+    XState s;
+    if (!xinput_get || xinput_get((DWORD)n, &s) != 0) return 0;
+    p->buttons = s.pad.buttons; p->lt = s.pad.lt; p->rt = s.pad.rt;
+    p->lx = s.pad.lx; p->ly = s.pad.ly; p->rx = s.pad.rx; p->ry = s.pad.ry;
+    return 1;
+}
+void plat_pad_rumble(int n, uint16_t large, uint16_t small) {
+    XVib vib = { large, small };   /* large motor left, small motor right */
+    if (xinput_set) xinput_set((DWORD)n, &vib);
+}
+
+/* ------------------------------------------------------------ audio --- */
+#define NBUF 8
+#define BUF_FRAMES 1024
+static HWAVEOUT wo;
+static WAVEHDR hdr[NBUF];
+static int16_t abuf[NBUF][BUF_FRAMES * 2];
+static int afill, acur;
+
+void plat_audio_init(void) {
+    WAVEFORMATEX f = { WAVE_FORMAT_PCM, 2, 44100, 44100 * 4, 4, 16, 0 };
+    if (waveOutOpen(&wo, WAVE_MAPPER, &f, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) { wo = NULL; return; }
+    for (int i = 0; i < NBUF; i++) {
+        hdr[i].lpData = (LPSTR)abuf[i]; hdr[i].dwBufferLength = BUF_FRAMES * 4;
+        hdr[i].dwFlags = WHDR_DONE;
+    }
+}
+void plat_audio_push(const int16_t *lr, int frames) {
+    if (!wo) return;
+    for (int i = 0; i < frames; i++) {
+        WAVEHDR *h = &hdr[acur];
+        if (afill == 0) {
+            if (!(h->dwFlags & WHDR_DONE)) return;   /* queue full: drop */
+            if (h->dwFlags & WHDR_PREPARED) waveOutUnprepareHeader(wo, h, sizeof *h);
+        }
+        abuf[acur][afill * 2] = lr[i * 2]; abuf[acur][afill * 2 + 1] = lr[i * 2 + 1];
+        if (++afill == BUF_FRAMES) {
+            h->dwBufferLength = BUF_FRAMES * 4; h->dwFlags = 0;
+            waveOutPrepareHeader(wo, h, sizeof *h);
+            waveOutWrite(wo, h, sizeof *h);
+            afill = 0; acur = (acur + 1) % NBUF;
+        }
+    }
+}
+
+/* ------------------------------------------------------------ video --- */
+void plat_set_fullscreen(int on, int fs_w, int fs_h) {
+    static WINDOWPLACEMENT saved = { sizeof saved };
+    static int is_on;
+    static char mode_dev[CCHDEVICENAME]; static int mode_changed;
+    if (on == is_on) return;
+    if (on) {
+        MONITORINFOEXA mi = { { sizeof mi } };
+        GetWindowPlacement(wnd, &saved);
+        GetMonitorInfoA(MonitorFromWindow(wnd, MONITOR_DEFAULTTONEAREST), (MONITORINFO *)&mi);
+        if (fs_w > 0) {   /* a fullscreen resolution other than the desktop's: switch the display mode */
+            DEVMODEA dm = { 0 };
+            dm.dmSize = sizeof dm; dm.dmPelsWidth = fs_w; dm.dmPelsHeight = fs_h; dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+            if (ChangeDisplaySettingsExA(mi.szDevice, &dm, NULL, CDS_FULLSCREEN, NULL) == DISP_CHANGE_SUCCESSFUL) {
+                snprintf(mode_dev, sizeof mode_dev, "%s", mi.szDevice); mode_changed = 1;
+                GetMonitorInfoA(MonitorFromWindow(wnd, MONITOR_DEFAULTTONEAREST), (MONITORINFO *)&mi);
+            } else fprintf(stderr, "[video] the display cannot switch to %dx%d; using the desktop resolution\n", fs_w, fs_h);
+        }
+        SetWindowLongA(wnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+        SetWindowPos(wnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_FRAMECHANGED);
+    } else {
+        if (mode_changed) { ChangeDisplaySettingsExA(mode_dev, NULL, NULL, 0, NULL); mode_changed = 0; }
+        SetWindowLongA(wnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+        SetWindowPlacement(wnd, &saved);
+        SetWindowPos(wnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    }
+    is_on = on;
+    ShowCursor(!on);
+}
+void plat_set_title(const char *title) { SetWindowTextA(wnd, title); }
+static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    switch (m) {
+    case WM_SYSKEYDOWN:
+        if (w == VK_RETURN && !(l & (1 << 30))) { host_hotkey(HOT_FULLSCREEN); return 0; }
+        break;
+    case WM_KEYDOWN:
+        if (l & (1 << 30)) break;   /* auto-repeat */
+        if (w == VK_F11) { host_hotkey(HOT_FULLSCREEN); return 0; }
+        if (w == VK_F6) { host_hotkey(HOT_SCALE); return 0; }
+        if (w == VK_F7) { host_hotkey(HOT_FILTER); return 0; }
+        if (w == VK_F8) { host_hotkey(HOT_ASPECT); return 0; }
+        if (w == VK_F10) { host_hotkey(HOT_WIDE); return 0; }
+        if (w == VK_F9) { host_hotkey(HOT_FSR); return 0; }
+        break;
+    case WM_CLOSE: host_quit(); return 0;
+    case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h, &ps); EndPaint(h, &ps); return 0; }
+    case WM_ERASEBKGND: return 1;
+    }
+    return DefWindowProcA(h, m, w, l);
+}
+
+void plat_init(void) {
+    timeBeginPeriod(1);
+    QueryPerformanceFrequency(&qpf);
+    HMODULE xi = LoadLibraryA("xinput1_4.dll");
+    if (!xi) xi = LoadLibraryA("xinput9_1_0.dll");
+    if (xi) xinput_get = (XInputGetState_t)(void *)GetProcAddress(xi, "XInputGetState");
+    if (xi) xinput_set = (XInputSetState_t)(void *)GetProcAddress(xi, "XInputSetState");
+}
+int plat_video_init(int w, int h, const char *title) {
+    WNDCLASSA wc = { 0 };
+    wc.lpfnWndProc = wndproc; wc.hInstance = GetModuleHandleA(NULL);
+    wc.lpszClassName = "dmrecomp"; wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.style = CS_OWNDC;
+    RegisterClassA(&wc);
+    RECT r = { 0, 0, w, h };
+    AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+    wnd = CreateWindowA("dmrecomp", title, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                        CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
+    PIXELFORMATDESCRIPTOR pfd = { sizeof pfd, 1, PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER, PFD_TYPE_RGBA, 32 };
+    dc = GetDC(wnd);
+    int pf = ChoosePixelFormat(dc, &pfd);
+    if (!pf || !SetPixelFormat(dc, pf, &pfd)) return 0;
+    HGLRC rc = wglCreateContext(dc);
+    if (!rc || !wglMakeCurrent(dc, rc)) return 0;
+    /* pacing is done by host_frame, so do not also wait for the monitor */
+    typedef BOOL (WINAPI *swap_fn)(int);
+    swap_fn swap = (swap_fn)(void *)wglGetProcAddress("wglSwapIntervalEXT");
+    if (swap) swap(0);
+    return 1;
+}
+void plat_client_size(int *w, int *h) { RECT cr; GetClientRect(wnd, &cr); *w = cr.right; *h = cr.bottom; }
+void plat_swap(void) { SwapBuffers(dc); }
+void *plat_gl_proc(const char *name) { return (void *)wglGetProcAddress(name); }
+/* without OpenGL, GDI stretches the picture */
+void plat_soft_present(const uint32_t *fb, int fb_w, int fb_h, int cw, int ch, int w, int h, int smooth) {
+    BITMAPINFO bi = { 0 };
+    bi.bmiHeader.biSize = sizeof bi.bmiHeader; bi.bmiHeader.biWidth = fb_w; bi.bmiHeader.biHeight = -fb_h;
+    bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
+    PatBlt(dc, 0, 0, cw, (ch - h) / 2, BLACKNESS);
+    PatBlt(dc, 0, (ch + h) / 2, cw, ch, BLACKNESS);
+    PatBlt(dc, 0, 0, (cw - w) / 2, ch, BLACKNESS);
+    PatBlt(dc, (cw + w) / 2, 0, cw, ch, BLACKNESS);
+    SetStretchBltMode(dc, smooth ? HALFTONE : COLORONCOLOR);
+    if (smooth) SetBrushOrgEx(dc, 0, 0, NULL);
+    StretchDIBits(dc, (cw - w) / 2, (ch - h) / 2, w, h, 0, 0, fb_w, fb_h, fb, &bi, DIB_RGB_COLORS, SRCCOPY);
+}
+void plat_pump(void) {
+    MSG m;
+    while (PeekMessageA(&m, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageA(&m); }
+}
+
+/* ------------------------------------------------------------- misc --- */
+double plat_now_ms(void) { LARGE_INTEGER t; QueryPerformanceCounter(&t); return (double)t.QuadPart * 1000.0 / (double)qpf.QuadPart; }
+void plat_sleep_ms(int ms) { Sleep((DWORD)ms); }
+void plat_message(const char *text) { MessageBoxA(wnd, text, "dmrecomp", MB_ICONERROR); }
+void plat_exit(int code) { ExitProcess((UINT)code); }
+#endif

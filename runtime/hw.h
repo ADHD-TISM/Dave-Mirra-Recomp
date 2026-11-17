@@ -2,6 +2,10 @@
 #pragma once
 #include "psx.h"
 #include <stdio.h>
+#ifndef _WIN32
+#include <strings.h>
+#define _stricmp strcasecmp   /* the runtime uses the Windows name */
+#endif
 
 #define CLOCK_HZ 33868800u
 #define CYCLES_PER_FRAME (CLOCK_HZ / 60u)     /* NTSC */

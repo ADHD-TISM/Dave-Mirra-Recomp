@@ -3,6 +3,9 @@
 #include "game.h"   /* GAME_NAME, GAME_SERIAL, GAME_EXE: written into gen/ by tools/regen.py */
 #include <stdlib.h>
 #include <ctype.h>
+#if !defined(_WIN32) || defined(DM_PTHREAD)
+#include <pthread.h>
+#endif
 
 extern const u32 main_entry, main_base, main_end, main_sig[8];
 void sched_init(void);
@@ -60,12 +63,35 @@ static void resolve_image(const char *in, char *out, size_t cap) {
     snprintf(out, cap, "%s", in);
 }
 
+/* File names are case-sensitive outside Windows, and a .cue often spells its .bin differently from
+   the file on disk: when the path does not open, look in its folder for the same name in another case. */
+#ifdef _WIN32
+static void fix_case(char *path, size_t cap) { (void)path; (void)cap; }
+#else
+#include <dirent.h>
+static void fix_case(char *path, size_t cap) {
+    FILE *f = fopen(path, "rb");
+    if (f) { fclose(f); return; }
+    char dir[1024]; const char *slash = strrchr(path, '/'), *name = slash ? slash + 1 : path;
+    if (slash) snprintf(dir, sizeof dir, "%.*s", (int)(slash - path + 1), path); else snprintf(dir, sizeof dir, "./");
+    DIR *d = opendir(dir);
+    if (!d) return;
+    for (struct dirent *e; (e = readdir(d)) != NULL;)
+        if (!_stricmp(e->d_name, name)) {
+            char found[1024]; snprintf(found, sizeof found, "%s%s", slash ? dir : "", e->d_name);
+            snprintf(path, cap, "%s", found);
+            break;
+        }
+    closedir(d);
+}
+#endif
+
 static const char *default_images[] = {
     "game.cue", "game.bin",
     GAME_FILE " [" GAME_SERIAL "].cue",
     NULL };
 
-int main(int argc, char **argv) {
+static int run(int argc, char **argv) {
     const char *img = NULL;
     void host_load_config(const char *path); int host_set_option(const char *name, const char *val);
     host_load_config("dmrecomp.ini");
@@ -102,7 +128,7 @@ int main(int argc, char **argv) {
     host_init();
     if (!img) host_fatal("Pass the path to your " GAME_NAME " (" GAME_SERIAL ") .cue or .bin,\n"
                          "or place it next to the executable as game.cue / game.bin.");
-    char bin[1024]; resolve_image(img, bin, sizeof bin);
+    char bin[1024]; resolve_image(img, bin, sizeof bin); fix_case(bin, sizeof bin);
     cd_init(bin);
 
     u32 lba, size;
@@ -131,3 +157,22 @@ int main(int argc, char **argv) {
     host_fatal("The game's main() returned.");
     return 0;
 }
+
+/* The recompiled code keeps the game's call depth on the native stack, more than a default
+   stack holds. The Windows build asks the linker for 16 MB; elsewhere the game runs on a
+   thread created with that much. */
+#if defined(_WIN32) && !defined(DM_PTHREAD)
+int main(int argc, char **argv) { return run(argc, argv); }
+#else
+static struct { int argc; char **argv; } run_args;
+static void *run_thread(void *unused) { (void)unused; exit(run(run_args.argc, run_args.argv)); return NULL; }
+int main(int argc, char **argv) {
+    pthread_attr_t a; pthread_t t;
+    run_args.argc = argc; run_args.argv = argv;
+    pthread_attr_init(&a);
+    pthread_attr_setstacksize(&a, (size_t)64 << 20);
+    if (pthread_create(&t, &a, run_thread, NULL) != 0) { fprintf(stderr, "FATAL: cannot start the game thread\n"); return 1; }
+    pthread_join(t, NULL);
+    return 0;
+}
+#endif
