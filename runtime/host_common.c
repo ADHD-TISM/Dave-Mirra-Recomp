@@ -320,7 +320,7 @@ void host_init(void) {
     gl_ok = plat_video_init(win_w, win_h, GAME_NAME " (static recomp)");
     if (gl_ok) gl_setup();
     show_settings();
-    if (g_fullscreen) set_fullscreen(1);
+    if (g_fullscreen || plat_wants_fullscreen()) set_fullscreen(1);
     plat_audio_init();
 }
 

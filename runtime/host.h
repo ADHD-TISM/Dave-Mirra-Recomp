@@ -26,6 +26,7 @@ void host_quit(void);               /* the window was closed */
 void plat_init(void);               /* before anything else */
 int  plat_video_init(int w, int h, const char *title);   /* window; returns 1 with an OpenGL context current, 0 without one */
 void plat_set_title(const char *title);
+int  plat_wants_fullscreen(void);   /* the system runs this as a fullscreen app (Steam Deck Game Mode) */
 void plat_set_fullscreen(int on, int w, int h);          /* w = 0: the desktop's own resolution */
 void plat_client_size(int *w, int *h);                   /* drawable size in pixels */
 void plat_swap(void);                                    /* show the OpenGL back buffer */

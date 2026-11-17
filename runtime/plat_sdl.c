@@ -19,6 +19,7 @@ static SDL_AudioDeviceID adev;
    which outside Windows is not the process's first thread (see main.c). */
 void plat_init(void) {
     SDL_SetMainReady();
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");   /* a pad keeps working when the window is not focused, as XInput does */
     if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "FATAL: SDL cannot start video: %s\n", SDL_GetError()); exit(1); }
     /* no sound device or no controller support is not a reason to stop */
     if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) fprintf(stderr, "[audio] no sound: %s\n", SDL_GetError());
@@ -45,6 +46,8 @@ int plat_video_init(int w, int h, const char *title) {
     return 0;
 }
 void plat_set_title(const char *title) { SDL_SetWindowTitle(win, title); }
+/* Steam Deck Game Mode runs every app inside gamescope, which shows one fullscreen window: start in fullscreen there. */
+int plat_wants_fullscreen(void) { return getenv("SteamGamepadUI") != NULL || getenv("GAMESCOPE_WAYLAND_DISPLAY") != NULL; }
 void plat_set_fullscreen(int on, int w, int h) {
     static int is_on;
     if (on == is_on) return;
@@ -163,17 +166,51 @@ void plat_pad_rumble(int n, uint16_t large, uint16_t small) {
 }
 
 /* ------------------------------------------------------------ audio --- */
-#define QUEUE_MAX_BYTES (8 * 1024 * 4)   /* as much as the Win32 host buffers: 8 blocks of 1024 frames */
+/* The game produces 735 sound frames per video frame, and video frames are paced at 59.94 Hz, so sound arrives
+   at 44056 frames a second against the sound device's 44100. Left alone, the device slowly empties its queue and
+   every pass through empty is a click. So: build up a cushion before starting, then steer the queue toward that
+   level by stretching or squeezing each block a few frames (linear interpolation, far quieter than a gap). */
+#define AQ_TARGET 3072   /* frames the queue is steered toward; the device starts once it is reached */
+#define AQ_GAIN 128      /* frames of queue error per frame of correction */
+#define AQ_STEP 12       /* the most a block is stretched or squeezed (1.6%) */
+#define AQ_MAX 8192      /* above this the block is dropped: the device is far behind (as much as the Win32 host buffers) */
+static int audio_started;
 void plat_audio_init(void) {
     SDL_AudioSpec want = { 0 }, have;
     want.freq = 44100; want.format = AUDIO_S16SYS; want.channels = 2; want.samples = 1024;
     adev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);   /* 0: SDL converts if the device wants another format */
     if (!adev) { fprintf(stderr, "[audio] no sound: %s\n", SDL_GetError()); return; }
-    SDL_PauseAudioDevice(adev, 0);
+    /* the device stays paused until the cushion is there (plat_audio_push starts it) */
 }
 void plat_audio_push(const int16_t *lr, int frames) {
-    if (!adev || SDL_GetQueuedAudioSize(adev) > QUEUE_MAX_BYTES) return;   /* device is behind: drop */
-    SDL_QueueAudio(adev, lr, (Uint32)frames * 4);
+    static int16_t out[(4096 + 2) * 2];
+    static unsigned underruns, pushes;
+    if (!adev || frames <= 0 || frames > 4096) return;
+    pushes++;
+    int q = (int)(SDL_GetQueuedAudioSize(adev) / 4);
+    static double last_ms;
+    double now_ms = plat_now_ms();
+    if (audio_started && q == 0) {   /* ran dry (slow frames or a sound-server stall): one clean gap while the cushion is rebuilt, not a train of clicks */
+        if (pushes > 120 && underruns++ < 20)
+            fprintf(stderr, "[audio] underrun %u at block %u: %d frames, %.1f ms since the last block\n", underruns, pushes, frames, now_ms - last_ms);
+        audio_started = 0;
+        SDL_PauseAudioDevice(adev, 1);
+    }
+    last_ms = now_ms;
+    if (q > AQ_MAX) return;   /* device is far behind: drop */
+    int d = audio_started ? (AQ_TARGET - q) / AQ_GAIN : 0;   /* no steering while the cushion is being built */
+    d = d > AQ_STEP ? AQ_STEP : d < -AQ_STEP ? -AQ_STEP : d;
+    int m = frames + d;
+    if (m == frames || frames < 2) { SDL_QueueAudio(adev, lr, (Uint32)frames * 4); m = frames; }
+    else {    /* resample frames -> m by linear interpolation, end to end */
+        for (int i = 0; i < m; i++) {
+            long pos = (long)i * (frames - 1) * 256 / (m - 1);
+            int a = (int)(pos >> 8), f = (int)(pos & 255), b = a + 1 < frames ? a + 1 : a;
+            for (int c = 0; c < 2; c++) out[i * 2 + c] = (int16_t)((lr[a * 2 + c] * (256 - f) + lr[b * 2 + c] * f) >> 8);
+        }
+        SDL_QueueAudio(adev, out, (Uint32)m * 4);
+    }
+    if (!audio_started && q + m >= AQ_TARGET) { audio_started = 1; SDL_PauseAudioDevice(adev, 0); }
 }
 
 /* ------------------------------------------------------------- misc --- */

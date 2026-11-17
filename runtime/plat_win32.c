@@ -111,6 +111,7 @@ void plat_set_fullscreen(int on, int fs_w, int fs_h) {
     ShowCursor(!on);
 }
 void plat_set_title(const char *title) { SetWindowTextA(wnd, title); }
+int plat_wants_fullscreen(void) { return 0; }
 static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_SYSKEYDOWN:

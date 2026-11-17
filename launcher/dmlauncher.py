@@ -10,6 +10,7 @@ this file, and nothing is written outside that folder.
     python dmlauncher.py status               what is ready (no window)
     python dmlauncher.py games                the games it can build
     python dmlauncher.py download|update|build|play|update-launcher
+    python dmlauncher.py shortcut             Linux: add the game to the applications menu (Steam can add it from there)
     python dmlauncher.py --game ID ...        pick the game (dmbmx, maxremix) instead of the remembered one
     python dmlauncher.py --root DIR ...       keep everything in DIR instead
     python dmlauncher.py --disc FILE.cue ...  use this disc image
@@ -17,10 +18,13 @@ this file, and nothing is written outside that folder.
 Folders under the root: tools/ (compiler, downloaded), project/ (the game's
 source, downloaded), work/<game>/ (generated code, objects, caches) and
 game/<game>/ (the built game, dmrecomp.ini and your memory cards for
-that game). Updates never touch game/, so settings and saves are kept.
+that game). Updates never touch game/, so settings and saves are kept. The one thing written elsewhere is
+the applications-menu entry on Linux, and only when you ask for it ("shortcut").
 
-Windows and Linux. On Windows the compiler is downloaded; on Linux the system's own compiler and
-SDL2 development files are used (the Update tab says what to install if they are missing).
+Windows and Linux. On Windows the compiler is downloaded. On Linux the system's own compiler and SDL2
+development files are used when there are any; otherwise (the Steam Deck's SteamOS has no compiler) a
+portable compiler (Zig) and SDL2's header files are downloaded, and the system's SDL2 and OpenGL libraries
+are used. The Update tab says what to install if even those are missing.
 """
 import hashlib
 import json
@@ -30,6 +34,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 import urllib.error
@@ -38,7 +43,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 REPO = "ADHD-TISM/Dave-Mirra-Recomp"
-LAUNCHER_VERSION = "5"
+LAUNCHER_VERSION = "6"
 
 # Build tools: llvm-mingw (clang + a MinGW-w64 UCRT sysroot), pinned and checked.
 LLVM_NAME = "llvm-mingw-20261104-ucrt-x86_64"
@@ -46,6 +51,16 @@ LLVM_URL = "https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/%s
 LLVM_SHA256 = "552191b5754c49a5a20723276a6fc56541ea1922c4c50b7b669022333fc1b40f"
 # Other targets' sysroots are not needed; leaving them out saves disk space.
 LLVM_SKIP = ("aarch64-w64-mingw32/", "armv7-w64-mingw32/", "i686-w64-mingw32/")
+# Linux without a system compiler (the Steam Deck's SteamOS has none and a read-only system): Zig's bundled
+# clang, which brings its own C library headers, plus SDL2's public headers (the SDL2 and OpenGL libraries
+# themselves are the system's). Both pinned and checked.
+ZIG_VERSION = "0.17.1"
+ZIG_URL = "https://ziglang.org/download/%s/zig-x86_64-linux-%s.tar.xz" % (ZIG_VERSION, ZIG_VERSION)
+ZIG_SHA256 = "3581863e3cbcfd0fce0efc682ce7e9e93da96668a977791d356a26d2a7e9b17a"
+ZIG_TARGET = "x86_64-linux-gnu.2.31"      # runs on any glibc from 2.31 on
+SDL_SRC_NAME = "SDL2-2.30.9"
+SDL_SRC_URL = "https://github.com/libsdl-org/SDL/releases/download/release-2.30.9/%s.tar.gz" % SDL_SRC_NAME
+SDL_SRC_SHA256 = "24b574f71c87a763f50704bbb630cbe38298d544a1f890f099a4696b1d6beba4"
 # Python for the code translator, used only when the launcher itself is a packaged exe.
 PY_URL = "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip"
 PY_SHA256 = "8d3f33be9eb810f23c102f08475af2854e50484b8e4e06275e937be61ce3d2fb"
@@ -79,6 +94,8 @@ class Paths:
         self.dl = os.path.join(self.work, "dl")
         self.llvm = os.path.join(self.tools, "llvm-mingw")
         self.pydir = os.path.join(self.tools, "python")
+        self.zigdir = os.path.join(self.tools, "zig")
+        self.sdl_inc = os.path.join(self.tools, "sdl2-include")
         self.discdir = os.path.join(self.root, "Dave Mirra BMX")   # where people put their disc image
         self.cfg = os.path.join(self.root, "launcher.json")
         self.use(gid)
@@ -94,10 +111,23 @@ class Paths:
         self.ini = os.path.join(self.game, "dmrecomp.ini")
 
     @property
-    def clang(self):
-        """The C compiler: the downloaded llvm-mingw on Windows, the system's own elsewhere."""
+    def cc(self):
+        """The C compiler as a command: the downloaded llvm-mingw on Windows; on Linux the system's own
+        compiler, or Zig's when there is none."""
         if not WINDOWS:
-            return shutil.which("cc") or shutil.which("gcc") or shutil.which("clang") or ""
+            sysc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+            if sysc and shutil.which("sdl2-config"):
+                return [sysc]
+            return [os.path.join(self.zigdir, "zig"), "cc", "-target", ZIG_TARGET]
+        return [self.clang]
+
+    @property
+    def portable(self):
+        """Linux build with the downloaded compiler instead of the system's."""
+        return not WINDOWS and self.cc[0].startswith(self.zigdir)
+
+    @property
+    def clang(self):
         return os.path.join(self.llvm, "bin", "x86_64-w64-mingw32-clang.exe")
 
     @property
@@ -227,6 +257,41 @@ def safe_extract(zpath, dest, strip=0, skip=()):
                 shutil.copyfileobj(src, out, 1 << 20)
 
 
+def safe_extract_tar(tpath, dest, strip=0, only=""):
+    """Unpack a .tar.xz/.tar.gz into dest like safe_extract: leading path parts dropped, only members under
+    `only` kept, nothing outside dest, no device files, links only to places inside dest."""
+    base = os.path.realpath(dest)
+    os.makedirs(base, exist_ok=True)
+    with tarfile.open(tpath) as t:
+        for m in t:
+            if only and not m.name.startswith(only):
+                continue
+            parts = [p for p in m.name.split("/") if p][strip:]
+            if not parts:
+                continue
+            target = os.path.realpath(os.path.join(base, *parts))
+            if target != base and not target.startswith(base + os.sep):
+                raise Fail("unsafe path in archive: %s" % m.name)
+            if m.isdir():
+                os.makedirs(target, exist_ok=True)
+            elif m.isreg():
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with t.extractfile(m) as src, open(target, "wb") as out:
+                    shutil.copyfileobj(src, out, 1 << 20)
+                os.chmod(target, 0o755 if m.mode & 0o111 else 0o644)
+            elif m.issym() or m.islnk():
+                link = os.path.realpath(os.path.join(os.path.dirname(target), m.linkname)) if m.issym() \
+                    else os.path.realpath(os.path.join(base, *[p for p in m.linkname.split("/") if p][strip:]))
+                if link != base and not link.startswith(base + os.sep):
+                    raise Fail("unsafe link in archive: %s" % m.name)
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                if os.path.lexists(target):
+                    os.remove(target)
+                os.symlink(m.linkname, target) if m.issym() else shutil.copyfile(link, target)
+            else:
+                raise Fail("unexpected file type in archive: %s" % m.name)
+
+
 def replace_dir(tmp, final):
     if os.path.isdir(final):
         shutil.rmtree(final)
@@ -293,13 +358,31 @@ LINUX_HINT = ("Install them with your package manager, then try again:\n"
 _sdl = {}
 
 
-def linux_missing():
-    """What the build needs from the system and does not find."""
+LIB_DIRS = ("/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu", "/lib/x86_64-linux-gnu", "/usr/local/lib")
+
+
+def find_lib(name):
+    """Full path of a shared library the system has, or None."""
+    for d in LIB_DIRS:
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def linux_missing(P):
+    """What the build needs from the system and cannot get for itself."""
     miss = []
-    if not (shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")):
-        miss.append("a C compiler (gcc)")
-    if not shutil.which("sdl2-config"):
-        miss.append("the SDL2 development files")
+    if not P.portable:
+        if not (shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")):
+            miss.append("a C compiler (gcc)")
+        if not shutil.which("sdl2-config"):
+            miss.append("the SDL2 development files")
+    else:    # the compiler and headers are downloaded; the libraries must be on the system already
+        if not find_lib("libSDL2-2.0.so.0"):
+            miss.append("the SDL2 library (libSDL2-2.0.so.0)")
+        if not find_lib("libGL.so.1"):
+            miss.append("the OpenGL library (libGL.so.1)")
     return miss
 
 
@@ -313,9 +396,13 @@ def sdl_flags(which):
     return _sdl[which]
 
 
+def portable_ok(P):
+    return os.path.isfile(os.path.join(P.zigdir, "zig")) and os.path.isfile(os.path.join(P.sdl_inc, "SDL.h"))
+
+
 def toolchain_ok(P):
     if not WINDOWS:
-        return not linux_missing()
+        return not linux_missing(P) and (not P.portable or portable_ok(P))
     ok = os.path.isfile(P.clang)
     if FROZEN:
         ok = ok and os.path.isfile(P.tool_python)
@@ -324,10 +411,35 @@ def toolchain_ok(P):
 
 def install_toolchain(P, log):
     if not WINDOWS:
-        miss = linux_missing()
+        miss = linux_missing(P)
         if miss:
             raise Fail("Not found on this system: %s.\n%s" % (", ".join(miss), LINUX_HINT))
-        log("build tools found: %s, SDL2 %s" % (P.clang, " ".join(sdl_flags("--version"))))
+        if not P.portable:
+            log("build tools found: %s, SDL2 %s" % (P.cc[0], " ".join(sdl_flags("--version"))))
+            return
+        if not os.path.isfile(os.path.join(P.zigdir, "zig")):
+            z = os.path.join(P.dl, "zig-%s.tar.xz" % ZIG_VERSION)
+            if not (os.path.isfile(z) and sha256_file(z) == ZIG_SHA256):
+                log("no C compiler on this system: downloading a portable one (Zig, about 55 MB)")
+                fetch(ZIG_URL, z, log, ZIG_SHA256, "compiler")
+            log("unpacking the compiler")
+            tmp = P.zigdir + ".tmp"
+            shutil.rmtree(tmp, ignore_errors=True)
+            safe_extract_tar(z, tmp, strip=1)
+            replace_dir(tmp, P.zigdir)
+            os.remove(z)
+        if not os.path.isfile(os.path.join(P.sdl_inc, "SDL.h")):
+            z = os.path.join(P.dl, SDL_SRC_NAME + ".tar.gz")
+            if not (os.path.isfile(z) and sha256_file(z) == SDL_SRC_SHA256):
+                log("downloading SDL2's header files (about 8 MB)")
+                fetch(SDL_SRC_URL, z, log, SDL_SRC_SHA256, "SDL2 headers")
+            tmp = P.sdl_inc + ".tmp"
+            shutil.rmtree(tmp, ignore_errors=True)
+            safe_extract_tar(z, tmp, strip=2, only=SDL_SRC_NAME + "/include/")
+            replace_dir(tmp, P.sdl_inc)
+            os.remove(z)
+        if not portable_ok(P):
+            raise Fail("the compiler did not unpack correctly; delete the tools folder and try again")
         return
     if not os.path.isfile(P.clang):
         z = os.path.join(P.dl, LLVM_NAME + ".zip")
@@ -583,7 +695,7 @@ def _flags(P, kind):
     if kind == "gen":
         f += ["-O1", "-w"]
     if not WINDOWS:
-        f += ["-DDM_SDL"] + sdl_flags("--cflags")
+        f += ["-DDM_SDL"] + (["-I", P.sdl_inc] if P.portable else sdl_flags("--cflags"))
     return f
 
 
@@ -629,12 +741,15 @@ def compile_game(P, C, log, progress=None):
     env = dict(os.environ)
     if WINDOWS:
         env["PATH"] = os.path.join(P.llvm, "bin") + os.pathsep + env.get("PATH", "")
+    elif P.portable:   # keep Zig's caches with the other build files, not in the home folder
+        env["ZIG_GLOBAL_CACHE_DIR"] = os.path.join(P.work, "zigcache")
+        env["ZIG_LOCAL_CACHE_DIR"] = os.path.join(P.work, "zigcache")
     todo, objs, newkeys = [], [], {}
     for kind, p in src:
         name = os.path.basename(p)
         o = os.path.join(P.obj, name[:-2] + ".o")
         objs.append(o)
-        k = key_of(hh, " ".join(_flags(P, kind)), P.clang, file_bytes(p))
+        k = key_of(hh, " ".join(_flags(P, kind)), " ".join(P.cc), file_bytes(p))
         newkeys[name] = k
         if not (os.path.isfile(o) and keys.get(name) == k):
             todo.append((kind, p, o))
@@ -642,6 +757,12 @@ def compile_game(P, C, log, progress=None):
     done = [0]
     errors = []
     lock = threading.Lock()
+    if todo and P.portable:    # the first compile builds Zig's C library files: do it once, before the parallel ones
+        log("preparing the compiler (first time only)")
+        warm = os.path.join(P.obj, "warmup.c")
+        with open(warm, "w") as f:
+            f.write("#include <stdio.h>\n#include <pthread.h>\nint main(void) { return puts(\"\") < 0; }\n")
+        run(P.cc + ["-c", warm, "-o", warm + ".o"], lambda s: None, cwd=P.root, env=env)
 
     def one(t):
         kind, p, o = t
@@ -649,7 +770,7 @@ def compile_game(P, C, log, progress=None):
             return
         tmp = o + ".tmp"
         try:
-            run([P.clang, "-c", p, "-o", tmp] + _flags(P, kind), lambda s: None, cwd=P.root, env=env)
+            run(P.cc + ["-c", p, "-o", tmp] + _flags(P, kind), lambda s: None, cwd=P.root, env=env)
             os.replace(tmp, o)
         except Fail as e:
             errors.append(str(e))
@@ -675,9 +796,15 @@ def compile_game(P, C, log, progress=None):
     if WINDOWS:
         libs = ["-static", "-Wl,--stack,16777216", "-lwinmm", "-lopengl32", "-lgdi32"]
     else:
-        libs = sdl_flags("--libs") + ["-lGL", "-lm", "-lpthread"]
+        if P.portable:   # link against the system's libraries by exact name: it has no development symlinks
+            libs = ["-l:libSDL2-2.0.so.0", "-l:libGL.so.1", "-lm", "-lpthread", "-Wl,--allow-shlib-undefined"]
+            for d in LIB_DIRS:
+                if os.path.isdir(d):
+                    libs += ["-L" + d]
+        else:
+            libs = sdl_flags("--libs") + ["-lGL", "-lm", "-lpthread"]
     try:
-        run([P.clang] + objs + ["-o", tmp] + libs, log, cwd=P.root, env=env)
+        run(P.cc + objs + ["-o", tmp] + libs, log, cwd=P.root, env=env)
     except Fail as e:
         if WINDOWS:
             raise
@@ -847,6 +974,39 @@ def play(P, C, disc_path, log):
     flags = NEW_CONSOLE if C.get("debug_console", False) else NO_WINDOW
     subprocess.Popen(args, cwd=P.game, creationflags=flags)
     log("started the game")
+
+
+def desktop_entry_text(P, disc_path, name):
+    """A freedesktop .desktop file that starts the built game from its own folder."""
+    def q(t):   # Exec quoting: double quotes, with the few special characters escaped
+        quoted = '"' + "".join("\\" + c if c in '"`$\\' else c for c in t) + '"'
+        return quoted.replace("\\", "\\\\")   # the file's own string escaping comes first, so every backslash doubles
+    return ("[Desktop Entry]\nType=Application\nName=%s (recomp)\nComment=Static recompilation of the PlayStation game\n"
+            "Exec=%s %s\nPath=%s\nTerminal=false\nCategories=Game;\nStartupNotify=false\n"
+            % (name, q(P.exe), q(os.path.abspath(disc_path)), P.game.replace("%", "%%")))
+
+
+def make_shortcut(P, C, log):
+    """Linux: put the built game in the applications menu. On the Steam Deck that is what makes it available
+    to 'Add a Non-Steam Game' (Steam > Games > Add a Non-Steam Game to My Library), and so to Game Mode."""
+    if WINDOWS:
+        raise Fail("this is for Linux; on Windows the game starts from the launcher")
+    if not os.path.isfile(P.exe):
+        raise Fail("the game is not built yet (Build tab)")
+    disc = C.get("disc")
+    if not disc:
+        raise Fail("choose your disc image first (Build tab)")
+    resolve_bin(disc)
+    name = dict((i, n) for i, n, _e in game_list(P)).get(P.gid, P.gid)
+    d = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share"), "applications")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, "dmrecomp-%s.desktop" % P.gid)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(desktop_entry_text(P, disc, name))
+    os.chmod(path, 0o755)
+    log("added \"%s (recomp)\" to the applications menu: %s" % (name, path))
+    log("On the Steam Deck: in Steam choose Games > Add a Non-Steam Game to My Library, tick it, then add it. "
+        "Game Mode uses the controller as a normal gamepad, and the game starts fullscreen there.")
 
 
 # ---------------------------------------------------------------- disc folder
@@ -1071,6 +1231,8 @@ def cli(argv):
             build_all(P, C, C.get("disc"), log)
         elif what == "play":
             play(P, C, C.get("disc"), log)
+        elif what == "shortcut":
+            make_shortcut(P, C, log)
         else:
             print(__doc__)
             return 2
@@ -1294,6 +1456,15 @@ def gui(root_dir, pinned=False, notice=None):
     disc_msg.pack(anchor="w", pady=4)
     build_btn = lock(ttk.Button(b, text="Build the game"))
     build_btn.pack(anchor="w", pady=6, ipadx=16, ipady=4)
+    if not WINDOWS:
+        def do_shortcut():
+            try:
+                make_shortcut(P, C, log)
+                messagebox.showinfo("Applications menu", "Added to the applications menu.\n\nOn the Steam Deck: in Steam choose "
+                                    "Games > Add a Non-Steam Game to My Library and tick it to get it into Game Mode.")
+            except Fail as e:
+                messagebox.showerror("Applications menu", str(e))
+        ttk.Button(b, text="Add to the applications menu (for Steam)", command=do_shortcut).pack(anchor="w", pady=(0, 6))
     ttk.Label(b, wraplength=660, style="Muted.TLabel",
               text="Checks the image, translates the game code and builds the game into the game folder. "
                    "Steps that are already up to date are skipped. The first build takes a few minutes.").pack(anchor="w")
@@ -1571,7 +1742,7 @@ def gui(root_dir, pinned=False, notice=None):
 def main(argv):
     if sys.stdout is None:          # packaged without a console window
         sys.stdout = sys.stderr = open(os.devnull, "w")
-    cmds = {"status", "games", "download", "update", "build", "play", "update-launcher", "-h", "--help", "help"}
+    cmds = {"status", "games", "download", "update", "build", "play", "shortcut", "update-launcher", "-h", "--help", "help"}
     if any(a in cmds for a in argv):
         return cli(argv)
     def opt(name):

@@ -38,8 +38,18 @@ cmake --build build -j
 SDL2 and OpenGL development files (Debian/Ubuntu: `build-essential cmake libsdl2-dev libgl-dev`), then the same two
 `cmake` lines without `-G`. Tested on Ubuntu 22.04 under WSL: scripted runs give the same picture and sound as the
 Windows build, at 1x and 2x, with and without OpenGL. Not yet tried: real Linux hardware or a Steam Deck, and sound
-output and gamepads there. `cmake -DDM_SDL=ON` builds
-this front end on Windows too (with SDL2's MinGW package on `CMAKE_PREFIX_PATH`).
+output and gamepads there. `cmake -DDM_SDL=ON` builds this front end on Windows too (with SDL2's MinGW package on
+`CMAKE_PREFIX_PATH`).
+
+**Steam Deck (untested, written from documentation):** SteamOS has no compiler and a read-only system, so the launcher
+downloads a portable one (Zig, about 55 MB, version and checksum pinned) and SDL2's header files into `tools/`, and
+links against the SDL2 and OpenGL libraries the Deck already has. Run `python3 dmlauncher.py` in Desktop Mode
+(Konsole), build, then use "Add to the applications menu (for Steam)" (or `python3 dmlauncher.py shortcut`) and in
+Steam choose Games > Add a Non-Steam Game to My Library. In Game Mode the game starts fullscreen and the Deck's
+controls arrive as a normal gamepad through Steam Input. The download-and-build step has been run under WSL with no
+compiler on the path, and the game it builds matches the Windows build's pictures and sound. Gamepad handling is checked
+with `tools/padtest.c` (virtual controllers). Not verified on a Deck: anything else, including Game Mode, real controllers
+and rumble, the launcher window on SteamOS, and sound out of the Deck.
 
 ## Run
 
