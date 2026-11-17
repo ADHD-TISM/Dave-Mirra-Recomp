@@ -474,11 +474,15 @@ def resolve_bin(path):
             raise Fail("%s has no FILE line" % os.path.basename(path))
         d = os.path.dirname(os.path.abspath(path))
         b = os.path.join(d, m.group(1))
-        if not os.path.isfile(b):
-            # file names are case-sensitive outside Windows, and a .cue often spells its .bin differently
-            # from the file on disk: take the same name in another case (the game does the same)
-            same = [n for n in os.listdir(d) if n.lower() == m.group(1).lower()]
-            if len(same) == 1 and os.path.isfile(os.path.join(d, same[0])):
+        if not os.path.isfile(b) and not WINDOWS:
+            # file names are case-sensitive here, and a .cue often spells its .bin differently from the file
+            # on disk: take the same name in another case (the game does the same; only ASCII letters fold)
+            fold = lambda t: re.sub(r"[A-Z]", lambda c: c.group().lower(), t)
+            same = [n for n in os.listdir(d) if fold(n) == fold(m.group(1)) and os.path.isfile(os.path.join(d, n))]
+            if len(same) > 1:
+                raise Fail("%s names %s, and %s all match it in different letter case: leave only one"
+                           % (os.path.basename(path), m.group(1), ", ".join(same)))
+            if same:
                 b = os.path.join(d, same[0])
         if not os.path.isfile(b):
             raise Fail("%s names %s, which is not next to it" % (os.path.basename(path), m.group(1)))

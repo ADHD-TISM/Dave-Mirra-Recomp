@@ -132,13 +132,20 @@ static void workers_run(void) {
 }
 #else
 static sem_t w_start[MAX_WORKERS], w_done[MAX_WORKERS];
-static void sem_take(sem_t *s) {
-    while (sem_wait(s) != 0)   /* again after a signal interrupts the wait; anything else would spin for ever */
-        if (errno != EINTR) host_fatal("A drawing thread could not wait (error %d).", errno);
+/* Again after a signal interrupts the wait; any other failure would spin for ever. The game thread reports it
+   as a fatal error. A drawing thread must not open message boxes or shut SDL down (that belongs to the game
+   thread, which is waiting for it), so it says so on stderr and ends the process. */
+static void sem_take(sem_t *s, int worker) {
+    while (sem_wait(s) != 0) {
+        if (errno == EINTR) continue;
+        if (!worker) host_fatal("A drawing thread could not wait (error %d).", errno);
+        fprintf(stderr, "FATAL: a drawing thread could not wait (error %d)\n", errno);
+        _exit(1);
+    }
 }
 static void *worker_main(void *arg) {
     int id = (int)(intptr_t)arg;
-    for (;;) { sem_take(&w_start[id]); hi_run(id, n_workers); sem_post(&w_done[id]); }
+    for (;;) { sem_take(&w_start[id], 1); hi_run(id, n_workers); sem_post(&w_done[id]); }
     return NULL;
 }
 static int cpu_count(void) {
@@ -156,7 +163,7 @@ static void worker_start(int i) {
 }
 static void workers_run(void) {
     for (int i = 0; i < n_workers; i++) sem_post(&w_start[i]);
-    for (int i = 0; i < n_workers; i++) sem_take(&w_done[i]);
+    for (int i = 0; i < n_workers; i++) sem_take(&w_done[i], 0);
 }
 #endif
 static void hi_flush(void) {
