@@ -15,6 +15,8 @@ static SDL_Texture *tex; static int tex_w, tex_h, tex_smooth;
 static SDL_GameController *pads[2];
 static SDL_AudioDeviceID adev;
 
+/* Every SDL call (start-up, events, OpenGL, shutdown) is made from the thread the game runs on,
+   which outside Windows is not the process's first thread (see main.c). */
 void plat_init(void) {
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "FATAL: SDL cannot start video: %s\n", SDL_GetError()); exit(1); }
@@ -90,7 +92,7 @@ static void pad_added(int device) {
     if (!SDL_IsGameController(device)) return;
     SDL_GameController *c = SDL_GameControllerOpen(device);
     if (!c) return;
-    for (int i = 0; i < 2; i++) if (pads[i] == c) return;   /* already ours */
+    for (int i = 0; i < 2; i++) if (pads[i] == c) { SDL_GameControllerClose(c); return; }   /* already ours: opening again took a second reference */
     for (int i = 0; i < 2; i++) if (!pads[i]) { pads[i] = c; return; }
     SDL_GameControllerClose(c);   /* a third pad: not used */
 }

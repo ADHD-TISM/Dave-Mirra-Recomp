@@ -6,6 +6,7 @@
 #else
 #include <pthread.h>
 #include <semaphore.h>
+#include <errno.h>
 #include <unistd.h>
 #endif
 #include <stdlib.h>
@@ -131,7 +132,10 @@ static void workers_run(void) {
 }
 #else
 static sem_t w_start[MAX_WORKERS], w_done[MAX_WORKERS];
-static void sem_take(sem_t *s) { while (sem_wait(s) != 0) { } }   /* again after a signal interrupts the wait */
+static void sem_take(sem_t *s) {
+    while (sem_wait(s) != 0)   /* again after a signal interrupts the wait; anything else would spin for ever */
+        if (errno != EINTR) host_fatal("A drawing thread could not wait (error %d).", errno);
+}
 static void *worker_main(void *arg) {
     int id = (int)(intptr_t)arg;
     for (;;) { sem_take(&w_start[id]); hi_run(id, n_workers); sem_post(&w_done[id]); }
@@ -146,7 +150,7 @@ static int cpu_count(void) {
 }
 static void worker_start(int i) {
     pthread_t t;
-    sem_init(&w_start[i], 0, 0); sem_init(&w_done[i], 0, 0);
+    if (sem_init(&w_start[i], 0, 0) != 0 || sem_init(&w_done[i], 0, 0) != 0) host_fatal("Cannot set up a drawing thread (error %d).", errno);
     if (pthread_create(&t, NULL, worker_main, (void *)(intptr_t)i) != 0) host_fatal("Cannot start a drawing thread.");
     pthread_detach(t);
 }
