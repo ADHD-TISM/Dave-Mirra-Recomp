@@ -42,8 +42,9 @@ void gpu_set_scale(void) {
         GPrim b; memset(&b, 0, sizeof b);
         b.kind = GK_BLIT; b.w = 1024; b.h = 512;
         glmode = 1; hv_scale = s;
+        glg_dirty(0, 511);   /* before the mask sync, which may rebuild the stencil from vram */
         gl_mask_sync();
-        glg_dirty(0, 511); glg_submit(&b);
+        glg_submit(&b);
         glg_flush();   /* before anything queued later, which the CPU has already drawn into vram */
         return;
     }

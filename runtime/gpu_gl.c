@@ -166,6 +166,7 @@ static const char *const fs_src =
 
 static int state;                     /* 0 untried, 1 ready, -1 unavailable */
 static int S;                         /* scale of the picture */
+static int cur_chk;                   /* check-mask as last told to glg_mask (see there) */
 static GLuint prog, fbo, fbo_tex, sten_tex, vtex, tmp_tex; static int tmp_w, tmp_h;
 static GLint u_target, u_vram, u_pass, u_alpha;
 static int dirty0 = 512, dirty1 = -1;
@@ -248,6 +249,7 @@ int glg_init(int scale) {
     q_ActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, (GLuint)save0);
     if (st != GL_FRAMEBUFFER_COMPLETE) { fprintf(stderr, "[gpu_gl] the picture target is not usable on this driver; using the CPU picture\n"); state = -1; return 0; }
     S = scale; qn = 0; tmp_w = tmp_h = 0;
+    cur_chk = 0;   /* the stencil is new and undefined: gpu_set_scale's mask sync rebuilds it */
     dirty0 = 0; dirty1 = 511;
     fprintf(stderr, "[gpu_gl] drawing the %dx picture on the graphics card\n", scale);
     return 1;
@@ -406,7 +408,7 @@ static void do_copy(const GPrim *p) {   /* vram to vram, at the high resolution 
 
 static void upload_dirty(void);
 static void setup_target(void);
-static int cur_set, cur_chk;
+static int cur_set;
 /* The stencil only matters while the mask is checked, so it is not kept up to date otherwise: when checking starts it is
    rebuilt from vram (whose bit 15 is the console's mask bit, kept exactly by the CPU). */
 void glg_mask(int set, int check) {
