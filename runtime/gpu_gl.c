@@ -334,14 +334,14 @@ static int same_state(const GPrim *a, const GPrim *b) {
     return memcmp(ca, cb, sizeof ca) == 0 && a->semi == b->semi && a->semimode == b->semimode && a->setm == b->setm && a->chkm == b->chkm
         && (a->kind == GK_FILL) == (b->kind == GK_FILL) && (a->kind == GK_BLIT) == (b->kind == GK_BLIT);
 }
-/* the mask bit: a fill ignores it and clears it, an upload mirrors bit 15 of vram afterwards (see glg_flush), the rest honour the mode */
+/* the mask bit, kept only while the mask is checked (see glg_mask): a fill ignores it and clears it, an upload mirrors bit 15 of vram
+   afterwards (see glg_flush), the rest honour the mode */
 static void set_stencil(const GPrim *f) {
     if (!f->chkm) { glDisable(GL_STENCIL_TEST); return; }   /* the stencil is only read under check-mask, and is rebuilt from vram when that starts */
     glEnable(GL_STENCIL_TEST);
     glStencilMask(0xff);
     if (f->kind == GK_FILL || f->kind == GK_BLIT) { glStencilFunc(GL_ALWAYS, 0, 0xff); glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE); }
-    else if (f->chkm) { glStencilFunc(GL_NOTEQUAL, 1, 1); glStencilOp(GL_KEEP, GL_KEEP, f->setm ? GL_REPLACE : GL_KEEP); }
-    else { glStencilFunc(GL_ALWAYS, f->setm ? 1 : 0, 0xff); glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE); }
+    else { glStencilFunc(GL_NOTEQUAL, 1, 1); glStencilOp(GL_KEEP, GL_KEEP, f->setm ? GL_REPLACE : GL_KEEP); }
 }
 static void set_blend(int on, int mode) {
     if (!on) { glDisable(GL_BLEND); return; }
@@ -397,7 +397,7 @@ static void do_copy(const GPrim *p) {   /* vram to vram, at the high resolution 
     GPrim b; memset(&b, 0, sizeof b);
     b.kind = GK_BLIT; b.x = p->x; b.y = p->y; b.w = w; b.h = h;
     q_Uniform1i(u_pass, 2); q_Uniform1f(u_alpha, 1.0f);
-    glStencilFunc(p->chkm ? GL_NOTEQUAL : GL_ALWAYS, 1, p->chkm ? 1 : 0xff);
+    glStencilFunc(GL_NOTEQUAL, 1, 1);
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     glBegin(GL_TRIANGLES); emit(&b); glEnd();
@@ -424,6 +424,7 @@ void glg_mask(int set, int check) {
         glBegin(GL_TRIANGLES); emit(&b); glEnd();
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glDisable(GL_STENCIL_TEST);
+        q_UseProgram(0); glColor4f(1, 1, 1, 1);   /* the window picture is drawn with the fixed pipeline */
         q_BindFramebuffer(GL_FRAMEBUFFER, 0);
     }
     cur_set = set != 0; cur_chk = c;
@@ -471,7 +472,7 @@ void glg_flush(void) {
         set_stencil(f);
         if (f->semi && f->textured) { draw_run(i, j, 1, 0); draw_run(i, j, 2, 1); }   /* opaque texels, then the translucent ones */
         else draw_run(i, j, 0, f->semi);
-        if (f->chkm && (f->kind == GK_BLIT || (f->textured && !f->setm && (f->kind == GK_TRI || f->kind == GK_RECT)))) {
+        if (f->chkm && (f->kind == GK_BLIT || (f->textured && !f->setm && (f->kind == GK_TRI || f->kind == GK_RECT)))) {   /* only under check-mask */
             /* texels with bit 15 keep it in vram (it is the mask bit): the same prims again, those texels only, stencil only.
                An upload does the same for its pixels. */
             if (f->kind != GK_BLIT && f->chkm) glStencilFunc(GL_NOTEQUAL, 1, 1);
