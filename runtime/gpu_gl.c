@@ -328,6 +328,7 @@ static void cliprect(const GPrim *p, int c[4]) {
     else { c[0] = 0; c[1] = 0; c[2] = 1023; c[3] = 511; }
 }
 static int same_state(const GPrim *a, const GPrim *b) {
+    if (a->chkm || b->chkm) return 0;   /* with the mask checked every prim is on its own: the stencil depends on drawing order */
     if (a->kind == GK_COPY || b->kind == GK_COPY || (a->semi && a->textured) || (b->semi && b->textured)) return 0;   /* translucent textured ones are drawn one at a time, in two passes */
     int ca[4], cb[4]; cliprect(a, ca); cliprect(b, cb);
     return memcmp(ca, cb, sizeof ca) == 0 && a->semi == b->semi && a->semimode == b->semimode && a->setm == b->setm && a->chkm == b->chkm
@@ -335,6 +336,7 @@ static int same_state(const GPrim *a, const GPrim *b) {
 }
 /* the mask bit: a fill ignores it and clears it, an upload mirrors bit 15 of vram afterwards (see glg_flush), the rest honour the mode */
 static void set_stencil(const GPrim *f) {
+    if (!f->chkm) { glDisable(GL_STENCIL_TEST); return; }   /* the stencil is only read under check-mask, and is rebuilt from vram when that starts */
     glEnable(GL_STENCIL_TEST);
     glStencilMask(0xff);
     if (f->kind == GK_FILL || f->kind == GK_BLIT) { glStencilFunc(GL_ALWAYS, 0, 0xff); glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE); }
@@ -390,6 +392,7 @@ static void do_copy(const GPrim *p) {   /* vram to vram, at the high resolution 
     glEnd();
     glBindTexture(GL_TEXTURE_2D, (GLuint)save);
     q_UseProgram(prog);
+    if (!p->chkm) return;
     /* the console copies bit 15 with the pixel, so mirror it from vram (already copied on the CPU), as an upload does */
     GPrim b; memset(&b, 0, sizeof b);
     b.kind = GK_BLIT; b.x = p->x; b.y = p->y; b.w = w; b.h = h;
@@ -401,18 +404,40 @@ static void do_copy(const GPrim *p) {   /* vram to vram, at the high resolution 
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 }
 
+static void upload_dirty(void);
+static void setup_target(void);
 static int cur_set, cur_chk;
-void glg_mask(int set, int check) { cur_set = set != 0; cur_chk = check != 0; }
+/* The stencil only matters while the mask is checked, so it is not kept up to date otherwise: when checking starts it is
+   rebuilt from vram (whose bit 15 is the console's mask bit, kept exactly by the CPU). */
+void glg_mask(int set, int check) {
+    int c = check != 0;
+    if (c && !cur_chk && state > 0) {
+        glg_flush();   /* what is queued so far was drawn without checking */
+        upload_dirty(); setup_target();
+        glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND); glStencilMask(0xff); glClearStencil(0);
+        glClear(GL_STENCIL_BUFFER_BIT);
+        GPrim b; memset(&b, 0, sizeof b);
+        b.kind = GK_BLIT; b.w = 1024; b.h = 512;
+        glEnable(GL_STENCIL_TEST); glStencilFunc(GL_ALWAYS, 1, 0xff); glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        q_Uniform1i(u_pass, 2); q_Uniform1f(u_alpha, 1.0f);
+        glBegin(GL_TRIANGLES); emit(&b); glEnd();
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDisable(GL_STENCIL_TEST);
+        q_BindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+    cur_set = set != 0; cur_chk = c;
+}
 
 void glg_submit(const GPrim *p) {
     if (state <= 0) return;
     if (qn == QMAX) glg_flush();
     q[qn] = *p; q[qn].setm = cur_set; q[qn].chkm = cur_chk; qn++;
+    if (cur_chk && p->kind == GK_COPY) glg_flush();   /* the copy's bit-15 pass reads vram as it is now */
 }
 
-void glg_flush(void) {
-    if (state <= 0 || !qn) return;
-    /* bring the texture copy of vram up to date: the rows changed since last time */
+/* bring the texture copy of vram up to date: the rows changed since last time */
+static void upload_dirty(void) {
     q_ActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, vtex);
     if (dirty1 >= dirty0) {
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -421,12 +446,19 @@ void glg_flush(void) {
         dirty0 = 512; dirty1 = -1;
     }
     q_ActiveTexture(GL_TEXTURE0);
+}
+static void setup_target(void) {
     q_BindFramebuffer(GL_FRAMEBUFFER, fbo);
     glViewport(0, 0, 1024 * S, 512 * S);
     glDisable(GL_DEPTH_TEST);
     q_UseProgram(prog);
     q_Uniform1i(u_vram, 1);
     q_Uniform2f(u_target, 1024.0f * S, 512.0f * S);
+}
+void glg_flush(void) {
+    if (state <= 0 || !qn) return;
+    upload_dirty();
+    setup_target();
     for (int i = 0; i < qn;) {
         const GPrim *f = &q[i];
         if (f->kind == GK_COPY) { do_copy(f); i++; continue; }
@@ -439,7 +471,7 @@ void glg_flush(void) {
         set_stencil(f);
         if (f->semi && f->textured) { draw_run(i, j, 1, 0); draw_run(i, j, 2, 1); }   /* opaque texels, then the translucent ones */
         else draw_run(i, j, 0, f->semi);
-        if (f->kind == GK_BLIT || (f->textured && !f->setm && (f->kind == GK_TRI || f->kind == GK_RECT))) {
+        if (f->chkm && (f->kind == GK_BLIT || (f->textured && !f->setm && (f->kind == GK_TRI || f->kind == GK_RECT)))) {
             /* texels with bit 15 keep it in vram (it is the mask bit): the same prims again, those texels only, stencil only.
                An upload does the same for its pixels. */
             if (f->kind != GK_BLIT && f->chkm) glStencilFunc(GL_NOTEQUAL, 1, 1);
