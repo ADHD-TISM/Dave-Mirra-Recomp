@@ -15,6 +15,7 @@
 #include "hw.h"
 #include "host.h"
 #include "game.h"   /* GAME_NAME: written into gen/ by tools/regen.py */
+#include "gpu_gl.h"
 #ifndef APIENTRY
 #define APIENTRY
 #endif
@@ -114,6 +115,7 @@ static char *trim(char *s) {
 /* one "name = value" setting; returns 0 when the name or value is not understood */
 int host_set_option(const char *name, const char *val) {
     if (!_stricmp(name, "scale")) { int v = atoi(val); if (v != 1 && v != 2 && v != 4) return 0; g_gpu_scale = v; return 1; }
+    if (!_stricmp(name, "gpu_gl")) { g_gpu_gl = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "scale_auto")) { g_scale_auto = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "filter")) { if (!_stricmp(val, "nearest")) g_filter = 0; else if (!_stricmp(val, "smooth")) g_filter = 1; else return 0; return 1; }
     if (!_stricmp(name, "aspect")) { if (!_stricmp(val, "4:3")) g_aspect = 0; else if (!_stricmp(val, "stretch")) g_aspect = 1; else return 0; return 1; }
@@ -164,6 +166,8 @@ static void config_write_default(const char *path) {
                "scale = 1\n"
                "# 1 = drop to a lower scale by itself when the game cannot hold full speed at 2 or 4\n"
                "scale_auto = 1\n"
+               "# 1 = at scale 2 or 4, draw the picture on the graphics card instead of the processor (early prototype)\n"
+               "gpu_gl = 0\n"
                "# How the picture is enlarged to the window: nearest = sharp pixels, smooth = blended (F7)\n"
                "filter = nearest\n"
                "# 4:3 = console shape with black bars, stretch = fill the window (F8)\n"
@@ -567,10 +571,15 @@ static void grab_and_swap(int cw, int ch) {
     }
     plat_swap();
 }
+static int fb_on_gpu, gpu_box[4];   /* the picture is a texture on the graphics card (gpu_gl) */
+extern int g_shot_every;
 static void gl_present(int cw, int ch, int w, int h) {
     glViewport(0, 0, cw, ch);
     glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT);
-    if (fb_w != gl_tw || fb_h != gl_th) {
+    if (fb_on_gpu) {   /* the picture is already on the graphics card: copy the visible part into the texture */
+        glg_present(gpu_box[0], gpu_box[1], gpu_box[2], gpu_box[3]);
+        gl_tw = fb_w; gl_th = fb_h;
+    } else if (fb_w != gl_tw || fb_h != gl_th) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, fb_w, fb_h, 0, 0x80E1 /* BGRA */, GL_UNSIGNED_BYTE, fb);
         gl_tw = fb_w; gl_th = fb_h;
     } else glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, fb_w, fb_h, 0x80E1, GL_UNSIGNED_BYTE, fb);
@@ -589,9 +598,15 @@ static void gl_present(int cw, int ch, int w, int h) {
 
 static void present(void) {
     DisplayArea d; gpu_display_area(&d);
-    int hs; const u16 *hv = gpu_hires(&hs);
-    fb_w = d.w; fb_h = d.h;
+    int gls = (d.enabled && !d.depth24 && gl_ok) ? gpu_gl_scale() : 0;
+    int hs = 1; const u16 *hv = gls ? NULL : gpu_hires(&hs);
+    fb_w = d.w; fb_h = d.h; fb_on_gpu = 0;
     if (!d.enabled) memset(fb, 0, (size_t)fb_w * fb_h * 4);
+    else if (gls) {
+        fb_w = d.w * gls; fb_h = d.h * gls; fb_on_gpu = 1;
+        gpu_box[0] = d.x; gpu_box[1] = d.y; gpu_box[2] = d.w; gpu_box[3] = d.h;
+        if (g_shot_every) glg_read(d.x, d.y, d.w, d.h, fb);   /* screenshots are saved from fb */
+    }
     else if (!d.depth24 && hv) {
         fb_w = d.w * hs; fb_h = d.h * hs;
         for (int y = 0; y < fb_h; y++) {

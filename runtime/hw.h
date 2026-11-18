@@ -35,6 +35,8 @@ extern u16 vram[512 * 1024];
 typedef struct { int x, y, w, h, depth24, enabled; } DisplayArea;
 void gpu_display_area(DisplayArea *d);
 extern int g_gpu_scale;            /* requested internal resolution: 1, 2 or 4 */
+extern int g_gpu_gl;               /* 1 = let the graphics card draw the 2x / 4x picture (gpu_gl setting; early prototype) */
+int gpu_gl_scale(void);            /* the scale when the graphics card holds the picture (all queued drawing is done), else 0 */
 void gpu_set_scale(void);           /* apply g_gpu_scale (safe at any time) */
 const u16 *gpu_hires(int *scale);   /* high-resolution copy of VRAM, NULL at scale 1 */
 
