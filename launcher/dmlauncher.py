@@ -980,10 +980,10 @@ def desktop_entry_text(P, disc_path, name):
     """A freedesktop .desktop file that starts the built game from its own folder."""
     def q(t):   # Exec quoting: double quotes, with the few special characters escaped
         quoted = '"' + "".join("\\" + c if c in '"`$\\' else c for c in t) + '"'
-        return quoted.replace("\\", "\\\\")   # the file's own string escaping comes first, so every backslash doubles
+        return quoted.replace("\\", "\\\\").replace("%", "%%")   # the file's own string escaping comes first, so every backslash doubles; % starts a field code in Exec
     return ("[Desktop Entry]\nType=Application\nName=%s (recomp)\nComment=Static recompilation of the PlayStation game\n"
             "Exec=%s %s\nPath=%s\nTerminal=false\nCategories=Game;\nStartupNotify=false\n"
-            % (name, q(P.exe), q(os.path.abspath(disc_path)), P.game.replace("%", "%%")))
+            % (name, q(P.exe), q(os.path.abspath(disc_path)), P.game))   # Path= takes no field codes: no % escaping there
 
 
 def make_shortcut(P, C, log):

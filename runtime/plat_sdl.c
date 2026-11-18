@@ -183,7 +183,7 @@ void plat_audio_init(void) {
     /* the device stays paused until the cushion is there (plat_audio_push starts it) */
 }
 void plat_audio_push(const int16_t *lr, int frames) {
-    static int16_t out[(4096 + 2) * 2];
+    static int16_t out[(4096 + AQ_STEP) * 2];
     static unsigned underruns, pushes;
     if (!adev || frames <= 0 || frames > 4096) return;
     pushes++;
@@ -201,10 +201,11 @@ void plat_audio_push(const int16_t *lr, int frames) {
     int d = audio_started ? (AQ_TARGET - q) / AQ_GAIN : 0;   /* no steering while the cushion is being built */
     d = d > AQ_STEP ? AQ_STEP : d < -AQ_STEP ? -AQ_STEP : d;
     int m = frames + d;
+    if (frames < 2 + AQ_STEP) d = m = frames;   /* a block this short is queued as it is (also keeps m >= 2 below) */
     if (m == frames || frames < 2) { SDL_QueueAudio(adev, lr, (Uint32)frames * 4); m = frames; }
     else {    /* resample frames -> m by linear interpolation, end to end */
         for (int i = 0; i < m; i++) {
-            long pos = (long)i * (frames - 1) * 256 / (m - 1);
+            int64_t pos = (int64_t)i * (frames - 1) * 256 / (m - 1);
             int a = (int)(pos >> 8), f = (int)(pos & 255), b = a + 1 < frames ? a + 1 : a;
             for (int c = 0; c < 2; c++) out[i * 2 + c] = (int16_t)((lr[a * 2 + c] * (256 - f) + lr[b * 2 + c] * f) >> 8);
         }

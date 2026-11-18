@@ -44,6 +44,7 @@ void gpu_set_scale(void) {
         glmode = 1; hv_scale = s;
         gl_mask_sync();
         glg_dirty(0, 511); glg_submit(&b);
+        glg_flush();   /* before anything queued later, which the CPU has already drawn into vram */
         return;
     }
     hv = malloc((size_t)1024 * s * 512 * s * sizeof *hv);
@@ -637,7 +638,7 @@ u32 gpu_read(void) {
 void gpu_write_gp1(u32 v) {
     u32 op = (v >> 24) & 0x3f;
     switch (op) {
-    case 0x00: gpu_init(); fifo_n = 0; xfer_in.active = xfer_out.active = 0; poly_line = 0; break;
+    case 0x00: gpu_init(); gl_mask_sync(); fifo_n = 0; xfer_in.active = xfer_out.active = 0; poly_line = 0; break;
     case 0x01: fifo_n = 0; xfer_in.active = 0; poly_line = 0; break;
     case 0x02: break;
     case 0x03: g.disp_off = v & 1; break;

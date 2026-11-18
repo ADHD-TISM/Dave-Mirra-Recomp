@@ -378,11 +378,7 @@ static void do_copy(const GPrim *p) {   /* vram to vram, at the high resolution 
     }
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p->sx * S, p->sy * S, w * S, h * S);
     q_UseProgram(0); glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND); glEnable(GL_TEXTURE_2D);
-    if (p->chkm || p->setm) {   /* the source's own mask bits are not carried over, only the mode */
-        glEnable(GL_STENCIL_TEST); glStencilMask(0xff);
-        glStencilFunc(p->chkm ? GL_NOTEQUAL : GL_ALWAYS, 1, p->chkm ? 1 : 0xff);
-        glStencilOp(GL_KEEP, GL_KEEP, p->setm ? GL_REPLACE : GL_KEEP);
-    } else glDisable(GL_STENCIL_TEST);
+    set_stencil(p);   /* the copied pixels' own bit 15 is put back by the stencil-only pass below */
     glColor4f(1, 1, 1, 1);
     float tx = (float)(w * S) / (float)tmp_w, ty = (float)(h * S) / (float)tmp_h;
     float W = 1024.0f * S, H = 512.0f * S;
@@ -394,6 +390,15 @@ static void do_copy(const GPrim *p) {   /* vram to vram, at the high resolution 
     glEnd();
     glBindTexture(GL_TEXTURE_2D, (GLuint)save);
     q_UseProgram(prog);
+    /* the console copies bit 15 with the pixel, so mirror it from vram (already copied on the CPU), as an upload does */
+    GPrim b; memset(&b, 0, sizeof b);
+    b.kind = GK_BLIT; b.x = p->x; b.y = p->y; b.w = w; b.h = h;
+    q_Uniform1i(u_pass, 2); q_Uniform1f(u_alpha, 1.0f);
+    glStencilFunc(p->chkm ? GL_NOTEQUAL : GL_ALWAYS, 1, p->chkm ? 1 : 0xff);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    glBegin(GL_TRIANGLES); emit(&b); glEnd();
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 }
 
 static int cur_set, cur_chk;
@@ -434,10 +439,17 @@ void glg_flush(void) {
         set_stencil(f);
         if (f->semi && f->textured) { draw_run(i, j, 1, 0); draw_run(i, j, 2, 1); }   /* opaque texels, then the translucent ones */
         else draw_run(i, j, 0, f->semi);
-        if (f->kind == GK_BLIT) {   /* the uploaded pixels that have bit 15 are masked: same copy again, stencil only */
-            glStencilFunc(GL_ALWAYS, 1, 0xff);
+        if (f->kind == GK_BLIT || (f->textured && !f->setm && (f->kind == GK_TRI || f->kind == GK_RECT))) {
+            /* texels with bit 15 keep it in vram (it is the mask bit): the same prims again, those texels only, stencil only.
+               An upload does the same for its pixels. */
+            if (f->kind != GK_BLIT && f->chkm) glStencilFunc(GL_NOTEQUAL, 1, 1);
+            else glStencilFunc(GL_ALWAYS, 1, 0xff);
+            glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
             glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-            draw_run(i, j, 2, 0);
+            q_Uniform1i(u_pass, 2); q_Uniform1f(u_alpha, 1.0f); set_blend(0, 0);
+            glBegin(GL_TRIANGLES);
+            for (int k = i; k < j; k++) if (f->kind == GK_BLIT || q[k].textured) emit(&q[k]);   /* a run can mix in flat prims */
+            glEnd();
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         }
         i = j;
