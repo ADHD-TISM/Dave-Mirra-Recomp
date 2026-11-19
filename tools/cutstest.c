@@ -1,7 +1,7 @@
 /* Checks runtime/vram_cuts.h (how the GL renderer cuts a vram copy that wraps): for every source, destination and length on a
    small power-of-two axis, the pieces must be non-empty, wrap at neither end and tile the length exactly once; the real vram sizes
-   (1024 and 512) are checked on every edge offset. From the repository root:
-     gcc -I runtime tools/cutstest.c -o build/cutstest && build/cutstest */
+   (1024 and 512) are then sampled near the edges. From the repository root:
+     mkdir -p build && gcc -I runtime tools/cutstest.c -o build/cutstest && build/cutstest */
 #include <stdio.h>
 #include "vram_cuts.h"
 
