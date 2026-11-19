@@ -16,6 +16,7 @@
 #include "hw.h"
 #include "host.h"
 #include "gpu_gl.h"
+#include "vram_cuts.h"
 #ifndef APIENTRY
 #define APIENTRY
 #endif
@@ -401,15 +402,7 @@ static void copy_box(const GPrim *p, int sx, int sy, int dx, int dy, int w, int 
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 }
 /* the console wraps a copy around the edges of vram, at the source and at the destination independently: cut it into boxes
-   that wrap at neither, along each axis */
-static int cuts(int s, int d, int n, int size, int out[3]) {
-    int k = 0, c0 = size - (s & (size - 1)), c1 = size - (d & (size - 1));
-    out[k++] = 0;
-    if (c0 < n) out[k++] = c0;
-    if (c1 < n && c1 != c0) out[k++] = c1;
-    if (k == 3 && out[1] > out[2]) { int t = out[1]; out[1] = out[2]; out[2] = t; }
-    return k;
-}
+   that wrap at neither, along each axis (see vram_cuts.h) */
 static void do_copy(const GPrim *p) {
     int w = p->w < 1024 ? p->w : 1024, h = p->h < 512 ? p->h : 512;
     if (w <= 0 || h <= 0) return;

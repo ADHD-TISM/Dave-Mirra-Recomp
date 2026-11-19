@@ -1236,7 +1236,7 @@ def cli(argv):
         else:
             print(__doc__)
             return 2
-    except Fail as e:
+    except (Fail, OSError) as e:
         print("error: %s" % e)
         return 1
     return 0
