@@ -5,8 +5,9 @@ and are not promises.
 
 ## Goal
 
-Draw the picture with Vulkan on Windows and Linux (including the Steam Deck), and keep OpenGL as the fallback for machines
-where Vulkan is missing or misbehaves. The CPU renderer stays the console-exact reference and the default.
+Draw the picture with Vulkan on Windows and Linux, and keep OpenGL as the fallback for machines where Vulkan is missing or
+misbehaves. The CPU renderer stays the console-exact reference and the default. Linux here includes the Steam Deck build,
+which the README still marks untested.
 
 OpenGL is formally deprecated only on macOS; Windows and Linux drivers will carry it for years. This is not an emergency.
 The reasons to do it anyway are driver futures, Vulkan-only features, and having one modern path to test and optimise.
@@ -15,67 +16,85 @@ The reasons to do it anyway are driver futures, Vulkan-only features, and having
 
 1. **API: Vulkan directly**, behind a small backend interface of our own. No engine, no SDL3 GPU layer: the project has almost
    no dependencies and should keep it that way.
-2. **Platforms: Windows and Linux only** (the Linux build is also the Steam Deck build). macOS, and with it MoltenVK, is out of
-   scope for now.
-3. **Shaders: compiled SPIR-V is checked into the repository next to the GLSL source**, so users need no shader compiler and
-   the launcher's downloads stay as they are. A contributor who changes a shader regenerates the SPIR-V with `glslc` and commits
-   both; a check in the tests compares them.
-4. **OpenGL stays as the fallback**, not only for a transition period. It is used when Vulkan is unavailable, fails to start,
-   or is switched off in the settings. It is removed only if it becomes a burden and Vulkan has proved itself on real machines.
+2. **Platforms: Windows and Linux only.** macOS, and with it MoltenVK, is out of scope for now.
+3. **Shaders: compiled SPIR-V is checked into the repository next to the GLSL source**, so users need no shader compiler. A
+   contributor who changes a shader regenerates the SPIR-V with `glslc` and commits both. Different `glslc` versions produce
+   different bytes from the same source, so the test does not compare bytes: a hash of the GLSL source is recorded next to each
+   `.spv`, and the test checks that the recorded hash matches the source (it needs no compiler).
+4. **OpenGL stays as the fallback**, not only for a transition period. The full chain is Vulkan, then OpenGL, then the
+   platform's software stretch (`plat_soft_present`, which exists today for machines without OpenGL). OpenGL is removed only
+   if it becomes a burden and Vulkan has proved itself on real machines.
+5. **Vulkan is loaded at run time**, not linked: the program opens `vulkan-1.dll` or `libvulkan.so.1` and gets the rest through
+   `vkGetInstanceProcAddr`, the way `plat_gl_proc` already does for OpenGL. A machine without a Vulkan loader must still start
+   and use the fallback chain. The Vulkan headers are committed (or fetched like SDL2's headers on the Deck route), so no
+   system package is needed to build.
 
 ## Where OpenGL is today
 
-- `plat_win32.c` and `plat_sdl.c` create the GL context through three functions: `plat_video_init`, `plat_swap` and
-  `plat_gl_proc` (`host.h`).
-- `host_common.c` draws the window picture with GL: upload of the CPU picture, the sharp and smooth filter, FSR (two GLSL 1.20
-  shaders), screenshots and the window grab. About 40 GL calls.
-- `gpu_gl.c` (the experimental GPU hi-res renderer, `gpu_gl=1`) draws the 2x and 4x picture. Its whole interface is the seven
-  functions in `gpu_gl.h`; `gpu.c` never touches GL. It also holds the pixel-exact logic: the vram mirror texture, the PSX
-  texture-decode shader, the mask bit kept as a stencil bit only while check-mask is on, and two-pass translucency. See
-  `docs/gpu-renderer-testing.md`.
+- `runtime/plat_win32.c` and `runtime/plat_sdl.c` own the GL context and the window it lives in: `plat_video_init` creates the
+  window and the context (`SDL_WINDOW_OPENGL`, or a pixel format on Win32), `plat_swap` shows the frame, and `plat_gl_proc`
+  looks up entry points (`runtime/host.h`). `plat_soft_present` is the existing no-OpenGL path.
+- `runtime/host_common.c` draws the window picture with GL: upload of the CPU picture, the sharp and smooth filter, FSR (two
+  GLSL 1.20 shaders), and the `--shot-window` grab. About 35 GL functions at about 85 call sites.
+- `runtime/gpu_gl.c` (the experimental GPU hi-res renderer, `gpu_gl=1`) draws the 2x and 4x picture. Its whole interface is
+  the seven functions in `runtime/gpu_gl.h`; `runtime/gpu.c` never touches GL. It also holds the pixel-exact logic: the vram
+  mirror texture, the PSX texture-decode shader, the mask bit kept as a stencil bit only while check-mask is on, and two-pass
+  translucency. See `docs/gpu-renderer-testing.md`.
+- The renderer and the window picture are coupled: `glg_present` copies the picture into the host's bound GL texture.
 
-A replacement has to cover both the GPU renderer and the window presentation.
+A replacement has to cover the GPU renderer, the window presentation and the window itself.
 
 ## Phases
 
 Each phase ends with its exit test. Nothing moves on until the test passes on the Radeon baseline and the OpenGL path is
 unchanged.
 
-1. **Finish the OpenGL path** (in progress; about a week). Test it on NVIDIA and Intel graphics, fix what that finds (most
-   likely GLSL 1.20 strictness), and close the small review items that are still open (a test that up/left scroll copies keep
-   their full detail, a few comments). The Vulkan port reuses the shader logic and the pixel-match tests, so they have to be right first.
-   *Exit:* `tools/gltest.c` and the scripted CPU-versus-GPU comparison pass on AMD, NVIDIA and Intel; both games play.
-2. **Make the seam explicit** (3 to 5 days). One backend interface in front of everything GL: init, present, read-back and the
-   seven renderer calls; today's GL code moves behind it with no behaviour change.
+1. **Finish the OpenGL path** (in progress; about a week). Test it on NVIDIA and Intel graphics on Windows, fix what that
+   finds (most likely GLSL 1.20 strictness), and close the small items still open: a test that overlapping copies which do not
+   smear (up and left scrolls) keep their full detail, and check-mask cases in `tools/gltest.c`, which does not cover
+   check-mask today. `tools/gltest.c` is wgl-only, so a Linux/Mesa check of the GL path is either added here (an SDL variant of
+   the harness) or deferred, and the Linux GL path stays untested until then.
+   *Exit:* `tools/gltest.c` and the scripted CPU-versus-GPU comparison pass on AMD, NVIDIA and Intel on Windows; both games
+   play.
+2. **Make the seam explicit** (3 to 5 days). One backend interface in front of everything GL: window and surface creation per
+   backend (including recreating the window when falling back, as `plat_sdl.c` already does for the no-GL case: a Win32 window
+   can have its pixel format set only once, and SDL needs `SDL_WINDOW_VULKAN`), size, swap, present, read-back and the seven
+   renderer calls. Today's GL code moves behind it with no behaviour change.
    *Exit:* `gltest` and the scripted run give identical results before and after.
 3. **Modernise GL as a stepping stone** (about a week, optional). Replace `glBegin` and the fixed pipeline with vertex buffers
    and core-profile shaders. This is most of the porting work for Vulkan anyway, it drops the compatibility-profile
    requirement, and it can be checked against the baseline before any new API is involved.
    *Exit:* same as phase 2, on a core-profile context.
-4. **Vulkan device and presentation** (about a week). Instance, device and swapchain on both front ends (Win32 and SDL);
-   upload of the CPU picture, filter, FSR, screenshots and the window grab.
-   *Exit:* every CPU-renderer run, including FSR, looks the same as through OpenGL.
+4. **Vulkan device and presentation** (about a week). The loader, instance, device and swapchain on both front ends; upload of
+   the CPU picture, filter, FSR and the window grab. The backend is chosen once per run for the presenter and the renderer
+   together: until phase 5, `gpu_gl=1` keeps the OpenGL presenter, because `glg_present` hands its picture to a GL texture.
+   *Exit:* every CPU-renderer run, including FSR, looks the same as through OpenGL, and a machine with no Vulkan loader still
+   starts through the fallback chain.
 5. **Vulkan GPU renderer** (2 to 3 weeks). The vram texture with dirty-row uploads, the offscreen target with stencil, the
    decode shader as SPIR-V, one pipeline per blend and stencil state, two-pass translucency, copies and the check-mask rebuild.
-   *Exit:* a Vulkan version of `gltest` passes, and the scripted comparison matches the Radeon OpenGL baseline on both games.
-6. **Hardware validation** (a week or more). AMD, NVIDIA, Intel and a Steam Deck, with the validation layers on. The least
-   predictable phase: it depends on having the hardware.
+   *Exit:* a Vulkan version of `gltest` (including the check-mask cases from phase 1) passes, and the scripted comparison
+   matches the Radeon OpenGL baseline on both games.
+6. **Hardware validation** (a week or more). AMD, NVIDIA and Intel on Windows, and Linux with Mesa and NVIDIA drivers, a Steam
+   Deck if one is available, with the validation layers on. The least predictable phase: it depends on having the hardware.
    *Exit:* no validation errors, no regressions against OpenGL on any of them.
-7. **Make Vulkan the default where it works.** The picture setting chooses Vulkan when the device supports what is needed,
-   falls back to OpenGL otherwise, and can be forced either way.
+7. **Make Vulkan the default presentation where it works** (not estimated). A new setting, `renderer = auto | vulkan | gl`,
+   picks the presentation and GPU-renderer backend: `auto` uses Vulkan when the device supports what is needed and falls back
+   otherwise; the other two force one. It does not change what `gpu_gl` means: the CPU renderer stays the default picture, and
+   whether the GPU renderer becomes the default is a separate decision.
 
-Rough total: 5 to 8 weeks of focused work, phase 3 being the optional one.
+Rough total: 5 to 8 weeks of focused work for phases 1 to 6 if the hardware is at hand, phase 3 being the optional one.
 
 ## Risks
 
 - **Driver differences** show up late and on hardware that is not always at hand (phase 6).
 - **The mask bit** (stencil as bit 15 of a vram pixel, rebuilt when check-mask turns on) and the two-pass translucency are the
-  parts most likely to behave differently on another API. Neither game uses check-mask, so it needs synthetic tests such as
-  those in `tools/gltest.c`.
+  parts most likely to behave differently on another API. Neither game has used check-mask in the runs so far, and
+  `tools/gltest.c` does not test it yet, so check-mask needs synthetic tests of its own (phase 1 and phase 5).
 - **Two renderers to keep correct.** The CPU renderer is the reference for both, and the same pixel-comparison runs apply to
   each.
-- **Portability of the build.** The Linux build is compiled with a downloaded portable compiler on the Steam Deck; the Vulkan
-  headers and loader have to fit that route without a system package.
+- **Portability of the build.** The Linux build is compiled with a downloaded portable compiler on the Steam Deck route; the
+  Vulkan headers have to be committed or fetched the same way, and the loader opened at run time, so no system package is
+  needed.
 
 ## How a contributor can help
 
