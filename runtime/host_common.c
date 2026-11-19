@@ -25,25 +25,7 @@ static double last_frame;   /* ms */
 static int turbo;
 int g_turbo, g_auto_start;   /* test aids: --turbo, --auto-start N */
 static unsigned input_frame;
-/* --script "frame:btn,frame:btn,..." : press btn for 6 frames starting at frame.
-   btn: u d l r x o s t st se l1 r1 l2 r2 */
-static struct { unsigned frame; u16 mask; } script[2048]; static int script_n;
-void host_set_script(const char *t) {
-    static const struct { const char *n; int bit; } names[] = {
-        {"u",4},{"r",5},{"d",6},{"l",7},{"st",3},{"se",0},{"x",14},{"o",13},{"s",15},{"t",12},
-        {"l1",10},{"r1",11},{"l2",8},{"r2",9},{0,0} };
-    while (*t && script_n < 2048) {
-        unsigned f = (unsigned)strtoul(t, (char **)&t, 10);
-        if (*t == ':') t++;
-        char nm[8]; int k = 0;
-        while (*t && *t != ',' && k < 7) nm[k++] = *t++;
-        nm[k] = 0;
-        if (*t == ',') t++;
-        for (int i = 0; names[i].n; i++) if (!strcmp(names[i].n, nm)) {
-            script[script_n].frame = f; script[script_n].mask = (u16)(1 << names[i].bit); script_n++;
-        }
-    }
-}
+#include "script_parse.h"   /* host_set_script: the --script / --script-file button script */
 
 /* ------------------------------------------------------------ input --- */
 static u16 pad_state[2] = { 0xffff, 0xffff };
