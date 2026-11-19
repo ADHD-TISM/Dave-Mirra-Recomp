@@ -10,7 +10,8 @@ misbehaves. The CPU renderer stays the console-exact reference and the default. 
 which the README still marks untested.
 
 OpenGL is formally deprecated only on macOS; Windows and Linux drivers will carry it for years. This is not an emergency.
-The reasons to do it anyway are driver futures, Vulkan-only features, and having one modern path to test and optimise.
+The reasons to do it anyway are driver futures and having one modern path to test and optimise. No Vulkan-only feature is
+needed today.
 
 ## Decisions
 
@@ -19,13 +20,16 @@ The reasons to do it anyway are driver futures, Vulkan-only features, and having
 2. **Platforms: Windows and Linux only.** macOS, and with it MoltenVK, is out of scope for now.
 3. **Shaders: compiled SPIR-V is checked into the repository next to the GLSL source**, so users need no shader compiler. A
    contributor who changes a shader regenerates the SPIR-V with `glslc` and commits both. Different `glslc` versions produce
-   different bytes from the same source, so the test does not compare bytes: a hash of the GLSL source is recorded next to each
-   `.spv`, and the test checks that the recorded hash matches the source (it needs no compiler).
+   different bytes from the same source, so nothing compares bytes: a hash of the GLSL source (with the files it includes and
+   the `glslc` options used) is recorded next to each `.spv`. A small check in `tools/`, built like `tools/gltest.c` (the
+   repo has no test runner), recomputes the hash and fails when the source changed without the SPIR-V being regenerated. It
+   needs no compiler, and it cannot tell whether the committed `.spv` is right, only that it is not stale.
 4. **OpenGL stays as the fallback**, not only for a transition period. The full chain is Vulkan, then OpenGL, then the
    platform's software stretch (`plat_soft_present`, which exists today for machines without OpenGL). OpenGL is removed only
    if it becomes a burden and Vulkan has proved itself on real machines.
 5. **Vulkan is loaded at run time**, not linked: the program opens `vulkan-1.dll` or `libvulkan.so.1` and gets the rest through
-   `vkGetInstanceProcAddr`, the way `plat_gl_proc` already does for OpenGL. A machine without a Vulkan loader must still start
+   `vkGetInstanceProcAddr`, much as `plat_gl_proc` looks up OpenGL entry points (OpenGL itself stays linked, as it is today).
+   A machine without a Vulkan loader must still start
    and use the fallback chain. The Vulkan headers are committed (or fetched like SDL2's headers on the Deck route), so no
    system package is needed to build.
 
@@ -46,12 +50,14 @@ A replacement has to cover the GPU renderer, the window presentation and the win
 
 ## Phases
 
-Each phase ends with its exit test. Nothing moves on until the test passes on the Radeon baseline and the OpenGL path is
-unchanged.
+Each phase ends with its exit test. Nothing moves on until the test passes on the Radeon baseline and the OpenGL output has
+no regressions against it (phases 1 and 3 change the OpenGL code on purpose; they must not change what it draws).
 
 1. **Finish the OpenGL path** (in progress; about a week). Test it on NVIDIA and Intel graphics on Windows, fix what that
    finds (most likely GLSL 1.20 strictness), and close the small items still open: a test that overlapping copies which do not
-   smear (up and left scrolls) keep their full detail, and check-mask cases in `tools/gltest.c`, which does not cover
+   smear (up and left scrolls) keep their full detail (`tools/gltest.c` has those copy cases, but each starts from uploaded vram,
+   so it cannot tell a full-detail copy from a redraw of vram: the test must draw hi-res detail into the source first), and
+   check-mask cases in `tools/gltest.c`, which does not cover
    check-mask today. `tools/gltest.c` is wgl-only, so a Linux/Mesa check of the GL path is either added here (an SDL variant of
    the harness) or deferred, and the Linux GL path stays untested until then.
    *Exit:* `tools/gltest.c` and the scripted CPU-versus-GPU comparison pass on AMD, NVIDIA and Intel on Windows; both games
@@ -81,6 +87,8 @@ unchanged.
    picks the presentation and GPU-renderer backend: `auto` uses Vulkan when the device supports what is needed and falls back
    otherwise; the other two force one. It does not change what `gpu_gl` means: the CPU renderer stays the default picture, and
    whether the GPU renderer becomes the default is a separate decision.
+   *Exit:* `auto` picks Vulkan on the machines of phase 6 and falls back to OpenGL, then to the software stretch, on a machine
+   without a working Vulkan loader; `vulkan` and `gl` force their backend and say so when it is unavailable.
 
 Rough total: 5 to 8 weeks of focused work for phases 1 to 6 if the hardware is at hand, phase 3 being the optional one.
 
