@@ -31,7 +31,9 @@ for whoever tries it next.
    mkdir -p build && gcc -I runtime tools/gltest.c runtime/gpu_gl.c -o build/gltest.exe -lopengl32 -lgdi32 && build/gltest.exe
    ```
    It prints the OpenGL renderer string first, so you can see which card the context landed on (on a laptop with two
-   graphics chips, check that it is the NVIDIA one).
+   graphics chips, check that it is the NVIDIA one). The game and this test both ask the driver for the dedicated chip
+   (the exported `NvOptimusEnablement` and `AmdPowerXpressRequestHighPerformance` variables, `runtime/host_common.c`); if the
+   integrated chip still shows, the driver or a per-program graphics preference overrode the request.
 3. Play with it: `build/dmrecomp.exe --set gpu_gl=1 --set scale=4 --set scale_auto=0 "<your image>.cue"` (F6 switches the
    scale, F7 the filter). Look for dark or missing frames, flickering, wrong textures, shadows and transparent effects,
    and the Run Finished screen.

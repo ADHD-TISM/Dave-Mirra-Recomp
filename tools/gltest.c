@@ -15,6 +15,10 @@
 #include "host.h"
 #include "gpu_gl.h"
 
+/* the same request for the dedicated graphics chip that the game makes (runtime/host_common.c), so this shows what the game gets */
+__declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+
 u16 vram[512 * 1024];
 void *plat_gl_proc(const char *name) { return (void *)wglGetProcAddress(name); }
 

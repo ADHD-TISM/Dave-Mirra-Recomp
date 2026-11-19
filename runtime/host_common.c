@@ -20,6 +20,14 @@
 #define APIENTRY
 #endif
 
+#ifdef _WIN32
+/* A Windows laptop with two graphics chips runs a program on the integrated one unless the program asks for the other. These two
+   exported variables are the drivers' documented request for the dedicated chip (NVIDIA Optimus, AMD Switchable Graphics); they
+   change no system setting and do nothing on a machine with one chip. */
+__declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+#endif
+
 static u32 *fb; static int fb_w = 640, fb_h = 480;
 static double last_frame;   /* ms */
 static int turbo;
