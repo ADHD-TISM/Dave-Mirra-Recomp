@@ -1462,7 +1462,7 @@ def gui(root_dir, pinned=False, notice=None):
                 make_shortcut(P, C, log)
                 messagebox.showinfo("Applications menu", "Added to the applications menu.\n\nOn the Steam Deck: in Steam choose "
                                     "Games > Add a Non-Steam Game to My Library and tick it to get it into Game Mode.")
-            except Fail as e:
+            except (Fail, OSError) as e:
                 messagebox.showerror("Applications menu", str(e))
         ttk.Button(b, text="Add to the applications menu (for Steam)", command=do_shortcut).pack(anchor="w", pady=(0, 6))
     ttk.Label(b, wraplength=660, style="Muted.TLabel",

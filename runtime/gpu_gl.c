@@ -365,13 +365,8 @@ static void draw_run(int a, int b, int pass, int blend) {
     glEnd();
 }
 
-static void do_copy(const GPrim *p) {   /* vram to vram, at the high resolution */
-    int w = p->w, h = p->h;
-    if (p->sx + w > 1024) w = 1024 - p->sx;
-    if (p->x + w > 1024) w = 1024 - p->x;
-    if (p->sy + h > 512) h = 512 - p->sy;
-    if (p->y + h > 512) h = 512 - p->y;
-    if (w <= 0 || h <= 0) return;
+/* one box that wraps neither at the source nor at the destination */
+static void copy_box(const GPrim *p, int sx, int sy, int dx, int dy, int w, int h) {   /* vram to vram, at the high resolution */
     GLint save; q_ActiveTexture(GL_TEXTURE0); glGetIntegerv(GL_TEXTURE_BINDING_2D, &save);
     glBindTexture(GL_TEXTURE_2D, tmp_tex);
     if (w * S > tmp_w || h * S > tmp_h) {
@@ -380,14 +375,14 @@ static void do_copy(const GPrim *p) {   /* vram to vram, at the high resolution 
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tmp_w, tmp_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     }
-    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p->sx * S, p->sy * S, w * S, h * S);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, sx * S, sy * S, w * S, h * S);
     q_UseProgram(0); glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND); glEnable(GL_TEXTURE_2D);
     set_stencil(p);   /* the copied pixels' own bit 15 is put back by the stencil-only pass below */
     glColor4f(1, 1, 1, 1);
     float tx = (float)(w * S) / (float)tmp_w, ty = (float)(h * S) / (float)tmp_h;
     float W = 1024.0f * S, H = 512.0f * S;
-    float x0 = (float)(p->x * S) / W * 2 - 1, x1 = (float)((p->x + w) * S) / W * 2 - 1;
-    float y0 = (float)(p->y * S) / H * 2 - 1, y1 = (float)((p->y + h) * S) / H * 2 - 1;
+    float x0 = (float)(dx * S) / W * 2 - 1, x1 = (float)((dx + w) * S) / W * 2 - 1;
+    float y0 = (float)(dy * S) / H * 2 - 1, y1 = (float)((dy + h) * S) / H * 2 - 1;
     glBegin(GL_QUADS);
     glTexCoord2f(0, 0); glVertex2f(x0, y0); glTexCoord2f(tx, 0); glVertex2f(x1, y0);
     glTexCoord2f(tx, ty); glVertex2f(x1, y1); glTexCoord2f(0, ty); glVertex2f(x0, y1);
@@ -397,13 +392,32 @@ static void do_copy(const GPrim *p) {   /* vram to vram, at the high resolution 
     if (!p->chkm) return;
     /* the console copies bit 15 with the pixel, so mirror it from vram (already copied on the CPU), as an upload does */
     GPrim b; memset(&b, 0, sizeof b);
-    b.kind = GK_BLIT; b.x = p->x; b.y = p->y; b.w = w; b.h = h;
+    b.kind = GK_BLIT; b.x = dx; b.y = dy; b.w = w; b.h = h;
     q_Uniform1i(u_pass, 2); q_Uniform1f(u_alpha, 1.0f);
     glStencilFunc(GL_NOTEQUAL, 1, 1);
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     glBegin(GL_TRIANGLES); emit(&b); glEnd();
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+}
+/* the console wraps a copy around the edges of vram, at the source and at the destination independently: cut it into boxes
+   that wrap at neither, along each axis */
+static int cuts(int s, int d, int n, int size, int out[3]) {
+    int k = 0, c0 = size - (s & (size - 1)), c1 = size - (d & (size - 1));
+    out[k++] = 0;
+    if (c0 < n) out[k++] = c0;
+    if (c1 < n && c1 != c0) out[k++] = c1;
+    if (k == 3 && out[1] > out[2]) { int t = out[1]; out[1] = out[2]; out[2] = t; }
+    return k;
+}
+static void do_copy(const GPrim *p) {
+    int w = p->w < 1024 ? p->w : 1024, h = p->h < 512 ? p->h : 512;
+    if (w <= 0 || h <= 0) return;
+    int cx[3], cy[3], nx = cuts(p->sx, p->x, w, 1024, cx), ny = cuts(p->sy, p->y, h, 512, cy);
+    for (int j = 0; j < ny; j++) for (int i = 0; i < nx; i++) {
+        int x0 = cx[i], x1 = i + 1 < nx ? cx[i + 1] : w, y0 = cy[j], y1 = j + 1 < ny ? cy[j + 1] : h;
+        copy_box(p, (p->sx + x0) & 1023, (p->sy + y0) & 511, (p->x + x0) & 1023, (p->y + y0) & 511, x1 - x0, y1 - y0);
+    }
 }
 
 static void upload_dirty(void);
