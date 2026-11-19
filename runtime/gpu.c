@@ -11,7 +11,7 @@
 #endif
 #include <stdlib.h>
 #include "hw.h"
-#include "gpu_gl.h"
+#include "gfx.h"
 
 u16 vram[512 * 1024];
 #define VR(x, y) vram[(((y) & 511) << 10) | ((x) & 1023)]
@@ -38,13 +38,13 @@ void gpu_set_scale(void) {
     hi_flush();
     free(hv); hv = NULL; hv_scale = 1; glmode = 0;
     if (s == 1) return;
-    if (g_gpu_gl && glg_init(s)) {   /* the picture starts as the console picture enlarged: one copy of all of vram */
+    if (g_gpu_gl && gfx->r_init(s)) {   /* the picture starts as the console picture enlarged: one copy of all of vram */
         GPrim b; memset(&b, 0, sizeof b);
         b.kind = GK_BLIT; b.w = 1024; b.h = 512;
         glmode = 1; hv_scale = s;
         gl_mask_sync();   /* glg_init has marked all of vram changed, so a stencil rebuild here reads it all */
-        glg_submit(&b);
-        glg_flush();   /* before anything queued later, which the CPU has already drawn into vram */
+        gfx->r_submit(&b);
+        gfx->r_flush();   /* before anything queued later, which the CPU has already drawn into vram */
         return;
     }
     hv = malloc((size_t)1024 * s * 512 * s * sizeof *hv);
@@ -68,7 +68,7 @@ static u32 frame_field;   /* toggles every vblank (interlace field) */
 /* command FIFO */
 static u32 fifo[64]; static int fifo_n, fifo_need;
 static int poly_line;      /* polyline in progress */
-static void gl_mask_sync(void) { glg_mask(g.set_mask, g.check_mask); }
+static void gl_mask_sync(void) { gfx->r_mask(g.set_mask, g.check_mask); }
 /* vram transfer state */
 static struct { int active, x, y, w, h, cx, cy; } xfer_in, xfer_out;
 
@@ -183,7 +183,7 @@ static void workers_run(void) {
 }
 #endif
 static void hi_flush(void) {
-    if (glmode) { glg_flush(); return; }
+    if (glmode) { gfx->r_flush(); return; }
     if (!qn) return;
     if (!n_workers) {
         int n = cpu_count() - 1;
@@ -209,7 +209,7 @@ static inline void plot1(int x, int y, u16 c, int semi, int mode) {   /* the con
 static void gl_pix(int x, int y, u16 c, int semi, int mode) {
     GPrim p; memset(&p, 0, sizeof p);
     p.kind = GK_PIX; p.x = x; p.y = y; p.w = p.h = 1; p.col = c; p.semi = semi; p.semimode = mode;
-    glg_dirty(y, y); glg_submit(&p);
+    gfx->r_dirty(y, y); gfx->r_submit(&p);
 }
 static inline void plot(int x, int y, u16 c, int semi, int mode) {
     DS s = ds_now();
@@ -415,7 +415,7 @@ static void cmd_polygon(void) {
             p.tx = ti.tx; p.ty = ti.ty; p.depth = ti.depth; p.cx = ti.cx; p.cy = ti.cy;
             p.tw[0] = ds.tw_mask_x; p.tw[1] = ds.tw_mask_y; p.tw[2] = ds.tw_off_x; p.tw[3] = ds.tw_off_y;
             p.clip[0] = ds.dx1; p.clip[1] = ds.dy1; p.clip[2] = ds.dx2; p.clip[3] = ds.dy2;
-            glg_dirty(miny, maxy); glg_submit(&p);
+            gfx->r_dirty(miny, maxy); gfx->r_submit(&p);
         } else if (HS > 1) {
             Cmd *c = hi_cmd(C_TRI);
             c->v[0] = v[t]; c->v[1] = v[t + 1]; c->v[2] = v[t + 2]; c->ti = ti;
@@ -467,7 +467,7 @@ static void cmd_rect(void) {
         p.tx = ti.tx; p.ty = ti.ty; p.depth = ti.depth; p.cx = ti.cx; p.cy = ti.cy;
         p.tw[0] = ds.tw_mask_x; p.tw[1] = ds.tw_mask_y; p.tw[2] = ds.tw_off_x; p.tw[3] = ds.tw_off_y;
         p.clip[0] = ds.dx1; p.clip[1] = ds.dy1; p.clip[2] = ds.dx2; p.clip[3] = ds.dy2;
-        glg_dirty(y0, y0 + h - 1); glg_submit(&p);
+        gfx->r_dirty(y0, y0 + h - 1); gfx->r_submit(&p);
     }
 }
 
@@ -530,7 +530,7 @@ static void exec_cmd(void) {
         if (glmode) {
             GPrim p; memset(&p, 0, sizeof p);
             p.kind = GK_FILL; p.x = x; p.y = y; p.w = ww; p.h = hh; p.col = col;
-            glg_dirty(y, y + hh - 1); glg_submit(&p);
+            gfx->r_dirty(y, y + hh - 1); gfx->r_submit(&p);
         } else if (HS > 1) { Cmd *k = hi_cmd(C_FILL); k->x = x; k->y = y; k->w = ww; k->h = hh; k->col = col; }
         return;
     }
@@ -540,7 +540,7 @@ static void exec_cmd(void) {
     case 0xe3: g.dx1 = w & 0x3ff; g.dy1 = (w >> 10) & 0x1ff; return;
     case 0xe4: g.dx2 = w & 0x3ff; g.dy2 = (w >> 10) & 0x1ff; return;
     case 0xe5: g.ox = sx11(w); g.oy = sx11(w >> 11); return;
-    case 0xe6: g.set_mask = w & 1; g.check_mask = (w >> 1) & 1; if (glmode) glg_mask(g.set_mask, g.check_mask); return;
+    case 0xe6: g.set_mask = w & 1; g.check_mask = (w >> 1) & 1; if (glmode) gfx->r_mask(g.set_mask, g.check_mask); return;
     }
     if (op >= 0x80 && op < 0xa0) {
         int sx = fifo[1] & 0x3ff, sy = (fifo[1] >> 16) & 0x1ff, dx = fifo[2] & 0x3ff, dy = (fifo[2] >> 16) & 0x1ff;
@@ -554,7 +554,7 @@ static void exec_cmd(void) {
         if (glmode) {
             GPrim p; memset(&p, 0, sizeof p);
             p.kind = GK_COPY; p.x = dx; p.y = dy; p.w = ww; p.h = hh; p.sx = sx; p.sy = sy;
-            glg_dirty(dy, dy + hh - 1); glg_submit(&p);
+            gfx->r_dirty(dy, dy + hh - 1); gfx->r_submit(&p);
         } else if (HS > 1) for (int yy = 0; yy < hh * HS; yy++) for (int xx = 0; xx < ww * HS; xx++) {
             u16 s = HV(sx * HS + xx, sy * HS + yy); u16 *d = &HV(dx * HS + xx, dy * HS + yy);
             if (g.check_mask && (*d & 0x8000)) continue;
@@ -587,8 +587,8 @@ static void xfer_pixel(u16 p) {
             if (glmode) {
                 GPrim b; memset(&b, 0, sizeof b);
                 b.kind = GK_BLIT; b.x = xfer_in.x; b.y = xfer_in.y; b.w = xfer_in.w; b.h = xfer_in.h;
-                glg_dirty(xfer_in.y, xfer_in.y + xfer_in.h - 1); glg_submit(&b);
-                glg_flush();   /* the box is copied from vram as it is now: later drawing must not be in it, or it is applied twice */
+                gfx->r_dirty(xfer_in.y, xfer_in.y + xfer_in.h - 1); gfx->r_submit(&b);
+                gfx->r_flush();   /* the box is copied from vram as it is now: later drawing must not be in it, or it is applied twice */
             }
         }
     }

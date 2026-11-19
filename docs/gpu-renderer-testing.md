@@ -25,8 +25,9 @@ for whoever tries it next.
    the launcher. Run the game from a terminal so the `[gpu_gl]` messages are visible.
 2. Run the driver check (Windows only: it uses wgl; on Linux skip to step 3). It opens a small window, draws random vram
    through the GL path, reads the picture back and compares it with the CPU's vram, including display boxes and copies that
-   wrap or overlap. Every line should say `ok`. It does not exercise the picture copied into the window (`glg_present`),
-   check-mask or gameplay:
+   wrap or overlap, whether copies the console does not smear keep the picture's hi-res detail, and the mask bit (set-mask and
+   check-mask on rectangles and copies). Every line should say `ok`. It does not exercise the picture copied into the window
+   (`glg_present`), textured drawing or gameplay:
    ```
    mkdir -p build && gcc -I runtime tools/gltest.c runtime/gpu_gl.c -o build/gltest.exe -lopengl32 -lgdi32 && build/gltest.exe
    ```

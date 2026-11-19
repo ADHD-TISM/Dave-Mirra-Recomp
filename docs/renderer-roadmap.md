@@ -1,7 +1,8 @@
 # Renderer roadmap: adding Vulkan next to OpenGL
 
-Status: plan, nothing of phases 2 to 7 is started. Phase 1 (finishing the OpenGL path) is in progress. Estimates are rough
-and are not promises.
+Status: plan. Phase 1 (finishing the OpenGL path) is in progress: its tests are written, the NVIDIA and Intel runs are not
+done. Phase 2 (the backend seam) is mostly done: the window picture and the GPU renderer now sit behind `runtime/gfx.h`;
+window and surface creation has not moved yet. Phases 3 to 7 are not started. Estimates are rough and are not promises.
 
 ## Goal
 
@@ -38,8 +39,10 @@ needed today.
 - `runtime/plat_win32.c` and `runtime/plat_sdl.c` own the GL context and the window it lives in: `plat_video_init` creates the
   window and the context (`SDL_WINDOW_OPENGL`, or a pixel format on Win32), `plat_swap` shows the frame, and `plat_gl_proc`
   looks up entry points (`runtime/host.h`). `plat_soft_present` is the existing no-OpenGL path.
-- `runtime/host_common.c` draws the window picture with GL: upload of the CPU picture, the sharp and smooth filter, FSR (two
-  GLSL 1.20 shaders), and the `--shot-window` grab. About 35 GL functions at about 85 call sites.
+- `runtime/gfx_gl.c` (the OpenGL backend of `runtime/gfx.h`) draws the window picture with GL: upload of the CPU picture, the
+  sharp and smooth filter, FSR (two GLSL 1.20 shaders), and the `--shot-window` grab. `runtime/gfx.c` is the software
+  backend. `runtime/host_common.c` builds each frame and hands it to `gfx->present`; `runtime/gpu.c` reaches the GPU
+  renderer through `gfx->r_*`.
 - `runtime/gpu_gl.c` (the experimental GPU hi-res renderer, `gpu_gl=1`) draws the 2x and 4x picture. Its whole interface is
   the seven functions in `runtime/gpu_gl.h`; `runtime/gpu.c` never touches GL. It also holds the pixel-exact logic: the vram
   mirror texture, the PSX texture-decode shader, the mask bit kept as a stencil bit only while check-mask is on, and two-pass
@@ -53,19 +56,25 @@ A replacement has to cover the GPU renderer, the window presentation and the win
 Each phase ends with its exit test. Nothing moves on until the test passes on the Radeon baseline and the OpenGL output has
 no regressions against it (phases 1 and 3 change the OpenGL code on purpose; they must not change what it draws).
 
-1. **Finish the OpenGL path** (in progress; about a week). Test it on NVIDIA and Intel graphics on Windows, fix what that
-   finds (most likely GLSL 1.20 strictness), and close the small items still open: a test that overlapping copies which do not
-   smear (up and left scrolls) keep their full detail (`tools/gltest.c` has those copy cases, but each starts from uploaded vram,
-   so it cannot tell a full-detail copy from a redraw of vram: the test must draw hi-res detail into the source first), and
-   check-mask cases in `tools/gltest.c`, which does not cover
-   check-mask today. `tools/gltest.c` is wgl-only, so a Linux/Mesa check of the GL path is either added here (an SDL variant of
-   the harness) or deferred, and the Linux GL path stays untested until then.
+1. **Finish the OpenGL path** (in progress; about a week). Test it on NVIDIA and Intel graphics on Windows and fix what that
+   finds (most likely GLSL 1.20 strictness). Done: `tools/gltest.c` now checks that copies the console does not smear keep the
+   picture's hi-res detail (it draws a triangle finer than vram's pixels into the source first) and covers the mask bit
+   (set-mask, check-mask, copies, and the stencil rebuilt from vram); every case was shown to fail when the matching part of
+   `gpu_gl.c` is broken. `tools/gltest.c` is wgl-only, so a Linux/Mesa check of the GL path is either added here (an SDL
+   variant of the harness) or deferred, and the Linux GL path stays untested until then.
    *Exit:* `tools/gltest.c` and the scripted CPU-versus-GPU comparison pass on AMD, NVIDIA and Intel on Windows; both games
    play.
 2. **Make the seam explicit** (3 to 5 days). One backend interface in front of everything GL: window and surface creation per
    backend (including recreating the window when falling back, as `plat_sdl.c` already does for the no-GL case: a Win32 window
    can have its pixel format set only once, and SDL needs `SDL_WINDOW_VULKAN`), size, swap, present, read-back and the seven
    renderer calls. Today's GL code moves behind it with no behaviour change.
+   *Done:* `runtime/gfx.h` defines the backend (`init`, `present`, `grab` and the seven renderer calls); the OpenGL code that
+   was in `host_common.c` is now `runtime/gfx_gl.c`, the software stretch is `runtime/gfx.c`, and the backend is chosen once in
+   `host_init`. Old and new builds were compared on the same scripted runs: identical screenshots with the CPU picture and with
+   the GPU picture, identical window grabs (`--shot-window`, FSR and the smooth filter on) with both, and with the OpenGL
+   backend forced off the software path gives the same picture as before.
+   *Not done:* window and surface creation (`plat_video_init` in `plat_win32.c` and `plat_sdl.c`, which still makes the GL
+   context) and recreating the window when falling back; both are needed before a Vulkan backend can exist (phase 4).
    *Exit:* `gltest` and the scripted run give identical results before and after.
 3. **Modernise GL as a stepping stone** (about a week, optional). Replace `glBegin` and the fixed pipeline with vertex buffers
    and core-profile shaders. This is most of the porting work for Vulkan anyway, it drops the compatibility-profile
@@ -96,8 +105,8 @@ Rough total: 5 to 8 weeks of focused work for phases 1 to 6 if the hardware is a
 
 - **Driver differences** show up late and on hardware that is not always at hand (phase 6).
 - **The mask bit** (stencil as bit 15 of a vram pixel, rebuilt when check-mask turns on) and the two-pass translucency are the
-  parts most likely to behave differently on another API. Neither game has used check-mask in the runs so far, and
-  `tools/gltest.c` does not test it yet, so check-mask needs synthetic tests of its own (phase 1 and phase 5).
+  parts most likely to behave differently on another API. Neither game has used check-mask in the runs so far, so it is covered
+  by the synthetic mask cases in `tools/gltest.c` (phase 1), which the Vulkan version must pass too (phase 5).
 - **Two renderers to keep correct.** The CPU renderer is the reference for both, and the same pixel-comparison runs apply to
   each.
 - **Portability of the build.** The Linux build is compiled with a downloaded portable compiler on the Steam Deck route; the

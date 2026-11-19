@@ -1,10 +1,12 @@
 /* Checks runtime/gpu_gl.c against vram on the machine's own OpenGL driver (Windows; opens a small window for the context).
    Random vram is drawn through the GL path at 2x, then the picture is read back and compared with what the CPU's vram says:
-   display boxes that wrap at the vram edges (glg_read) and vram-to-vram copies that wrap or overlap. Every line should say ok.
+   display boxes that wrap at the vram edges (glg_read), vram-to-vram copies that wrap or overlap, whether the copies the console
+   does not smear keep the picture's hi-res detail, and the mask bit (set-mask and check-mask on rectangles and copies, with the
+   stencil rebuilt from vram when checking starts). Every line should say ok.
    From the repository root:
      mkdir -p build && gcc -I runtime tools/gltest.c runtime/gpu_gl.c -o build/gltest.exe -lopengl32 -lgdi32 && build/gltest.exe
-   It prints the renderer, so it also shows which graphics card the context landed on. Not a test of gameplay, check-mask or
-   the window picture. */
+   It prints the renderer, so it also shows which graphics card the context landed on. Not a test of gameplay, textured
+   drawing or the window picture. */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <GL/gl.h>
@@ -52,6 +54,60 @@ static void check_box(const char *what, int x, int y, int w, int h) {
     if (bad) { printf("   first bad pixel: x %ld y %ld of the picture\n", first % (w * S), first / (w * S)); fails++; }
 }
 
+/* ---- hi-res detail and the mask bit ---- */
+static void cpu_copy_m(int sx, int sy, int dx, int dy, int w, int h, int set, int check) {   /* gpu.c's copy with the mask bit */
+    for (int yy = 0; yy < h; yy++) for (int xx = 0; xx < w; xx++) {
+        u16 s = vram[((sy + yy) & 511) * 1024 + ((sx + xx) & 1023)], *d = &vram[((dy + yy) & 511) * 1024 + ((dx + xx) & 1023)];
+        if (check && (*d & 0x8000)) continue;
+        *d = s | (set ? 0x8000 : 0);
+    }
+}
+static unsigned col15(int r, int g, int b) { return (unsigned)((r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10)); }
+static void cpu_rect(int x, int y, int w, int h, int r, int g, int b, int set, int check) {
+    for (int yy = 0; yy < h; yy++) for (int xx = 0; xx < w; xx++) {
+        u16 *d = &vram[((y + yy) & 511) * 1024 + ((x + xx) & 1023)];
+        if (check && (*d & 0x8000)) continue;
+        *d = (u16)(col15(r, g, b) | (set ? 0x8000 : 0));
+    }
+}
+static void gl_rect(int x, int y, int w, int h, int r, int g, int b) {
+    GPrim p; memset(&p, 0, sizeof p); p.kind = GK_RECT; p.x = x; p.y = y; p.w = w; p.h = h; p.r = r; p.g = g; p.b = b;
+    p.clip[2] = 1023; p.clip[3] = 511;
+    glg_dirty(y, y + h - 1); glg_submit(&p);
+}
+static void gl_tri(int x0, int y0, int x1, int y1, int x2, int y2, int r, int g, int b) {
+    GPrim p; memset(&p, 0, sizeof p); p.kind = GK_TRI; p.clip[2] = 1023; p.clip[3] = 511;
+    int xs[3] = { x0, x1, x2 }, ys[3] = { y0, y1, y2 };
+    for (int i = 0; i < 3; i++) { p.vx[i] = xs[i]; p.vy[i] = ys[i]; p.vr[i] = r; p.vg[i] = g; p.vb[i] = b; }
+    glg_submit(&p);
+}
+static void clear_marks(void) { for (int i = 0; i < 512 * 1024; i++) vram[i] &= 0x7fff; glg_mask(0, 0); upload_all(); }
+static void mark_region(int x, int y, int w, int h) {
+    for (int yy = 0; yy < h; yy++) for (int xx = 0; xx < w; xx++) vram[(y + yy) * 1024 + x + xx] |= 0x8000;
+    glg_dirty(y, y + h - 1);
+}
+
+/* A copy the console does not smear is a copy of the picture, so a triangle drawn into the source (finer than vram's pixels at
+   2x) must arrive at the destination. A copy redrawn from vram would lose it. */
+static void detail_copy(const char *what, int sx, int sy, int dx, int dy, int w, int h) {
+    static unsigned a[200 * S * 200 * S], b[200 * S * 200 * S];
+    upload_all();
+    gl_tri(sx + 10, sy + 5, sx + w - 10, sy + 5, sx + 10, sy + h - 5, 255, 0, 255);
+    glg_flush();
+    glg_read(sx, sy, w, h, a);
+    long fine = 0, bad = 0;
+    for (int j = 0; j + 1 < h * S; j += 2) for (int i = 0; i + 1 < w * S; i += 2) {
+        unsigned p = a[(size_t)j * w * S + i];
+        if (a[(size_t)j * w * S + i + 1] != p || a[(size_t)(j + 1) * w * S + i] != p || a[(size_t)(j + 1) * w * S + i + 1] != p) fine++;
+    }
+    gl_copy(sx, sy, dx, dy, w, h);
+    glg_flush();
+    glg_read(dx, dy, w, h, b);
+    for (size_t i = 0; i < (size_t)w * S * h * S; i++) if (a[i] != b[i]) bad++;
+    printf("%-44s %s (%ld of %d pixels differ; %ld finer-than-vram blocks drawn)\n", what, bad || !fine ? "FAIL" : "ok", bad, w * S * h * S, fine);
+    if (bad || !fine) fails++;
+}
+
 int main(void) {
     WNDCLASSA wc = {0}; wc.lpfnWndProc = DefWindowProcA; wc.hInstance = GetModuleHandleA(NULL); wc.lpszClassName = "t"; RegisterClassA(&wc);
     HWND w = CreateWindowA("t", "t", WS_OVERLAPPEDWINDOW, 0, 0, 400, 300, NULL, NULL, wc.hInstance, NULL);
@@ -88,6 +144,41 @@ int main(void) {
     COPY("overlap, directly above", 400, 310, 400, 300, 100, 100, 390, 290, 120, 130);
     COPY("overlap and wrap, destination down-right", 1000, 100, 1010, 110, 100, 60, 990, 90, 140, 100);
     COPY("overlap and wrap, destination up-left", 1010, 110, 1000, 100, 100, 60, 990, 90, 140, 100);
+    /* the copies the console does not smear keep the picture's hi-res detail */
+    detail_copy("detail, destination up-left", 420, 310, 400, 300, 100, 100);
+    detail_copy("detail, destination up-right", 400, 310, 420, 300, 100, 100);
+    detail_copy("detail, same row, destination left", 420, 300, 400, 300, 100, 100);
+    detail_copy("detail, directly above", 400, 310, 400, 300, 100, 100);
+    detail_copy("detail, apart", 100, 100, 300, 200, 100, 100);
+    /* the mask bit: each case starts with no mask bits in vram and the picture freshly uploaded */
+    clear_marks();
+    mark_region(300, 200, 100, 100);   /* pixels the console has already masked */
+    glg_mask(0, 1);                    /* checking starts: the stencil is rebuilt from vram */
+    cpu_rect(250, 150, 200, 200, 200, 100, 50, 0, 1); gl_rect(250, 150, 200, 200, 200, 100, 50);
+    check_box("check-mask: masked pixels are kept", 240, 140, 220, 220);
+    clear_marks();
+    glg_mask(1, 1);                    /* set and check: the first rectangle masks what it draws, the second must skip it */
+    cpu_rect(260, 160, 120, 120, 255, 0, 0, 1, 1); gl_rect(260, 160, 120, 120, 255, 0, 0);
+    cpu_rect(320, 220, 120, 120, 0, 255, 0, 1, 1); gl_rect(320, 220, 120, 120, 0, 255, 0);
+    check_box("set-mask + check-mask: second skips first", 250, 150, 200, 200);
+    clear_marks();
+    mark_region(300, 200, 100, 100);
+    glg_mask(0, 1);
+    cpu_copy_m(100, 100, 280, 180, 140, 140, 0, 1); gl_copy(100, 100, 280, 180, 140, 140);
+    check_box("check-mask: a copy skips masked pixels", 270, 170, 160, 160);
+    clear_marks();
+    glg_mask(1, 0);                    /* a copy that sets the mask bit with checking off ... */
+    cpu_copy_m(100, 100, 400, 300, 60, 60, 1, 0); gl_copy(100, 100, 400, 300, 60, 60);
+    glg_mask(0, 1);                    /* ... is seen when checking starts (the stencil is rebuilt from vram) */
+    cpu_rect(380, 280, 100, 100, 10, 200, 240, 0, 1); gl_rect(380, 280, 100, 100, 10, 200, 240);
+    check_box("mask set by a copy, then checked", 370, 270, 120, 120);
+    clear_marks();
+    mark_region(100, 100, 60, 30);     /* the top of the source is masked */
+    glg_mask(0, 1);                    /* a copy takes the mask bit along with the pixel ... */
+    cpu_copy_m(100, 100, 400, 300, 60, 60, 0, 1); gl_copy(100, 100, 400, 300, 60, 60);
+    cpu_rect(380, 280, 100, 100, 10, 200, 240, 0, 1); gl_rect(380, 280, 100, 100, 10, 200, 240);   /* ... so this skips the top of it */
+    check_box("a copy carries the mask bit along", 370, 270, 120, 120);
+    glg_mask(0, 0);
     glg_flush();
     check_box("whole vram", 0, 0, 1024, 512);
     printf(fails ? "FAILURES: %d\n" : "all ok\n", fails);
