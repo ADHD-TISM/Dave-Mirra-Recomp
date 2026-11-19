@@ -1,7 +1,8 @@
 /* The 2x / 4x picture drawn by the graphics card. See gpu_gl.h.
    Needs a compatibility-profile OpenGL context with shaders (GLSL 1.20), framebuffer
    objects and a packed depth-stencil attachment, i.e. OpenGL 3.0 or ARB_framebuffer_object
-   (entry points are looked up at run time; anything less falls back to the CPU picture). Vram is mirrored in a 1024x512 two-channel texture (low byte, high byte) and the
+   (entry points are looked up at run time; anything less falls back to the CPU picture).
+   Vram is mirrored in a 1024x512 two-channel texture (low byte, high byte) and the
    fragment shader decodes the 4-bit, 8-bit and 15-bit texels, palettes, modulation,
    dithering and blend modes itself. */
 #ifdef DM_SDL
@@ -449,7 +450,13 @@ void glg_submit(const GPrim *p) {
     q[qn] = *p; q[qn].setm = cur_set; q[qn].chkm = cur_chk;
     /* The console copies a pixel at a time, so a copy whose source and destination overlap smears: the CPU copy in vram is exact
        about that, a copy of the picture is not. Such a copy is drawn from vram instead (the picture loses its extra detail there). */
-    int smear = p->kind == GK_COPY && spans_meet(p->sx, p->x, p->w, 1024) && spans_meet(p->sy, p->y, p->h, 512);
+    int smear = 0;
+    if (p->kind == GK_COPY && spans_meet(p->sx, p->x, p->w, 1024) && spans_meet(p->sy, p->y, p->h, 512)) {
+        /* Without wrapping, the pixel-at-a-time loop reads a pixel it has already written only when the destination is below the
+           source, or level with it and to the right; up and left (a scroll) equals read-everything-then-write, which do_copy does. */
+        int wraps = p->sx + p->w > 1024 || p->x + p->w > 1024 || p->sy + p->h > 512 || p->y + p->h > 512;
+        smear = wraps || p->sy < p->y || (p->sy == p->y && p->sx < p->x);
+    }
     if (smear) q[qn].kind = GK_BLIT;
     qn++;
     /* the copy's bit-15 pass reads vram as it is now; a drawn-from-vram copy must not see later drawing */

@@ -23,8 +23,10 @@ for whoever tries it next.
 
 1. Get the game building (see the README: the launcher builds it from your own disc image), then build with CMake, or use
    the launcher. Run the game from a terminal so the `[gpu_gl]` messages are visible.
-2. Run the driver check. It opens a small window, draws random vram through the GL path, reads the picture back and compares
-   it with the CPU's vram, including display boxes and copies that wrap or overlap. Every line should say `ok`:
+2. Run the driver check (Windows only: it uses wgl; on Linux skip to step 3). It opens a small window, draws random vram
+   through the GL path, reads the picture back and compares it with the CPU's vram, including display boxes and copies that
+   wrap or overlap. Every line should say `ok`. It does not exercise the picture copied into the window (`glg_present`),
+   check-mask or gameplay:
    ```
    mkdir -p build && gcc -I runtime tools/gltest.c runtime/gpu_gl.c -o build/gltest.exe -lopengl32 -lgdi32 && build/gltest.exe
    ```
@@ -38,7 +40,8 @@ for whoever tries it next.
    ```
    --turbo --auto-start 90 --shot-every 300 --set scale=2 --set scale_auto=0 --script-file lvl.txt "<your image>.cue"
    ```
-   (`lvl.txt` is one line of `frame:button` events; see `--script` in `runtime/main.c`), and compare the `shot_*.png` files
+   (`lvl.txt` is one line of comma-separated `frame:button` events such as `90:st,300:x`; the button names are in
+   `host_set_script`, `runtime/host_common.c`), and compare the `shot_*.png` files
    pixel by pixel. On the Radeon the worst frame had 0.6 to 0.9 % of its pixels differing by more than 16 (of 255); most
    frames match exactly. A card that is far above that, or whose differences form patterns, is worth a look.
 
@@ -52,10 +55,11 @@ for whoever tries it next.
 - **The picture target.** A colour texture plus a `GL_DEPTH24_STENCIL8` texture attached as depth-stencil. If the
   framebuffer is reported incomplete the message says so and the CPU picture is used.
 - **Rasterisation rules.** Where exactly a triangle edge lands on a pixel centre can differ between vendors, which could
-  move an edge by one pixel at 2x. The shader samples at pixel corners (`+ 0.5` in `emit`) to match the CPU picture; check
-  thin lines and sprite edges.
-- **Read-back and the window picture.** `glg_read` (screenshots) uses `GL_BGRA`; the window picture is copied with
-  `glCopyTexImage2D` into the host texture (`glg_present`), then drawn with the fixed pipeline or FSR.
+  move an edge by one pixel at 2x. Triangle corners are moved half a pixel in (`+ 0.5` in `emit`) to match the CPU picture;
+  rectangles, fills and blits are not shifted. Check thin lines and sprite edges.
+- **Read-back and the window picture.** `glg_read` (screenshots) uses `GL_BGRA`; the window picture is copied into the
+  host texture by `glg_present` (one `glCopyTexImage2D`, or, when the display box wraps around the edge of vram, a
+  `glTexImage2D` plus one `glCopyTexSubImage2D` per piece), then drawn with the fixed pipeline or FSR.
 
 ## Reporting
 

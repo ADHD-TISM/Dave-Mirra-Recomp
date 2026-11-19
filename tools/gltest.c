@@ -66,14 +66,24 @@ int main(void) {
     check_box("box wraps both: (900,400) 320x240", 900, 400, 320, 240);
     check_box("640 wide at x 512 (wraps)", 512, 0, 640, 240);
     /* copies */
-    cpu_copy(10, 10, 300, 200, 100, 50); gl_copy(10, 10, 300, 200, 100, 50); check_box("copy, apart", 280, 190, 140, 70);
-    cpu_copy(980, 10, 20, 100, 100, 50); gl_copy(980, 10, 20, 100, 100, 50); check_box("copy, source wraps x", 0, 90, 140, 70);
-    cpu_copy(100, 480, 500, 20, 64, 64); gl_copy(100, 480, 500, 20, 64, 64); check_box("copy, source wraps y", 480, 10, 120, 100);
-    cpu_copy(200, 100, 1000, 450, 100, 100); gl_copy(200, 100, 1000, 450, 100, 100); check_box("copy, dest wraps both", 990, 440, 200, 150);
-    cpu_copy(980, 500, 30, 20, 100, 100); gl_copy(980, 500, 30, 20, 100, 100); check_box("copy, source wraps both", 20, 10, 140, 130);
-    cpu_copy(400, 300, 420, 310, 100, 100); gl_copy(400, 300, 420, 310, 100, 100); check_box("copy, overlapping (smear)", 390, 290, 140, 130);
-    cpu_copy(420, 310, 400, 300, 100, 100); gl_copy(420, 310, 400, 300, 100, 100); check_box("copy, overlapping the other way", 390, 290, 140, 130);
-    cpu_copy(1000, 100, 1010, 110, 100, 60); gl_copy(1000, 100, 1010, 110, 100, 60); check_box("copy, overlapping and wrapping", 990, 90, 140, 100);
+#define COPY(name, sx, sy, dx, dy, w, h, bx, by, bw, bh) do { upload_all(); cpu_copy(sx, sy, dx, dy, w, h); gl_copy(sx, sy, dx, dy, w, h); check_box(name, bx, by, bw, bh); } while (0)
+    /* each case starts from a freshly uploaded picture, so one failure does not spoil the next */
+    COPY("copy, apart", 10, 10, 300, 200, 100, 50, 280, 190, 140, 70);
+    COPY("copy, source wraps x", 980, 10, 20, 100, 100, 50, 0, 90, 140, 70);
+    COPY("copy, source wraps y", 100, 480, 500, 20, 64, 64, 480, 10, 120, 100);
+    COPY("copy, dest wraps both", 200, 100, 1000, 450, 100, 100, 990, 440, 200, 150);
+    COPY("copy, source wraps both", 980, 500, 30, 20, 100, 100, 20, 10, 140, 130);
+    /* overlapping copies: the first four smear on the console, the last four do not (and are drawn at full detail) */
+    COPY("overlap, destination down-right (smear)", 400, 300, 420, 310, 100, 100, 390, 290, 140, 130);
+    COPY("overlap, destination down-left (smear)", 620, 300, 600, 310, 100, 100, 590, 290, 140, 130);
+    COPY("overlap, same row, destination right (smear)", 400, 300, 420, 300, 100, 100, 390, 290, 140, 120);
+    COPY("overlap, directly below (smear)", 400, 300, 400, 310, 100, 100, 390, 290, 120, 130);
+    COPY("overlap, destination up-left", 420, 310, 400, 300, 100, 100, 390, 290, 140, 130);
+    COPY("overlap, destination up-right", 400, 310, 420, 300, 100, 100, 390, 290, 140, 130);
+    COPY("overlap, same row, destination left", 420, 300, 400, 300, 100, 100, 390, 290, 140, 120);
+    COPY("overlap, directly above", 400, 310, 400, 300, 100, 100, 390, 290, 120, 130);
+    COPY("overlap and wrap, destination down-right", 1000, 100, 1010, 110, 100, 60, 990, 90, 140, 100);
+    COPY("overlap and wrap, destination up-left", 1010, 110, 1000, 100, 100, 60, 990, 90, 140, 100);
     glg_flush();
     check_box("whole vram", 0, 0, 1024, 512);
     printf(fails ? "FAILURES: %d\n" : "all ok\n", fails);
