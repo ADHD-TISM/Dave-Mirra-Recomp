@@ -202,7 +202,7 @@ void plat_audio_push(const int16_t *lr, int frames) {
     d = d > AQ_STEP ? AQ_STEP : d < -AQ_STEP ? -AQ_STEP : d;
     int m = frames + d;
     if (frames < 2 + AQ_STEP) d = m = frames;   /* a block this short is queued as it is (also keeps m >= 2 below) */
-    if (m == frames || frames < 2) { SDL_QueueAudio(adev, lr, (Uint32)frames * 4); m = frames; }
+    if (m == frames) { SDL_QueueAudio(adev, lr, (Uint32)frames * 4); m = frames; }
     else {    /* resample frames -> m by linear interpolation, end to end */
         for (int i = 0; i < m; i++) {
             int64_t pos = (int64_t)i * (frames - 1) * 256 / (m - 1);

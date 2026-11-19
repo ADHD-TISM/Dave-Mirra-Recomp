@@ -1,6 +1,7 @@
 /* The 2x / 4x picture drawn by the graphics card. See gpu_gl.h.
-   Needs OpenGL 2.1 (shaders and framebuffer objects; entry points are looked up at run
-   time). Vram is mirrored in a 1024x512 two-channel texture (low byte, high byte) and the
+   Needs a compatibility-profile OpenGL context with shaders (GLSL 1.20), framebuffer
+   objects and a packed depth-stencil attachment, i.e. OpenGL 3.0 or ARB_framebuffer_object
+   (entry points are looked up at run time; anything less falls back to the CPU picture). Vram is mirrored in a 1024x512 two-channel texture (low byte, high byte) and the
    fragment shader decodes the 4-bit, 8-bit and 15-bit texels, palettes, modulation,
    dithering and blend modes itself. */
 #ifdef DM_SDL
@@ -205,7 +206,7 @@ static int load(void) {
 }
 
 static int setup_once(void) {
-    if (!load()) { fprintf(stderr, "[gpu_gl] this graphics driver lacks OpenGL 2.1 shaders or framebuffers; using the CPU picture\n"); return -1; }
+    if (!load()) { fprintf(stderr, "[gpu_gl] this graphics driver lacks OpenGL shaders or framebuffers (it needs a compatibility-profile OpenGL 3.0 context); using the CPU picture\n"); return -1; }
     GLuint vs = compile(GL_VERTEX_SHADER, vs_src, "vertex"), fs = compile(GL_FRAGMENT_SHADER, fs_src, "fragment");
     if (!vs || !fs) return -1;
     prog = q_CreateProgram(); q_AttachShader(prog, vs); q_AttachShader(prog, fs); q_LinkProgram(prog);
@@ -248,7 +249,7 @@ int glg_init(int scale) {
     q_BindFramebuffer(GL_FRAMEBUFFER, 0);
     glBindTexture(GL_TEXTURE_2D, vtex);
     q_ActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, (GLuint)save0);
-    if (st != GL_FRAMEBUFFER_COMPLETE) { fprintf(stderr, "[gpu_gl] the picture target is not usable on this driver; using the CPU picture\n"); state = -1; return 0; }
+    if (st != GL_FRAMEBUFFER_COMPLETE) { fprintf(stderr, "[gpu_gl] the picture target (a colour texture with a depth-stencil buffer) is not usable on this driver; using the CPU picture\n"); state = -1; return 0; }
     S = scale; qn = 0; tmp_w = tmp_h = 0;
     cur_chk = 0;   /* the stencil is new and undefined: gpu_set_scale's mask sync rebuilds it */
     dirty0 = 0; dirty1 = 511;
@@ -439,11 +440,20 @@ void glg_mask(int set, int check) {
     cur_set = set != 0; cur_chk = c;
 }
 
+/* do n pixels from s and from d (both wrapping at size) share any pixel? */
+static int spans_meet(int s, int d, int n, int size) { return ((d - s) & (size - 1)) < n || ((s - d) & (size - 1)) < n; }
+
 void glg_submit(const GPrim *p) {
     if (state <= 0) return;
     if (qn == QMAX) glg_flush();
-    q[qn] = *p; q[qn].setm = cur_set; q[qn].chkm = cur_chk; qn++;
-    if (cur_chk && p->kind == GK_COPY) glg_flush();   /* the copy's bit-15 pass reads vram as it is now */
+    q[qn] = *p; q[qn].setm = cur_set; q[qn].chkm = cur_chk;
+    /* The console copies a pixel at a time, so a copy whose source and destination overlap smears: the CPU copy in vram is exact
+       about that, a copy of the picture is not. Such a copy is drawn from vram instead (the picture loses its extra detail there). */
+    int smear = p->kind == GK_COPY && spans_meet(p->sx, p->x, p->w, 1024) && spans_meet(p->sy, p->y, p->h, 512);
+    if (smear) q[qn].kind = GK_BLIT;
+    qn++;
+    /* the copy's bit-15 pass reads vram as it is now; a drawn-from-vram copy must not see later drawing */
+    if (smear || (cur_chk && p->kind == GK_COPY)) glg_flush();
 }
 
 /* bring the texture copy of vram up to date: the rows changed since last time */
@@ -484,7 +494,7 @@ void glg_flush(void) {
         if (f->chkm && (f->kind == GK_BLIT || (f->textured && !f->setm && (f->kind == GK_TRI || f->kind == GK_RECT)))) {   /* only under check-mask */
             /* texels with bit 15 keep it in vram (it is the mask bit): the same prims again, those texels only, stencil only.
                An upload does the same for its pixels. */
-            if (f->kind != GK_BLIT && f->chkm) glStencilFunc(GL_NOTEQUAL, 1, 1);
+            if (f->kind != GK_BLIT) glStencilFunc(GL_NOTEQUAL, 1, 1);
             else glStencilFunc(GL_ALWAYS, 1, 0xff);
             glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
             glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
@@ -504,27 +514,42 @@ void glg_flush(void) {
 }
 
 /* ------------------------------------------------------------- display --- */
-static void clamp_box(int *x, int *y, int *w, int *h) {
-    if (*x < 0) *x = 0;
-    if (*y < 0) *y = 0;
-    if (*x + *w > 1024) *w = 1024 - *x;
-    if (*y + *h > 512) *h = 512 - *y;
+/* The display box wraps around the edges of vram like the CPU picture does (a 640 wide box starting at x 512, say): cut one axis
+   of it into the one or two runs that do not wrap. out[i] = { first vram coordinate, offset inside the box, length }. */
+static int runs(int s, int n, int size, int out[2][3]) {
+    s &= size - 1;
+    if (n > size) n = size;
+    out[0][0] = s; out[0][1] = 0; out[0][2] = n < size - s ? n : size - s;
+    if (n <= size - s) return 1;
+    out[1][0] = 0; out[1][1] = size - s; out[1][2] = n - (size - s);
+    return 2;
 }
 void glg_present(int x, int y, int w, int h) {
-    if (state <= 0) return;
-    clamp_box(&x, &y, &w, &h);
-    if (w <= 0 || h <= 0) return;
+    if (state <= 0 || w <= 0 || h <= 0) return;
+    if (w > 1024) w = 1024;
+    if (h > 512) h = 512;
+    int rx[2][3], ry[2][3], nx = runs(x, w, 1024, rx), ny = runs(y, h, 512, ry);
     q_ActiveTexture(GL_TEXTURE0);
     q_BindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, x * S, y * S, w * S, h * S, 0);
+    if (nx == 1 && ny == 1) glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, rx[0][0] * S, ry[0][0] * S, w * S, h * S, 0);
+    else {   /* the texture is made at the full size, then filled a piece at a time */
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w * S, h * S, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+        for (int j = 0; j < ny; j++) for (int i = 0; i < nx; i++)
+            glCopyTexSubImage2D(GL_TEXTURE_2D, 0, rx[i][1] * S, ry[j][1] * S, rx[i][0] * S, ry[j][0] * S, rx[i][2] * S, ry[j][2] * S);
+    }
     q_BindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 void glg_read(int x, int y, int w, int h, unsigned *dst) {
-    if (state <= 0) return;
-    clamp_box(&x, &y, &w, &h);
-    if (w <= 0 || h <= 0) return;
+    if (state <= 0 || w <= 0 || h <= 0) return;
+    if (w > 1024) w = 1024;
+    if (h > 512) h = 512;
+    int rx[2][3], ry[2][3], nx = runs(x, w, 1024, rx), ny = runs(y, h, 512, ry);
     q_BindFramebuffer(GL_FRAMEBUFFER, fbo);
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
-    glReadPixels(x * S, y * S, w * S, h * S, GL_BGRA, GL_UNSIGNED_BYTE, dst);
+    glPixelStorei(GL_PACK_ROW_LENGTH, w * S);   /* the pieces land in one picture w * S wide */
+    for (int j = 0; j < ny; j++) for (int i = 0; i < nx; i++)
+        glReadPixels(rx[i][0] * S, ry[j][0] * S, rx[i][2] * S, ry[j][2] * S, GL_BGRA, GL_UNSIGNED_BYTE,
+                     dst + (size_t)(ry[j][1] * S) * (size_t)(w * S) + (size_t)(rx[i][1] * S));
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
     q_BindFramebuffer(GL_FRAMEBUFFER, 0);
 }

@@ -1,10 +1,9 @@
 /* Drives runtime/plat_sdl.c's gamepad code with SDL virtual controllers (no hardware): button, stick and trigger
    mapping, hotplug into two slots, rumble not crashing. From the repository root:
-     gcc -DDM_SDL -I runtime tools/padtest.c -o padtest $(sdl2-config --cflags --libs)
-     SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./padtest
+     mkdir -p build && gcc -DDM_SDL -I runtime tools/padtest.c -o build/padtest $(sdl2-config --cflags --libs)
+     SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy build/padtest
    Needs SDL 2.0.14 or newer. Not a test of real controllers or of rumble motors. */
 #include "plat_sdl.c"
-#include <assert.h>
 
 void host_hotkey(int w) { (void)w; }
 void host_quit(void) { }
