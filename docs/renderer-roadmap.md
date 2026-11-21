@@ -108,9 +108,9 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    `--shot-window` read-back.
    `PLAT_SURF_VK`, `plat_vk_loader`, `plat_vk_extensions` and `plat_vk_surface` are the platform side (Win32, and SDL with
    `SDL_WINDOW_VULKAN`). The setting `renderer = gl | vulkan` (default `gl`) puts Vulkan first in the fallback chain; `auto` is
-   phase 7. Window grabs against OpenGL, same runs: smooth filter 65 of 65 identical, sharp filter at a whole-multiple window
-   size 67 of 67 identical; at 512 into 1280 the same x mod 5 = 2 texel-edge ties as in phase 3 (blit and shader round the
-   tie differently). FSR: 55 of 61 grabs identical and the other 6 differ by at most 1 of 255 in under 0.01 % of the pixels;
+   phase 7. Window grabs against OpenGL, same runs: smooth filter 64 of 64 identical, sharp filter at a whole-multiple window
+   size 64 of 64 identical; at 512 into 1280 the same x mod 5 = 2 texel-edge ties as in phase 3 (blit and shader round the
+   tie differently). FSR: 57 of 63 grabs identical and the other 6 differ by at most 1 of 255 in under 0.01 % of the pixels;
    at an odd window size (1001x751) 46 of 64 identical, the rest the same way (the picture is placed like the OpenGL one, its
    offset counted from the bottom). Resizing, minimising and restoring the window work. With the loader made unavailable the run says so
    and uses OpenGL, with identical grabs (64 of 64). Under Vulkan `gpu_gl` is ignored (the renderer calls say no, so the CPU

@@ -37,12 +37,12 @@
 VK_FUNCS(X)
 #undef X
 
-#define MAX_IMAGES 8
+#define MAX_IMAGES 16
 static PFN_vkGetInstanceProcAddr gipa;
 static VkInstance inst; static VkSurfaceKHR surf; static VkPhysicalDevice phys; static VkDevice dev; static VkQueue queue;
 static uint32_t qfam; static VkPhysicalDeviceMemoryProperties memprops;
 static VkSwapchainKHR swap; static VkImage simg[MAX_IMAGES]; static VkSemaphore rel[MAX_IMAGES]; static uint32_t nimg;
-static VkFormat sfmt; static VkExtent2D sext; static int sc_dirty; static VkPresentModeKHR pmode;
+static VkFormat sfmt; static VkExtent2D sext; static int req_w, req_h, sc_dirty;   /* req_*: the client size the swapchain was asked for */ static VkPresentModeKHR pmode;
 static int blit_linear;                                 /* the picture format can be filtered linearly in a blit */
 static VkCommandPool pool; static VkCommandBuffer cb; static VkSemaphore acq; static VkFence fence;
 static VkImage pic; static VkDeviceMemory pic_mem; static VkImageView pic_view; static int pic_w, pic_h;   /* the CPU picture, on the device */
@@ -198,10 +198,15 @@ static int make_swapchain(int cw, int ch) {
     VkSwapchainKHR old = swap;
     destroy_swapchain_views();
     for (uint32_t i = 0; i < nimg; i++) if (rel[i]) { vkDestroySemaphore(dev, rel[i], NULL); rel[i] = VK_NULL_HANDLE; }
+    VkCompositeAlphaFlagBitsKHR alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;   /* the picture has no alpha: opaque if offered, else whatever the surface takes */
+    if (!(caps.supportedCompositeAlpha & alpha)) {
+        static const VkCompositeAlphaFlagBitsKHR alt[3] = { VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR, VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR };
+        for (int k = 0; k < 3; k++) if (caps.supportedCompositeAlpha & alt[k]) { alpha = alt[k]; break; }
+    }
     VkSwapchainCreateInfoKHR si = { .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR, .surface = surf, .minImageCount = n, .imageFormat = sfmt,
         .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, .imageExtent = e, .imageArrayLayers = 1,
         .imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
-        .preTransform = caps.currentTransform, .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .presentMode = pmode, .clipped = VK_TRUE, .oldSwapchain = old };
+        .preTransform = caps.currentTransform, .compositeAlpha = alpha, .presentMode = pmode, .clipped = VK_TRUE, .oldSwapchain = old };
     VkSwapchainKHR ns = VK_NULL_HANDLE;
     if (fsr_ok && !(caps.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) disable_fsr();
     if (fsr_ok) si.imageUsage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
@@ -216,8 +221,13 @@ static int make_swapchain(int cw, int ch) {
     }
     if (r != VK_SUCCESS) { fprintf(stderr, "[video] Vulkan: cannot make a swapchain (%d)\n", (int)r); return 0; }
     swap = ns;
-    nimg = MAX_IMAGES;
-    if (vkGetSwapchainImagesKHR(dev, swap, &nimg, simg) < 0 || !nimg) { nimg = 0; return 0; }
+    uint32_t have = 0;
+    if (vkGetSwapchainImagesKHR(dev, swap, &have, NULL) != VK_SUCCESS || !have || have > MAX_IMAGES) {
+        fprintf(stderr, "[video] Vulkan: the swapchain has %u images (at most %d are handled)\n", have, MAX_IMAGES);
+        return 0;   /* swap stays set, so the next frame's rebuild retires it */
+    }
+    nimg = have;
+    if (vkGetSwapchainImagesKHR(dev, swap, &nimg, simg) != VK_SUCCESS) { nimg = 0; return 0; }
     VkSemaphoreCreateInfo sci = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
     for (uint32_t i = 0; i < nimg; i++) if (vkCreateSemaphore(dev, &sci, NULL, &rel[i]) != VK_SUCCESS) return 0;
     if (fsr_ok) for (uint32_t i = 0; i < nimg; i++) {   /* RCAS draws straight into the swapchain images */
@@ -231,7 +241,7 @@ static int make_swapchain(int cw, int ch) {
             break;
         }
     }
-    sext = e; sc_dirty = 0;
+    sext = e; req_w = cw; req_h = ch; sc_dirty = 0;
     return 1;
 }
 
@@ -291,8 +301,8 @@ static int pick_device(void) {
         vkGetPhysicalDeviceSurfaceFormatsKHR(pd[d], surf, &nf, NULL);
         if (nf > 64) nf = 64;
         if (vkGetPhysicalDeviceSurfaceFormatsKHR(pd[d], surf, &nf, sf) < 0) continue;
-        for (uint32_t k = 0; k < nf; k++) if (sf[k].format == VK_FORMAT_B8G8R8A8_UNORM) fmt = sf[k].format;
-        for (uint32_t k = 0; k < nf && fmt == VK_FORMAT_UNDEFINED; k++) if (sf[k].format == VK_FORMAT_R8G8B8A8_UNORM) fmt = sf[k].format;
+        for (uint32_t k = 0; k < nf; k++) if (sf[k].format == VK_FORMAT_B8G8R8A8_UNORM && sf[k].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) fmt = sf[k].format;
+        for (uint32_t k = 0; k < nf && fmt == VK_FORMAT_UNDEFINED; k++) if (sf[k].format == VK_FORMAT_R8G8B8A8_UNORM && sf[k].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) fmt = sf[k].format;
         if (fmt == VK_FORMAT_UNDEFINED) continue;
         VkFormatProperties fp, pp;
         vkGetPhysicalDeviceFormatProperties(pd[d], fmt, &fp); vkGetPhysicalDeviceFormatProperties(pd[d], VK_FORMAT_B8G8R8A8_UNORM, &pp);
@@ -440,10 +450,23 @@ static void barrier(VkImage img, VkImageLayout from, VkImageLayout to, VkAccessF
     vkCmdPipelineBarrier(cb, ss, ds, 0, 0, NULL, 0, NULL, 1, &b);
 }
 
+/* after an acquire that cannot be used or a failed submit: the fence is reset and the acquire semaphore may be signalled with
+   nothing waiting on it, so both are made new (the device is idle first) and the swapchain is rebuilt */
+static void recover_sync(void) {
+    vkDeviceWaitIdle(dev);
+    if (fence) vkDestroyFence(dev, fence, NULL);
+    if (acq) vkDestroySemaphore(dev, acq, NULL);
+    fence = VK_NULL_HANDLE; acq = VK_NULL_HANDLE;
+    VkFenceCreateInfo fi = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT };
+    VkSemaphoreCreateInfo sci = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+    if (vkCreateFence(dev, &fi, NULL, &fence) != VK_SUCCESS || vkCreateSemaphore(dev, &sci, NULL, &acq) != VK_SUCCESS) fprintf(stderr, "[video] Vulkan: cannot recover after a failed frame\n");
+    sc_dirty = 1;
+}
+
 static void vk_present(const GfxFrame *f) {
     grab_ok = 0;
     if (f->cw <= 0 || f->ch <= 0) return;
-    if (sc_dirty || !swap || (uint32_t)f->cw != sext.width || (uint32_t)f->ch != sext.height) {
+    if (sc_dirty || !swap || f->cw != req_w || f->ch != req_h) {
         if (!make_swapchain(f->cw, f->ch)) return;   /* minimised: nothing to show */
     }
     if (f->fb_w != pic_w || f->fb_h != pic_h) { if (!make_picture(f->fb_w, f->fb_h)) { free_picture(); return; } }
@@ -451,7 +474,7 @@ static void vk_present(const GfxFrame *f) {
     int w = f->w < (int)sext.width ? f->w : (int)sext.width, h = f->h < (int)sext.height ? f->h : (int)sext.height;
     int x0 = ((int)sext.width - w) / 2, y0 = (int)sext.height - h - ((int)sext.height - h) / 2;
     int fsr = fsr_ok && f->upscale && f->w > f->fb_w && f->h > f->fb_h
-        && w == f->w && h == f->h && f->cw == (int)sext.width && f->ch == (int)sext.height;
+        && w == f->w && h == f->h;
     if (fsr && (fimg_w != w || fimg_h != h) && !make_fsr_target(w, h)) {
         free_fsr_target();
         disable_fsr();
@@ -463,6 +486,7 @@ static void vk_present(const GfxFrame *f) {
     VkResult r = vkAcquireNextImageKHR(dev, swap, UINT64_MAX, acq, VK_NULL_HANDLE, &idx);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) { sc_dirty = 1; return; }
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) return;
+    if (idx >= nimg) { recover_sync(); return; }   /* an image the arrays do not know: start again */
     vkResetFences(dev, 1, &fence);
     vkResetCommandBuffer(cb, 0);
     VkCommandBufferBeginInfo bi = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
@@ -520,6 +544,8 @@ static void vk_present(const GfxFrame *f) {
     if (want) {
         VkBufferImageCopy rc = { .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, .imageExtent = { sext.width, sext.height, 1 } };
         vkCmdCopyImageToBuffer(cb, si, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb, 1, &rc);
+        VkMemoryBarrier hb = { .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT };
+        vkCmdPipelineBarrier(cb, XFER, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &hb, 0, NULL, 0, NULL);   /* a fence alone does not make device writes visible to the host */
     }
     VkAccessFlags present_access = VK_ACCESS_TRANSFER_READ_BIT;
     VkPipelineStageFlags present_stage = XFER;
@@ -532,7 +558,7 @@ static void vk_present(const GfxFrame *f) {
     VkPipelineStageFlags wait = XFER | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo sub = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .waitSemaphoreCount = 1, .pWaitSemaphores = &acq, .pWaitDstStageMask = &wait,
                          .commandBufferCount = 1, .pCommandBuffers = &cb, .signalSemaphoreCount = 1, .pSignalSemaphores = &rel[idx] };
-    if (vkQueueSubmit(queue, 1, &sub, fence) != VK_SUCCESS) return;
+    if (vkQueueSubmit(queue, 1, &sub, fence) != VK_SUCCESS) { recover_sync(); return; }
     VkPresentInfoKHR pi = { .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, .waitSemaphoreCount = 1, .pWaitSemaphores = &rel[idx], .swapchainCount = 1, .pSwapchains = &swap, .pImageIndices = &idx };
     r = vkQueuePresentKHR(queue, &pi);
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) sc_dirty = 1;
