@@ -108,6 +108,38 @@ static void detail_copy(const char *what, int sx, int sy, int dx, int dy, int w,
     if (bad || !fine) fails++;
 }
 
+/* a textured rectangle under check-mask: texels with bit 15 stamp the stencil, texels that are 0 are not drawn, and a flat rectangle drawn
+   after it must leave the stamped pixels alone (the stamp pass for textured triangles and rectangles had no case) */
+static void check_mask_textured(const char *what) {
+    clear_marks();
+    mark_region(620, 120, 20, 20);     /* texels with bit 15, inside the 64x64 texture at (600,100) */
+    vram[130 * 1024 + 610] = 0; vram[131 * 1024 + 611] = 0;   /* and two texels that are 0: transparent */
+    glg_mask(0, 1);                        /* checking starts: the stencil is rebuilt from vram (the marked texels are masked too, but not where we draw) */
+    GPrim p; memset(&p, 0, sizeof p); p.kind = GK_RECT; p.textured = 1; p.raw = 1; p.x = 300; p.y = 200; p.w = 64; p.h = 64;
+    p.tx = 600; p.ty = 100; p.depth = 2; p.clip[2] = 1023; p.clip[3] = 511;
+    glg_dirty(200, 263); glg_submit(&p);
+    gl_rect(280, 180, 120, 120, 250, 40, 40);
+    /* the model: the picture before, the texture on top, then the flat rectangle where the stencil is not set */
+    static unsigned canvas[120 * 120]; static char stencil[120 * 120];
+    for (int j = 0; j < 120; j++) for (int i = 0; i < 120; i++) canvas[j * 120 + i] = want(280 + i, 180 + j);
+    for (int j = 0; j < 64; j++) for (int i = 0; i < 64; i++) {
+        unsigned w = vram[(100 + j) * 1024 + 600 + i];
+        if (!w) continue;
+        int cx = 300 + i - 280, cy = 200 + j - 180;
+        canvas[cy * 120 + cx] = ((w & 31) << 3) << 16 | (((w >> 5) & 31) << 3) << 8 | (((w >> 10) & 31) << 3);
+        if (w & 0x8000) stencil[cy * 120 + cx] = 1;
+    }
+    for (int k = 0; k < 120 * 120; k++) if (!stencil[k]) canvas[k] = ((250 >> 3) << 3) << 16 | ((40 >> 3) << 3) << 8 | ((40 >> 3) << 3);
+    static unsigned buf2[120 * S * 120 * S];
+    memset(buf2, 0xAA, sizeof buf2);
+    glg_flush(); glg_read(280, 180, 120, 120, buf2);
+    long bad = 0;
+    for (int j = 0; j < 120 * S; j++) for (int i = 0; i < 120 * S; i++) if ((buf2[j * 120 * S + i] & 0xffffff) != canvas[(j / S) * 120 + i / S]) bad++;
+    printf("%-44s %s (%ld of %d pixels differ)\n", what, bad ? "FAIL" : "ok", bad, 120 * S * 120 * S);
+    if (bad) fails++;
+    glg_mask(0, 0);
+}
+
 int main(void) {
     WNDCLASSA wc = {0}; wc.lpfnWndProc = DefWindowProcA; wc.hInstance = GetModuleHandleA(NULL); wc.lpszClassName = "t"; RegisterClassA(&wc);
     HWND w = CreateWindowA("t", "t", WS_OVERLAPPEDWINDOW, 0, 0, 400, 300, NULL, NULL, wc.hInstance, NULL);
@@ -189,6 +221,7 @@ int main(void) {
     glg_mask(0, 0);
     glg_flush();
     check_box("whole vram", 0, 0, 1024, 512);
+    check_mask_textured("check-mask: textured rect stamps the stencil");
     printf(fails ? "FAILURES: %d\n" : "all ok\n", fails);
     return fails != 0;
 }

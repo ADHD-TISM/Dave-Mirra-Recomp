@@ -96,6 +96,30 @@ in `COLOR_ATTACHMENT_OPTIMAL` (and the depth-stencil in its attachment layout) i
    mask bit is not drawn (neither game checks it in these runs).
 5. **Copies and the mask bit.** `copy_box` (with the smear rule that turns overlapping copies into blits), the stencil as bit 15
    and its rebuild when check-mask turns on. *Test:* all 31 `gltest` checks in `vktest`.
+   *Done:* a flush is now a list of operations (draw, copy, stencil rebuild). A copy is cut into boxes that wrap at neither edge
+   (`cuts`), each box is saved into a temporary image of the picture's size with `vkCmdCopyImage` and drawn back as a quad by a
+   second fragment shader (`runtime/shaders/gpu_copy.frag`), under the stencil state of the copy; under check-mask the stencil is
+   then brought in step with vram by a stencil-only draw of the box's texels with bit 15. A copy whose source and destination
+   overlap in a way the console smears becomes a blit from vram (`gvk_submit`, the same rule as `glg_submit`). When check-mask
+   starts, a render pass that clears the stencil redraws every texel with bit 15 as a 1. The mask bit is the stencil's bit 0, as in
+   OpenGL; pipelines for the stencil states are made when first needed (a pipeline that cannot be made is not tried again). `vktest`
+   now includes all the cases of `tools/gltest.c` (the copies, the overlaps that smear and the ones that do not, the hi-res detail
+   copies, the mask bit) plus one `gltest` lacks, an upload under check-mask: 70 checks, all pass on the Radeon in the normal and
+   `small` runs. Six deliberate breaks each make it fail (no smear conversion, a stencil operation, the copy's destination, no
+   stencil rebuild, no stamp after a copy, no stamp after a blit; the last was not caught by the `gltest` cases, so the new check
+   exists). The same scripted runs as step 4, repeated with copies drawn: Freestyle BMX 65 of 65 and Maximum Remix 71 of 71 shots
+   identical to the OpenGL GPU renderer. The gap in both renderers' tests, a textured primitive under check-mask (the stamp pass
+   for textured triangles and rectangles), is closed: `vktest` and `gltest` each have a case (a 64x64 15-bit texture with texels that
+   have bit 15 and texels that are 0, a flat rectangle drawn over it must leave the stamped pixels alone); both pass, and removing
+   the stamp for textured primitives makes each fail (1600 pixels). `vktest` makes 71 checks. A denser comparison, a shot every 20
+   frames for 90 seconds of the scripted run at 2x: Freestyle BMX 774 of 774 and Maximum Remix 837 of 837 shots identical between
+   the Vulkan and the OpenGL GPU renderer.
+   *Under the validation layer* (Khronos `Validation_Layers_Windows_64.zip` from the `nightly` release of Vulkan-ValidationLayers, fetched
+   2026-11-21, unpinned, run with `VK_LAYER_PATH` and `DMRECOMP_VK_VALIDATE=1`, nothing installed): `vktest` in its normal and `small`
+   runs (71 checks each) gives no validation message; neither do four game runs of the scripted Freestyle BMX at the CPU picture
+   with the smooth filter, with FSR, the GPU renderer at 2x, and the GPU renderer with FSR, nor a run in which the window was
+   resized, minimised and restored. To be sure the layer is really checking, a deliberate wrong image layout in the vram upload made it
+   report errors (10 in a `vktest` run). Still not tested: other hardware, and play by hand.
 6. **FSR and the rest of the path.** FSR on a GPU picture, 2x and 4x, `gpu_gl = 1` under `renderer = vulkan`; playtest of both
    games; frame time against the OpenGL renderer. *Exit of the phase:* `vktest` passes and the scripted comparison matches the
    Radeon OpenGL baseline on both games (the roadmap's exit test).
