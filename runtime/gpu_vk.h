@@ -1,9 +1,8 @@
 /* The GPU hi-res renderer on Vulkan (docs/vulkan-gpu-renderer-plan.md): the same interface as gpu_gl.h, drawn into a Vulkan image on
-   the device gfx_vk.c made. The presenter in gfx_vk.c copies the visible box out of it with gvk_present_copy. So far (steps 2 and 3
-   of the plan): the target, the vram image, uploads and reads exist, and blits, rectangles, fills, pixels and triangles are drawn
-   with the console's blend modes and drawing area; copies and the mask bit (the stencil) come in step 5, and textured drawing is
-   not tested yet (step 4). So gvk_init says no unless DMRECOMP_VK_RENDERER is set (read at the first gvk_init), and the game does
-   not use it. */
+   the device gfx_vk.c made. The presenter in gfx_vk.c copies the visible box out of it with gvk_present_copy. It does everything
+   gpu_gl.c does (steps 2 to 5 of the plan): uploads, reads, blits, rectangles, fills, pixels and triangles with the console's
+   blend modes and drawing area, textured drawing, copies and the mask bit (the stencil). gvk_init still says no unless
+   DMRECOMP_VK_RENDERER is set (read at the first gvk_init): the playtests of step 6 come before the game uses it. */
 #ifndef GPU_VK_H
 #define GPU_VK_H
 #include "vk_ctx.h"

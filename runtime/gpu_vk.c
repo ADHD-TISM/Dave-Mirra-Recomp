@@ -1,11 +1,12 @@
-/* The GPU hi-res renderer on Vulkan, steps 2 and 3 of docs/vulkan-gpu-renderer-plan.md. See gpu_vk.h.
+/* The GPU hi-res renderer on Vulkan, steps 2 to 5 of docs/vulkan-gpu-renderer-plan.md. See gpu_vk.h.
    The vram mirror is an R8G8 image (low byte, high byte) whose changed rows are copied in through a staging buffer; the picture is a
-   B8G8R8A8 image of 1024S x 512S with a depth-stencil image beside it (the stencil is the mask bit, used from step 5). Two frame
+   B8G8R8A8 image of 1024S x 512S with a depth-stencil image beside it (the stencil is the console's mask bit). Two frame
    slots, each with its own command buffer, fence, vertex buffer and staging buffer. A flush groups the queued primitives into runs
    of the same state (as gpu_gl.c does), records a draw for each with the blend pipeline and scissor it needs, and submits; when the
    vertices of a flush would not fit in a slot's buffer it submits what it has and goes on in the other slot (waiting for its fence).
-   Not drawn yet: copies (GK_COPY, step 5) and the mask bit (the stencil, step 5): a primitive that sets or checks the mask is drawn
-   as if the mask were off. */
+   A flush is a list of operations: draws, copies (the box is copied into a temporary image and drawn back, since source and
+   destination may overlap) and the rebuild of the stencil from vram when the mask starts being checked. The mask bit is the stencil
+   bit, kept only while the mask is checked, as in gpu_gl.c. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +14,7 @@
 #include "host.h"
 #include "gpu_vk.h"
 #include "gpu_emit.h"
+#include "vram_cuts.h"
 #include "gfx_vk_spv.h"
 
 #define QMAX 8192
@@ -31,24 +33,30 @@ typedef struct { float target[2]; int32_t pass; float alpha; } Push;   /* what g
 static int state;                               /* 0 untried, 1 ready, -1 unavailable */
 static int S, tgt_scale;
 static GPrim *q; static int qn;
-static int cur_set, cur_chk;                    /* the mask mode, as last told to gvk_mask (used from step 5) */
+static int cur_set, cur_chk;                    /* the mask mode, as last told to gvk_mask */
 static int dirty0 = 512, dirty1 = -1;
 static GpuVerts gv;
 static Slot slot[SLOTS]; static int cur;
-static Img tgt, ds, vram_img;
+static Img tgt, ds, tmp, vram_img;              /* tmp: the same size as the picture, where a copy is saved */
 static VkFormat dsfmt;
-static VkRenderPass rp; static VkFramebuffer fb;
-static VkSampler samp; static VkDescriptorSetLayout dsl; static VkDescriptorPool dpool; static VkDescriptorSet dset;
+static VkRenderPass rp, rp_clr; static VkFramebuffer fb;       /* rp_clr: the same, but it clears the stencil when it starts */
+static VkSampler samp; static VkDescriptorSetLayout dsl; static VkDescriptorPool dpool; static VkDescriptorSet dset[2];   /* 0: vram, 1: tmp */
 static VkPipelineLayout playout;
+enum { PROG_DECODE, PROG_COPY, PROG_N };                        /* the picture shader, and the one that draws a saved box back */
 enum { BL_AVG, BL_ADD, BL_SUB, BL_QUARTER, BL_OFF, BL_N };      /* blend modes of the console (semimode 0..3) and none */
-static VkPipeline pipes[BL_N];                                  /* made when first needed */
-static VkShaderModule vs_mod, fs_mod;
+enum { ST_OFF, ST_W0, ST_CK_REPL, ST_CK_KEEP, ST_ALW1, ST_N };  /* stencil: off; always, write 0 (fills, blits); skip masked, write 1; skip masked, keep; always, write 1 */
+static VkPipeline pipes[PROG_N][BL_N][ST_N][2];                 /* [prog][blend][stencil][colour writes off]; made when first needed */
+static char pipe_bad[PROG_N][BL_N][ST_N][2];
+static VkShaderModule vs_mod, fs_mod[PROG_N];
 static size_t vbuf_bytes = VBUF_BYTES;                          /* DMRECOMP_VK_VBUF_KB (a test hook) can make it smaller */
 static VkCommandBuffer ucb; static VkFence ufence;                            /* reads and the first layout changes */
 static VkBuffer rbuf; static VkDeviceMemory rmem; static void *rmap; static size_t rsize;   /* the read-back */
-static int said_copies;                         /* copies are not drawn yet: said once */
-typedef struct { int first, count, blend, clip[4]; int32_t pass; float alpha; } Draw;   /* a range of the batch's vertices and its state */
-static Draw *dr; static int nd, dcap;
+enum { OP_DRAW, OP_COPY, OP_REBUILD };
+typedef struct {   /* one step of a batch: a range of its vertices and how to draw them, or a copy, or the stencil rebuild */
+    int op, first, count, prog, blend, stencil, cmask, clip[4]; int32_t pass; float alpha;
+    int sx, sy, w, h;   /* OP_COPY: the box to save, in vram pixels (it wraps at neither edge) */
+} Op;
+static Op *dr; static int nd, dcap;
 
 static void free_img(Img *i) {
     if (i->view) vkDestroyImageView(vkc.dev, i->view, NULL);
@@ -93,13 +101,13 @@ static VkFormat pick_depth_stencil(void) {
     }
     return VK_FORMAT_UNDEFINED;
 }
-static int make_pass(void) {
+static int make_pass(int clear_stencil, VkRenderPass *out) {
     VkAttachmentDescription at[2] = {
         { .format = VK_FORMAT_B8G8R8A8_UNORM, .samples = VK_SAMPLE_COUNT_1_BIT, .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD, .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
           .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE, .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
           .initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, .finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL },
         { .format = dsfmt, .samples = VK_SAMPLE_COUNT_1_BIT, .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE, .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-          .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD, .stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE,
+          .stencilLoadOp = clear_stencil ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD, .stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE,
           .initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL } };
     VkAttachmentReference cref = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL }, dref = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
     VkSubpassDescription sp = { .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS, .colorAttachmentCount = 1, .pColorAttachments = &cref, .pDepthStencilAttachment = &dref };
@@ -111,13 +119,21 @@ static int make_pass(void) {
           .dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT } };
     VkRenderPassCreateInfo ri = { .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO, .attachmentCount = 2, .pAttachments = at, .subpassCount = 1, .pSubpasses = &sp,
         .dependencyCount = 2, .pDependencies = dep };
-    return vkCreateRenderPass(vkc.dev, &ri, NULL, &rp) == VK_SUCCESS;
+    return vkCreateRenderPass(vkc.dev, &ri, NULL, out) == VK_SUCCESS;
 }
-static VkPipeline make_pipeline(int bl) {
+/* the stencil states of set_stencil and the passes in gpu_gl.c; the mask bit is stencil bit 0 */
+static VkStencilOpState stencil_state(int st) {
+    VkStencilOpState o = { .failOp = VK_STENCIL_OP_KEEP, .passOp = VK_STENCIL_OP_REPLACE, .depthFailOp = VK_STENCIL_OP_KEEP, .compareOp = VK_COMPARE_OP_ALWAYS,
+                           .compareMask = 0xff, .writeMask = 0xff, .reference = 0 };
+    if (st == ST_CK_REPL || st == ST_CK_KEEP) { o.compareOp = VK_COMPARE_OP_NOT_EQUAL; o.compareMask = 1; o.reference = 1; if (st == ST_CK_KEEP) o.passOp = VK_STENCIL_OP_KEEP; }
+    if (st == ST_ALW1) o.reference = 1;
+    return o;
+}
+static VkPipeline make_pipeline(int prog, int bl, int st, int cm) {
     VkPipeline out = VK_NULL_HANDLE;
-    VkPipelineShaderStageCreateInfo st[2] = {
+    VkPipelineShaderStageCreateInfo stg[2] = {
         { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_VERTEX_BIT, .module = vs_mod, .pName = "main" },
-        { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = fs_mod, .pName = "main" } };
+        { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = fs_mod[prog], .pName = "main" } };
     VkVertexInputBindingDescription bd = { 0, sizeof(GlsVert), VK_VERTEX_INPUT_RATE_VERTEX };
     VkVertexInputAttributeDescription ad[5] = {
         { 0, 0, VK_FORMAT_R32G32_SFLOAT, 0 }, { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, 8 }, { 2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 20 },
@@ -129,7 +145,9 @@ static VkPipeline make_pipeline(int bl) {
     VkPipelineRasterizationStateCreateInfo rs = { .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO, .polygonMode = VK_POLYGON_MODE_FILL,
         .cullMode = VK_CULL_MODE_NONE, .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE, .lineWidth = 1.0f };
     VkPipelineMultisampleStateCreateInfo ms = { .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
-    VkPipelineDepthStencilStateCreateInfo dss = { .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };   /* depth and stencil tests off */
+    VkStencilOpState so = stencil_state(st);
+    VkPipelineDepthStencilStateCreateInfo dss = { .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,   /* no depth test */
+        .stencilTestEnable = st != ST_OFF, .front = so, .back = so };
     /* the blend as the OpenGL renderer sets it (set_blend in gpu_gl.c): the same factors for colour and alpha */
     VkBlendFactor src = VK_BLEND_FACTOR_ONE, dstf = VK_BLEND_FACTOR_ONE; VkBlendOp op = VK_BLEND_OP_ADD;
     if (bl == BL_AVG) { src = VK_BLEND_FACTOR_SRC_ALPHA; dstf = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA; }   /* B/2 + F/2 */
@@ -137,19 +155,24 @@ static VkPipeline make_pipeline(int bl) {
     else if (bl == BL_SUB) op = VK_BLEND_OP_REVERSE_SUBTRACT;                                           /* B - F */
     VkPipelineColorBlendAttachmentState ba = { .blendEnable = bl != BL_OFF, .srcColorBlendFactor = src, .dstColorBlendFactor = dstf, .colorBlendOp = op,
         .srcAlphaBlendFactor = src, .dstAlphaBlendFactor = dstf, .alphaBlendOp = op,
-        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT };
+        .colorWriteMask = cm ? 0 : VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT };
     VkPipelineColorBlendStateCreateInfo cbs = { .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, .attachmentCount = 1, .pAttachments = &ba };
     VkDynamicState dyn[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
     VkPipelineDynamicStateCreateInfo ds_ = { .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, .dynamicStateCount = 2, .pDynamicStates = dyn };
-    VkGraphicsPipelineCreateInfo gi = { .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .stageCount = 2, .pStages = st, .pVertexInputState = &vi,
+    VkGraphicsPipelineCreateInfo gi = { .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .stageCount = 2, .pStages = stg, .pVertexInputState = &vi,
         .pInputAssemblyState = &ia, .pViewportState = &vp, .pRasterizationState = &rs, .pMultisampleState = &ms, .pDepthStencilState = &dss,
-        .pColorBlendState = &cbs, .pDynamicState = &ds_, .layout = playout, .renderPass = rp, .subpass = 0 };
+        .pColorBlendState = &cbs, .pDynamicState = &ds_, .layout = playout, .renderPass = rp, .subpass = 0 };   /* usable with rp_clr too: the passes are compatible */
     if (vkCreateGraphicsPipelines(vkc.dev, VK_NULL_HANDLE, 1, &gi, NULL, &out) != VK_SUCCESS) out = VK_NULL_HANDLE;
     return out;
 }
-static VkPipeline get_pipe(int bl) {
-    if (!pipes[bl]) pipes[bl] = make_pipeline(bl);
-    return pipes[bl];
+/* the pipeline for a state, made when first needed; one that cannot be made is not tried again */
+static VkPipeline get_pipe(int prog, int bl, int st, int cm) {
+    VkPipeline *pl = &pipes[prog][bl][st][cm];
+    if (!*pl && !pipe_bad[prog][bl][st][cm]) {
+        *pl = make_pipeline(prog, bl, st, cm);
+        if (!*pl) { pipe_bad[prog][bl][st][cm] = 1; fprintf(stderr, "[gpu_vk] a pipeline (program %d, blend %d, stencil %d) cannot be made; draws that need it are skipped\n", prog, bl, st); }
+    }
+    return *pl;
 }
 static int setup_once(void) {
     const char *kb = getenv("DMRECOMP_VK_VBUF_KB");   /* a test hook: a small vertex buffer makes a flush split into several submits */
@@ -162,18 +185,23 @@ static int setup_once(void) {
         .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE };
     VkDescriptorSetLayoutBinding lb = { .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT };
     VkDescriptorSetLayoutCreateInfo li = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 1, .pBindings = &lb };
-    VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
-    VkDescriptorPoolCreateInfo pi = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = 1, .poolSizeCount = 1, .pPoolSizes = &ps };
+    VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 };
+    VkDescriptorPoolCreateInfo pi = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = 2, .poolSizeCount = 1, .pPoolSizes = &ps };
     if (vkCreateSampler(vkc.dev, &si, NULL, &samp) != VK_SUCCESS || vkCreateDescriptorSetLayout(vkc.dev, &li, NULL, &dsl) != VK_SUCCESS
         || vkCreateDescriptorPool(vkc.dev, &pi, NULL, &dpool) != VK_SUCCESS) return -1;
-    VkDescriptorSetAllocateInfo ai = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, .descriptorPool = dpool, .descriptorSetCount = 1, .pSetLayouts = &dsl };
-    if (vkAllocateDescriptorSets(vkc.dev, &ai, &dset) != VK_SUCCESS) return -1;
+    VkDescriptorSetLayout both[2] = { dsl, dsl };
+    VkDescriptorSetAllocateInfo ai = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, .descriptorPool = dpool, .descriptorSetCount = 2, .pSetLayouts = both };
+    if (vkAllocateDescriptorSets(vkc.dev, &ai, dset) != VK_SUCCESS) return -1;
     VkPushConstantRange pcr = { VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(Push) };
     VkPipelineLayoutCreateInfo pli = { .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1, .pSetLayouts = &dsl, .pushConstantRangeCount = 1, .pPushConstantRanges = &pcr };
-    if (vkCreatePipelineLayout(vkc.dev, &pli, NULL, &playout) != VK_SUCCESS || !make_pass()) return -1;
-    vs_mod = vk_make_module(spv_gpu_draw_vert, sizeof spv_gpu_draw_vert / 4); fs_mod = vk_make_module(spv_gpu_decode_frag, sizeof spv_gpu_decode_frag / 4);
-    if (!vs_mod || !fs_mod) return -1;
-    for (int b = 0; b < BL_N; b++) if (!get_pipe(b)) { fprintf(stderr, "[gpu_vk] a blend pipeline cannot be made\n"); return -1; }
+    if (vkCreatePipelineLayout(vkc.dev, &pli, NULL, &playout) != VK_SUCCESS || !make_pass(0, &rp) || !make_pass(1, &rp_clr)) return -1;
+    vs_mod = vk_make_module(spv_gpu_draw_vert, sizeof spv_gpu_draw_vert / 4);
+    fs_mod[PROG_DECODE] = vk_make_module(spv_gpu_decode_frag, sizeof spv_gpu_decode_frag / 4);
+    fs_mod[PROG_COPY] = vk_make_module(spv_gpu_copy_frag, sizeof spv_gpu_copy_frag / 4);
+    if (!vs_mod || !fs_mod[PROG_DECODE] || !fs_mod[PROG_COPY]) return -1;
+    /* the pipelines every frame needs are made now, so a failure is a failure to start; the others (stencil states) when first used */
+    for (int b = 0; b < BL_N; b++) if (!get_pipe(PROG_DECODE, b, ST_OFF, 0)) return -1;
+    for (int st = ST_OFF; st <= ST_CK_KEEP; st++) if (st == ST_OFF || st >= ST_CK_REPL) if (!get_pipe(PROG_COPY, BL_OFF, st, 0)) return -1;
     /* command buffers, fences, per-slot buffers */
     VkFenceCreateInfo fi = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
     VkCommandBufferAllocateInfo ba = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, .commandPool = vkc.pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1 };
@@ -186,7 +214,7 @@ static int setup_once(void) {
     /* the vram mirror, 1024x512, two bytes a texel */
     if (!make_img(&vram_img, 1024, 512, VK_FORMAT_R8G8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT)) return -1;
     VkDescriptorImageInfo di = { .sampler = samp, .imageView = vram_img.view, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    VkWriteDescriptorSet wr = { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = dset, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &di };
+    VkWriteDescriptorSet wr = { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = dset[0], .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &di };
     vkUpdateDescriptorSets(vkc.dev, 1, &wr, 0, NULL);
     q = malloc(sizeof *q * QMAX);
     if (!q) return -1;
@@ -201,7 +229,7 @@ static int setup_once(void) {
 static void free_target(void) {
     if (fb) vkDestroyFramebuffer(vkc.dev, fb, NULL);
     fb = VK_NULL_HANDLE;
-    free_img(&tgt); free_img(&ds);
+    free_img(&tgt); free_img(&ds); free_img(&tmp);
     tgt_scale = 0;
 }
 static int make_target(int scale) {
@@ -214,7 +242,11 @@ static int make_target(int scale) {
     vkDeviceWaitIdle(vkc.dev);
     free_target();
     if (!make_img(&tgt, (int)w, (int)h, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
-        || !make_img(&ds, (int)w, (int)h, dsfmt, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) { free_target(); return 0; }
+        || !make_img(&ds, (int)w, (int)h, dsfmt, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
+        || !make_img(&tmp, (int)w, (int)h, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)) { free_target(); return 0; }
+    VkDescriptorImageInfo tdi = { .sampler = samp, .imageView = tmp.view, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkWriteDescriptorSet twr = { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = dset[1], .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &tdi };
+    vkUpdateDescriptorSets(vkc.dev, 1, &twr, 0, NULL);   /* the device is idle: nothing uses the old view */
     VkImageView views[2] = { tgt.view, ds.view };
     VkFramebufferCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO, .renderPass = rp, .attachmentCount = 2, .pAttachments = views, .width = w, .height = h, .layers = 1 };
     if (vkCreateFramebuffer(vkc.dev, &fci, NULL, &fb) != VK_SUCCESS) { free_target(); return 0; }
@@ -246,7 +278,7 @@ int gvk_init(int scale) {
     if (tgt_scale != scale && !make_target(scale)) return 0;   /* the renderer stays usable: a later scale may work */
     S = scale; qn = 0; cur_chk = 0; cur_set = 0;
     dirty0 = 0; dirty1 = 511;
-    fprintf(stderr, "[gpu_vk] drawing the %dx picture on the graphics card (depth-stencil %s; copies and the mask bit are not drawn yet)\n", scale,
+    fprintf(stderr, "[gpu_vk] drawing the %dx picture on the graphics card (depth-stencil %s)\n", scale,
             dsfmt == VK_FORMAT_D24_UNORM_S8_UINT ? "D24S8" : "D32S8");
     return 1;
 }
@@ -256,8 +288,6 @@ void gvk_dirty(int y0, int y1) {
     if (y0 < dirty0) dirty0 = y0;
     if (y1 > dirty1) dirty1 = y1;
 }
-void gvk_mask(int set, int check) { cur_set = set != 0; cur_chk = check != 0; }
-
 /* the drawing area of a primitive, inclusive, in vram pixels; fills and blits are not clipped */
 static void cliprect(const GPrim *p, int c[4]) {
     if (p->kind == GK_TRI || p->kind == GK_RECT) memcpy(c, p->clip, 4 * sizeof(int));
@@ -272,29 +302,44 @@ static int same_state(const GPrim *a, const GPrim *b) {
         && (a->kind == GK_FILL) == (b->kind == GK_FILL) && (a->kind == GK_BLIT) == (b->kind == GK_BLIT);
 }
 static int blend_of(int semimode) { return semimode == 0 ? BL_AVG : semimode == 3 ? BL_QUARTER : semimode == 2 ? BL_SUB : BL_ADD; }
-static void add_draw(const Draw *d) {
+/* the mask bit, kept only while the mask is checked: a fill ignores it and clears it, an upload mirrors bit 15 of vram afterwards, the rest honour the mode */
+static int stencil_of(const GPrim *f) {
+    if (!f->chkm) return ST_OFF;   /* the stencil is only read under check-mask, and is rebuilt from vram when that starts */
+    if (f->kind == GK_FILL || f->kind == GK_BLIT) return ST_W0;
+    return f->setm ? ST_CK_REPL : ST_CK_KEEP;
+}
+static void add_op(const Op *o) {
     if (nd == dcap) {
-        Draw *nb = realloc(dr, sizeof *dr * (size_t)(dcap ? dcap * 2 : 256));
-        if (!nb) return;   /* out of memory: this draw is lost */
+        Op *nb = realloc(dr, sizeof *dr * (size_t)(dcap ? dcap * 2 : 256));
+        if (!nb) return;   /* out of memory: this op is lost */
         dr = nb; dcap = dcap ? dcap * 2 : 256;
     }
-    dr[nd++] = *d;
+    dr[nd++] = *o;
 }
 /* the vertices first .. first + count of the batch came from the run whose first primitive is f */
 static void add_run(const GPrim *f, int first, int count) {
     if (count <= 0) return;
-    Draw d = { .first = first, .count = count, .blend = BL_OFF, .alpha = 1.0f };
+    Op d = { .op = OP_DRAW, .first = first, .count = count, .prog = PROG_DECODE, .blend = BL_OFF, .stencil = stencil_of(f), .alpha = 1.0f };
     cliprect(f, d.clip);
     if (d.clip[2] < d.clip[0] || d.clip[3] < d.clip[1]) return;   /* an empty drawing area */
     if (f->semi && f->textured) {   /* opaque texels first, then the translucent ones */
-        d.pass = 1; add_draw(&d);
-        d.pass = 2; d.blend = blend_of(f->semimode); d.alpha = f->semimode == 0 ? 0.5f : f->semimode == 3 ? 0.25f : 1.0f; add_draw(&d);
+        d.pass = 1; add_op(&d);
+        d.pass = 2; d.blend = blend_of(f->semimode); d.alpha = f->semimode == 0 ? 0.5f : f->semimode == 3 ? 0.25f : 1.0f; add_op(&d);
     } else {
         if (f->semi) { d.blend = blend_of(f->semimode); d.alpha = f->semimode == 0 ? 0.5f : f->semimode == 3 ? 0.25f : 1.0f; }
-        add_draw(&d);
+        add_op(&d);
     }
 }
-/* record the dirty vram rows and the draws of the batch into the current slot, submit it, and move on to the other slot */
+/* under check-mask, texels with bit 15 keep it in vram (it is the mask bit): the same primitives again, those texels only, stencil only */
+static void add_stamp(const GPrim *f, int first, int count, int stencil) {
+    if (count <= 0) return;
+    Op d = { .op = OP_DRAW, .first = first, .count = count, .prog = PROG_DECODE, .blend = BL_OFF, .stencil = stencil, .cmask = 1, .pass = 2, .alpha = 1.0f };
+    cliprect(f, d.clip);
+    if (d.clip[2] < d.clip[0] || d.clip[3] < d.clip[1]) return;
+    add_op(&d);
+}
+
+/* record the dirty vram rows and the ops of the batch into the current slot, submit it, and move on to the other slot */
 static void submit_batch(void) {
     int upload = dirty1 >= dirty0;
     if (gv.fail) { fprintf(stderr, "[gpu_vk] out of memory for the vertices; part of a frame is not drawn\n"); gv.fail = 0; gv.n = 0; nd = 0; }
@@ -315,29 +360,51 @@ static void submit_batch(void) {
     }
     if (nd) {
         memcpy(sl->vmap, gv.v, (size_t)gv.n * sizeof(GlsVert));
-        uint32_t w = 1024u * S, h = 512u * S;
-        VkRenderPassBeginInfo rbi = { .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, .renderPass = rp, .framebuffer = fb, .renderArea = { { 0, 0 }, { w, h } } };
-        vkCmdBeginRenderPass(sl->cb, &rbi, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdBindDescriptorSets(sl->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, playout, 0, 1, &dset, 0, NULL);
-        VkViewport vp = { 0, 0, (float)w, (float)h, 0, 1 };
-        vkCmdSetViewport(sl->cb, 0, 1, &vp);
-        VkDeviceSize off = 0;
-        vkCmdBindVertexBuffers(sl->cb, 0, 1, &sl->vb, &off);
-        VkPipeline bound = VK_NULL_HANDLE;
+        const uint32_t w = 1024u * S, h = 512u * S;
+        int inpass = 0, curset = -1; VkPipeline bound = VK_NULL_HANDLE;
+        VkClearValue clears[2] = { { .color = { .float32 = { 0, 0, 0, 0 } } }, { .depthStencil = { 1.0f, 0 } } };
         for (int i = 0; i < nd; i++) {
-            const Draw *d = &dr[i];
-            VkPipeline pl = get_pipe(d->blend);
-            if (!pl) continue;   /* cannot happen: set-up made them all */
+            const Op *o = &dr[i];
+            if (o->op == OP_COPY) {   /* save the box at the source, then draw it back at the destination (the quad is the next op's vertices: o->first) */
+                if (inpass) { vkCmdEndRenderPass(sl->cb); inpass = 0; }
+                layout(sl->cb, tgt.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+                layout(sl->cb, tmp.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);   /* an earlier copy's read of it is over before this write */
+                VkImageCopy rg = { .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, .srcOffset = { o->sx * S, o->sy * S, 0 },
+                                   .dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, .extent = { (uint32_t)(o->w * S), (uint32_t)(o->h * S), 1 } };
+                vkCmdCopyImage(sl->cb, tgt.img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, tmp.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &rg);
+                layout(sl->cb, tmp.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                       VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+                layout(sl->cb, tgt.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                       VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+            }
+            if (!inpass || o->op == OP_REBUILD) {   /* a pass is open from the first draw until a copy or the rebuild needs another */
+                if (inpass) vkCmdEndRenderPass(sl->cb);
+                VkRenderPassBeginInfo rbi = { .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, .renderPass = o->op == OP_REBUILD ? rp_clr : rp, .framebuffer = fb,
+                    .renderArea = { { 0, 0 }, { w, h } }, .clearValueCount = 2, .pClearValues = clears };
+                vkCmdBeginRenderPass(sl->cb, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+                inpass = 1; curset = -1; bound = VK_NULL_HANDLE;
+                VkViewport vp = { 0, 0, (float)w, (float)h, 0, 1 };
+                vkCmdSetViewport(sl->cb, 0, 1, &vp);
+                VkDeviceSize off = 0;
+                vkCmdBindVertexBuffers(sl->cb, 0, 1, &sl->vb, &off);
+            }
+            int set = o->op == OP_COPY ? 1 : 0;
+            if (set != curset) { vkCmdBindDescriptorSets(sl->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, playout, 0, 1, &dset[set], 0, NULL); curset = set; }
+            VkPipeline pl = get_pipe(o->op == OP_COPY ? PROG_COPY : o->prog, o->op == OP_COPY ? BL_OFF : o->blend, o->stencil, o->cmask);
+            if (!pl) continue;   /* said once when it could not be made */
             if (pl != bound) { vkCmdBindPipeline(sl->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pl); bound = pl; }
             VkRect2D sc = { { 0, 0 }, { w, h } };
-            if (!(d->clip[0] == 0 && d->clip[1] == 0 && d->clip[2] == 1023 && d->clip[3] == 511))
-                sc = (VkRect2D){ { d->clip[0] * S, d->clip[1] * S }, { (uint32_t)((d->clip[2] - d->clip[0] + 1) * S), (uint32_t)((d->clip[3] - d->clip[1] + 1) * S) } };
+            if (o->op == OP_DRAW && !(o->clip[0] == 0 && o->clip[1] == 0 && o->clip[2] == 1023 && o->clip[3] == 511))
+                sc = (VkRect2D){ { o->clip[0] * S, o->clip[1] * S }, { (uint32_t)((o->clip[2] - o->clip[0] + 1) * S), (uint32_t)((o->clip[3] - o->clip[1] + 1) * S) } };
             vkCmdSetScissor(sl->cb, 0, 1, &sc);
-            Push pc = { { (float)w, (float)h }, d->pass, d->alpha };
+            Push pc = { { (float)w, (float)h }, o->op == OP_COPY ? 0 : o->pass, o->op == OP_COPY ? 1.0f : o->alpha };
             vkCmdPushConstants(sl->cb, playout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
-            vkCmdDraw(sl->cb, (uint32_t)d->count, 1, (uint32_t)d->first, 0);
+            vkCmdDraw(sl->cb, (uint32_t)o->count, 1, (uint32_t)o->first, 0);
+            if (o->op == OP_REBUILD) { vkCmdEndRenderPass(sl->cb); inpass = 0; }
         }
-        vkCmdEndRenderPass(sl->cb);
+        if (inpass) vkCmdEndRenderPass(sl->cb);
     }
     vkEndCommandBuffer(sl->cb);
     VkSubmitInfo si = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &sl->cb };
@@ -359,6 +426,34 @@ static void submit_batch(void) {
     gv.n = 0; nd = 0;
 }
 
+/* a copy inside vram, at the high resolution, in boxes that wrap at neither edge (cuts, vram_cuts.h): each box is saved and drawn back
+   (the vertices are a quad of the saved box), then, under check-mask, the stencil is brought in step with vram (bit 15 travels with the pixel) */
+static void add_copy(const GPrim *p, const int cap) {
+    int w = p->w < 1024 ? p->w : 1024, h = p->h < 512 ? p->h : 512;
+    if (w <= 0 || h <= 0) return;
+    int cx[3], cy[3], nx = cuts(p->sx, p->x, w, 1024, cx), ny = cuts(p->sy, p->y, h, 512, cy);
+    for (int j = 0; j < ny; j++) for (int i = 0; i < nx; i++) {
+        int x0 = cx[i], x1 = i + 1 < nx ? cx[i + 1] : w, y0 = cy[j], y1 = j + 1 < ny ? cy[j + 1] : h;
+        int bw = x1 - x0, bh = y1 - y0, dx = (p->x + x0) & 1023, dy = (p->y + y0) & 511;
+        if (gv.n + 2 * GV_MAX_VERTS > cap) submit_batch();
+        GPrim z; memset(&z, 0, sizeof z);   /* the quad: positions at the destination, texture coordinates 0..(box / saved image) */
+        int first = gv.n;
+        gv_quad(&gv, &z, 0, (float)(dx * S), (float)(dy * S), (float)((dx + bw) * S), (float)((dy + bh) * S), 255, 255, 255,
+                0, 0, (float)(bw * S) / (float)(1024 * S), (float)(bh * S) / (float)(512 * S));
+        Op c = { .op = OP_COPY, .first = first, .count = gv.n - first, .stencil = p->chkm ? (p->setm ? ST_CK_REPL : ST_CK_KEEP) : ST_OFF,
+                 .sx = (p->sx + x0) & 1023, .sy = (p->sy + y0) & 511, .w = bw, .h = bh };
+        if (!gv.fail) add_op(&c);
+        if (p->chkm) {   /* the console copies bit 15 with the pixel, so mirror it from vram (already copied on the CPU), as an upload does */
+            GPrim b; memset(&b, 0, sizeof b);
+            b.kind = GK_BLIT; b.x = dx; b.y = dy; b.w = bw; b.h = bh;
+            int sfirst = gv.n;
+            gv_emit(&gv, &b, S);
+            b.clip[2] = 1023; b.clip[3] = 511;
+            if (!gv.fail) add_stamp(&b, sfirst, gv.n - sfirst, ST_CK_REPL);
+        }
+    }
+}
+
 void gvk_flush(void) {
     if (state <= 0 || !tgt_scale || !qn) return;
     gv.n = 0; gv.fail = 0; nd = 0;
@@ -366,29 +461,74 @@ void gvk_flush(void) {
     int i = 0;
     while (i < qn) {
         const GPrim *f = &q[i];
-        if (f->kind == GK_COPY) { if (!said_copies) { said_copies = 1; fprintf(stderr, "[gpu_vk] copies are not drawn yet (step 5)\n"); } i++; continue; }
+        if (f->kind == GK_COPY) {
+            int keep_n = gv.n, keep_nd = nd;
+            add_copy(f, cap); i++;
+            if (gv.fail) { fprintf(stderr, "[gpu_vk] out of memory for the vertices; a copy is not drawn\n"); gv.n = keep_n; nd = keep_nd; gv.fail = 0; }
+            continue;
+        }
         int j = i + 1;
         while (j < qn && same_state(f, &q[j])) j++;
         int start = gv.n;
         for (int k = i; k < j && !gv.fail; k++) {
-            if (gv.n + GV_MAX_VERTS > cap) { add_run(f, start, gv.n - start); submit_batch(); start = 0; }   /* the slot's buffer is full: submit, go on in the other slot */
+            if (gv.n + 2 * GV_MAX_VERTS > cap) { add_run(f, start, gv.n - start); submit_batch(); start = 0; }   /* the slot's buffer is full: submit, go on in the other slot */
             gv_emit(&gv, &q[k], S);
         }
         if (gv.fail) {   /* out of memory for the vertices: this run is lost (what came before it is drawn), the rest of the flush goes on */
             fprintf(stderr, "[gpu_vk] out of memory for the vertices; part of a frame is not drawn\n");
             gv.n = start; gv.fail = 0;
-        } else add_run(f, start, gv.n - start);
+        } else {
+            add_run(f, start, gv.n - start);
+            if (f->chkm && (f->kind == GK_BLIT || (f->textured && !f->setm && (f->kind == GK_TRI || f->kind == GK_RECT)))) {   /* only under check-mask */
+                int sfirst = gv.n;
+                for (int k = i; k < j; k++) if (f->kind == GK_BLIT || q[k].textured) gv_emit(&gv, &q[k], S);   /* a run can mix in flat prims */
+                if (!gv.fail) add_stamp(f, sfirst, gv.n - sfirst, f->kind == GK_BLIT ? ST_ALW1 : ST_CK_REPL);
+            }
+        }
         i = j;
     }
     submit_batch();
     qn = 0;
 }
 
+/* The stencil only matters while the mask is checked, so it is not kept up to date otherwise: when checking starts it is rebuilt from
+   vram (whose bit 15 is the console's mask bit, kept exactly by the CPU): cleared, then every texel with bit 15 stamps a 1. */
+void gvk_mask(int set, int check) {
+    int c = check != 0;
+    if (c && !cur_chk && state > 0 && tgt_scale) {
+        gvk_flush();   /* what is queued so far was drawn without checking */
+        gv.n = 0; gv.fail = 0; nd = 0;
+        GPrim b; memset(&b, 0, sizeof b);
+        b.kind = GK_BLIT; b.w = 1024; b.h = 512;
+        gv_emit(&gv, &b, S);
+        Op o = { .op = OP_REBUILD, .first = 0, .count = gv.n, .prog = PROG_DECODE, .blend = BL_OFF, .stencil = ST_ALW1, .cmask = 1, .pass = 2, .alpha = 1.0f };
+        o.clip[2] = 1023; o.clip[3] = 511;
+        if (!gv.fail) add_op(&o);
+        submit_batch();
+    }
+    cur_set = set != 0; cur_chk = c;
+}
+
+/* do n pixels from s and from d (both wrapping at size) share any pixel? */
+static int spans_meet(int s, int d, int n, int size) { return ((d - s) & (size - 1)) < n || ((s - d) & (size - 1)) < n; }
+
 void gvk_submit(const GPrim *p) {
     if (state <= 0 || !tgt_scale) return;
     if (qn == QMAX) gvk_flush();
     q[qn] = *p; q[qn].setm = cur_set; q[qn].chkm = cur_chk;
+    /* The console copies a pixel at a time, so a copy whose source and destination overlap smears: the CPU copy in vram is exact about
+       that, a copy of the picture is not. Such a copy is drawn from vram instead (the picture loses its extra detail there). */
+    int smear = 0;
+    if (p->kind == GK_COPY && spans_meet(p->sx, p->x, p->w, 1024) && spans_meet(p->sy, p->y, p->h, 512)) {
+        /* Without wrapping, the pixel-at-a-time loop reads a pixel it has already written only when the destination is below the source,
+           or level with it and to the right; up and left (a scroll) equals read-everything-then-write, which a saved copy does. */
+        int wraps = p->sx + p->w > 1024 || p->x + p->w > 1024 || p->sy + p->h > 512 || p->y + p->h > 512;
+        smear = wraps || p->sy < p->y || (p->sy == p->y && p->sx < p->x);
+    }
+    if (smear) q[qn].kind = GK_BLIT;
     qn++;
+    /* the copy's bit-15 pass reads vram as it is now; a drawn-from-vram copy must not see later drawing */
+    if (smear || (cur_chk && p->kind == GK_COPY)) gvk_flush();
 }
 
 /* ---- display: the visible box wraps around the edges of vram like the CPU picture does (gv_runs, gpu_emit.h) ---- */
@@ -453,15 +593,20 @@ void gvk_shutdown(void) {
         memset(&slot[i], 0, sizeof slot[i]);   /* the command buffers go with the pool */
     }
     if (ufence) vkDestroyFence(vkc.dev, ufence, NULL);
-    for (int i = 0; i < BL_N; i++) { if (pipes[i]) vkDestroyPipeline(vkc.dev, pipes[i], NULL); pipes[i] = VK_NULL_HANDLE; }
+    for (int a = 0; a < PROG_N; a++) for (int b = 0; b < BL_N; b++) for (int c = 0; c < ST_N; c++) for (int d = 0; d < 2; d++) {
+        if (pipes[a][b][c][d]) vkDestroyPipeline(vkc.dev, pipes[a][b][c][d], NULL);
+        pipes[a][b][c][d] = VK_NULL_HANDLE; pipe_bad[a][b][c][d] = 0;
+    }
     if (vs_mod) vkDestroyShaderModule(vkc.dev, vs_mod, NULL);
-    if (fs_mod) vkDestroyShaderModule(vkc.dev, fs_mod, NULL);
-    vs_mod = fs_mod = VK_NULL_HANDLE;
+    for (int a = 0; a < PROG_N; a++) { if (fs_mod[a]) vkDestroyShaderModule(vkc.dev, fs_mod[a], NULL); fs_mod[a] = VK_NULL_HANDLE; }
+    vs_mod = VK_NULL_HANDLE;
     if (playout) vkDestroyPipelineLayout(vkc.dev, playout, NULL);
     if (dpool) vkDestroyDescriptorPool(vkc.dev, dpool, NULL);
     if (dsl) vkDestroyDescriptorSetLayout(vkc.dev, dsl, NULL);
     if (samp) vkDestroySampler(vkc.dev, samp, NULL);
     if (rp) vkDestroyRenderPass(vkc.dev, rp, NULL);
+    if (rp_clr) vkDestroyRenderPass(vkc.dev, rp_clr, NULL);
+    rp_clr = VK_NULL_HANDLE;
     ufence = VK_NULL_HANDLE; playout = VK_NULL_HANDLE; dpool = VK_NULL_HANDLE; dsl = VK_NULL_HANDLE; samp = VK_NULL_HANDLE; rp = VK_NULL_HANDLE;
     free(q); q = NULL; free(gv.v); memset(&gv, 0, sizeof gv); free(dr); dr = NULL; nd = dcap = 0;
     state = 0; qn = 0; cur = 0;

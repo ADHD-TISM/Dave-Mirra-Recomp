@@ -6,6 +6,7 @@
 extern const uint32_t spv_fsr_easu_frag[5574];
 extern const uint32_t spv_fsr_rcas_frag[1040];
 extern const uint32_t spv_fullscreen_vert[284];
+extern const uint32_t spv_gpu_copy_frag[188];
 extern const uint32_t spv_gpu_decode_frag[2951];
 extern const uint32_t spv_gpu_draw_vert[468];
 #endif
