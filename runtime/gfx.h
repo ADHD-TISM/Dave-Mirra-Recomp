@@ -20,9 +20,11 @@ typedef struct {                      /* one frame to show */
 typedef struct GfxBackend {
     const char *name;
     int hw;                           /* 1 for a backend that draws on the graphics card, 0 for the software stretch */
-    int  (*init)(int w, int h, const char *title);   /* the window and what draws into it; 0 when this backend cannot run */
+    /* the window and what draws into it; 0 when this backend cannot run. A failed hardware init leaves the plain window that
+       plat_video_init made, and the software backend's init relies on that window: it creates nothing itself. */
+    int  (*init)(int w, int h, const char *title);
     void (*present)(const GfxFrame *f);              /* draw and show one frame */
-    const uint32_t *(*grab)(int *w, int *h);         /* the window picture of the last present that had grab set, or NULL */
+    const uint32_t *(*grab)(int *w, int *h);         /* the window picture of the last present that had grab set, or NULL; one-shot: the next call gives NULL */
     /* the GPU hi-res renderer (gpu_gl = 1); see gpu_gl.h */
     int  (*r_init)(int scale);
     void (*r_submit)(const GPrim *p);

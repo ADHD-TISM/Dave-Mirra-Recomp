@@ -1,13 +1,6 @@
 /* Host: settings, input mapping, presentation, screenshots and frame pacing.
    The window, OpenGL context, keys, gamepads, sound device and clock come from
    the platform file (plat_win32.c or plat_sdl.c) through host.h. */
-#ifdef DM_SDL
-#include <SDL_opengl.h>
-#else
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <GL/gl.h>
-#endif
 #include <stdarg.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -16,9 +9,6 @@
 #include "host.h"
 #include "game.h"   /* GAME_NAME: written into gen/ by tools/regen.py */
 #include "gfx.h"
-#ifndef APIENTRY
-#define APIENTRY
-#endif
 
 #ifdef _WIN32
 /* A Windows laptop with two graphics chips runs a program on the integrated one unless the program asks for the other. These two
@@ -318,14 +308,14 @@ void host_init(void) {
 }
 
 extern int g_shot_every;
-static int fb_on_gpu, gpu_box[4];   /* the picture is on the graphics card (gpu_gl) */
 static int want_grab;               /* --shot-window: the next frame shown is also copied out of the window */
 
 static void present(void) {
     DisplayArea d; gpu_display_area(&d);
+    int fb_on_gpu = 0, gpu_box[4] = { 0, 0, 0, 0 };   /* fb_on_gpu: the picture is on the graphics card (gpu_gl), in this console-pixel box */
     int gls = (d.enabled && !d.depth24 && gfx->hw) ? gpu_gl_scale() : 0;
     int hs = 1; const u16 *hv = gls ? NULL : gpu_hires(&hs);
-    fb_w = d.w; fb_h = d.h; fb_on_gpu = 0;
+    fb_w = d.w; fb_h = d.h;
     if (!d.enabled) memset(fb, 0, (size_t)fb_w * fb_h * 4);
     else if (gls) {
         fb_w = d.w * gls; fb_h = d.h * gls; fb_on_gpu = 1;

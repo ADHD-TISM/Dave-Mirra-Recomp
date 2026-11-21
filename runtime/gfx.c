@@ -16,7 +16,9 @@ static void soft_r_flush(void) { }
 static void soft_r_read(int x, int y, int w, int h, unsigned *dst) { (void)x; (void)y; (void)w; (void)h; (void)dst; }
 
 const GfxBackend gfx_soft_backend = {
-    "software", 0, soft_init, soft_present, soft_grab,
-    soft_r_init, soft_r_submit, soft_r_mask, soft_r_dirty, soft_r_flush, soft_r_read
+    .name = "software", .hw = 0,
+    .init = soft_init, .present = soft_present, .grab = soft_grab,
+    .r_init = soft_r_init, .r_submit = soft_r_submit, .r_mask = soft_r_mask,
+    .r_dirty = soft_r_dirty, .r_flush = soft_r_flush, .r_read = soft_r_read
 };
 const GfxBackend *gfx = &gfx_soft_backend;

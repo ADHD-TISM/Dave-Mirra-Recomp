@@ -295,9 +295,11 @@ static int gfx_gl_init(int w, int h, const char *title) {
     return 1;
 }
 static void gfx_gl_present(const GfxFrame *f) { gl_present(f); }
-static const u32 *gfx_gl_grab(int *w, int *h) { if (!grab_ok) return NULL; *w = grab_w; *h = grab_h; return grab; }
+static const u32 *gfx_gl_grab(int *w, int *h) { if (!grab_ok) return NULL; grab_ok = 0; *w = grab_w; *h = grab_h; return grab; }   /* one-shot */
 
 const GfxBackend gfx_gl_backend = {
-    "OpenGL", 1, gfx_gl_init, gfx_gl_present, gfx_gl_grab,
-    glg_init, glg_submit, glg_mask, glg_dirty, glg_flush, glg_read
+    .name = "OpenGL", .hw = 1,
+    .init = gfx_gl_init, .present = gfx_gl_present, .grab = gfx_gl_grab,
+    .r_init = glg_init, .r_submit = glg_submit, .r_mask = glg_mask,
+    .r_dirty = glg_dirty, .r_flush = glg_flush, .r_read = glg_read
 };
