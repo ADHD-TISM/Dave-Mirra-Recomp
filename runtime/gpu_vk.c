@@ -178,8 +178,9 @@ static int setup_once(void) {
     const char *kb = getenv("DMRECOMP_VK_VBUF_KB");   /* a test hook: a small vertex buffer makes a flush split into several submits */
     if (kb && atoi(kb) >= 4) vbuf_bytes = (size_t)atoi(kb) * 1024;
     if (vbuf_bytes > VBUF_BYTES) vbuf_bytes = VBUF_BYTES;
-    dsfmt = pick_depth_stencil();
-    if (dsfmt == VK_FORMAT_UNDEFINED) { fprintf(stderr, "[gpu_vk] this device offers no depth-stencil format the picture can use; using the CPU picture\n"); return -1; }
+    const char *tst = getenv("DMRECOMP_GFX_TEST");   /* a test hook (a list): "norenderer" makes the set-up fail as on a device without a depth-stencil format */
+    dsfmt = (tst && strstr(tst, "norenderer")) ? VK_FORMAT_UNDEFINED : pick_depth_stencil();
+    if (dsfmt == VK_FORMAT_UNDEFINED) { fprintf(stderr, "[gpu_vk] this device offers no depth-stencil format the picture can use\n"); return -1; }
     VkSamplerCreateInfo si = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = VK_FILTER_NEAREST, .minFilter = VK_FILTER_NEAREST,
         .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST, .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
         .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE };
@@ -263,16 +264,25 @@ static int make_target(int scale) {
     return 1;
 }
 
-int gvk_init(int scale) {
+int gvk_ready(void) {
     if (state < 0 || !vkc.dev) return 0;
     if (state == 0) {
         state = setup_once();
         if (state < 0) {
-            fprintf(stderr, "[gpu_vk] the renderer could not be set up; using the CPU picture\n");
+            fprintf(stderr, "[gpu_vk] the renderer could not be set up\n");
             gvk_shutdown();   /* what was made before the failure goes now, not at the end of the session */
             state = -1;
             return 0;
         }
+    }
+    return 1;
+}
+
+int gvk_init(int scale) {
+    if (!gvk_ready()) {
+        static int said;
+        if (!said) { said = 1; fprintf(stderr, "[gpu_vk] the picture is drawn on the CPU instead\n"); }
+        return 0;
     }
     if (tgt_scale != scale && !make_target(scale)) return 0;   /* the renderer stays usable: a later scale may work */
     S = scale; qn = 0; cur_chk = 0; cur_set = 0;

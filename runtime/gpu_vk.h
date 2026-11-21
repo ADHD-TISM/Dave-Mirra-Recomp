@@ -8,7 +8,8 @@
 #include "vk_ctx.h"
 #include "gpu_gl.h"
 
-int  gvk_init(int scale);              /* 1 when the renderer is ready at this scale (the Vulkan backend must be running) */
+int  gvk_ready(void);                  /* 1 when the renderer can run on this device: its one-time set-up is done here (renderer = auto asks before it keeps Vulkan) */
+int  gvk_init(int scale);             /* 1 when the renderer is ready at this scale (the Vulkan backend must be running) */
 void gvk_submit(const GPrim *p);
 void gvk_mask(int set, int check);
 void gvk_dirty(int y0, int y1);

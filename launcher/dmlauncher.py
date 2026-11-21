@@ -43,7 +43,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 REPO = "ADHD-TISM/Dave-Mirra-Recomp"
-LAUNCHER_VERSION = "6"
+LAUNCHER_VERSION = "7"
 
 # Build tools: llvm-mingw (clang + a MinGW-w64 UCRT sysroot), pinned and checked.
 LLVM_NAME = "llvm-mingw-20261104-ucrt-x86_64"
@@ -840,6 +840,11 @@ SETTINGS = [
      "Internal 3D resolution: 1 = original, 2 or 4 = sharper (F6 cycles while playing). The CPU draws it: 4 is 16 times the work, so use 2 on a laptop"),
     ("scale_auto", "Video", "Lower it when too slow", "bool", B01, "1",
      "1 = drop to a lower internal resolution by itself when the game cannot hold full speed at 2 or 4"),
+    ("renderer", "Video", "Graphics API", "choice", ["gl", "vulkan", "auto"], "gl",
+     "Graphics API that shows the picture: gl = OpenGL, vulkan = Vulkan first (falls back to OpenGL), "
+     "auto = Vulkan when it can do everything asked, else OpenGL"),
+    ("gpu_gl", "Video", "Draw 2x / 4x on the graphics card (early prototype)", "bool", B01, "0",
+     "1 = at scale 2 or 4 the graphics card draws the picture instead of the processor (early prototype)"),
     ("filter", "Video", "Picture filter", "choice", ["nearest", "smooth"], "nearest",
      "How the picture is enlarged to the window: nearest = sharp pixels, smooth = blended (F7)"),
     ("aspect", "Video", "Aspect ratio", "choice", ["4:3", "stretch"], "4:3",

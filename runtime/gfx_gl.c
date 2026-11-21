@@ -252,6 +252,8 @@ static void gl_present(const GfxFrame *f) {
 }
 
 static int gfx_gl_init(int w, int h, const char *title) {
+    const char *tst = getenv("DMRECOMP_GFX_TEST");   /* a test hook (a list): "nogl" behaves like a machine without OpenGL 3.3 */
+    if (tst && strstr(tst, "nogl")) { fprintf(stderr, "[video] no OpenGL 3.3 core context (DMRECOMP_GFX_TEST)\n"); return 0; }
     if (!plat_surface_open(PLAT_SURF_GL, w, h, title)) return 0;   /* no OpenGL context: nothing is left open */
     if (!gls_init() || !gls_plain_program()) {   /* a context older than OpenGL 3.3, or one that cannot run the shaders */
         fprintf(stderr, "[video] this OpenGL context cannot run the picture shaders (OpenGL 3.3 is needed)\n");

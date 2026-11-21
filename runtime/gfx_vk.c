@@ -414,7 +414,8 @@ static int validation_available(int *has_messenger) {
 }
 
 static int setup(void) {
-    gipa = (PFN_vkGetInstanceProcAddr)plat_vk_loader();
+    const char *tst = getenv("DMRECOMP_GFX_TEST");   /* a test hook (a list): "noloader" behaves like a machine without Vulkan */
+    gipa = (tst && strstr(tst, "noloader")) ? NULL : (PFN_vkGetInstanceProcAddr)plat_vk_loader();
     if (!gipa) { fprintf(stderr, "[video] no Vulkan loader\n"); return 0; }
     PFN_vkCreateInstance create = (PFN_vkCreateInstance)gipa(NULL, "vkCreateInstance");
     const char *ext[9]; int ne = plat_vk_extensions(ext, 8);
@@ -464,9 +465,14 @@ static int setup(void) {
     return 1;
 }
 
+int gfx_vk_need_renderer;   /* set before init (renderer = auto with gpu_gl = 1): init says no when the GPU renderer cannot run here, so OpenGL gets its turn */
 static int vk_init(int w, int h, const char *title) {
     if (!plat_surface_open(PLAT_SURF_VK, w, h, title)) return 0;
     if (!setup()) { teardown(); plat_surface_close(); return 0; }
+    if (gfx_vk_need_renderer && !gvk_ready()) {
+        fprintf(stderr, "[video] Vulkan can show the picture but cannot draw it on the graphics card here\n");
+        teardown(); plat_surface_close(); return 0;
+    }
     plat_surface_show();
     return 1;
 }

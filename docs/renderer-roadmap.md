@@ -4,7 +4,8 @@ Status: plan. Phase 1 (finishing the OpenGL path) is in progress: its tests are 
 done. Phase 2 (the backend seam) is done: the window, its surface, the window picture and the GPU renderer all sit behind
 `runtime/gfx.h`. Phase 3 (core-profile OpenGL) is done on the Radeon. Phase 4 is done on the Radeon: Vulkan shows the CPU picture, FSR
 included. Phase 5 is done on the Radeon: `gpu_gl = 1` under `renderer = vulkan` draws the 2x and 4x picture on the card
-(`docs/vulkan-gpu-renderer-plan.md`). Phases 6 and 7 are not started. Estimates are rough and are not
+(`docs/vulkan-gpu-renderer-plan.md`). Phase 6 is not started. Phase 7 is started: the setting `renderer = auto` exists, the
+default is still `gl`. Estimates are rough and are not
 promises.
 
 ## Goal
@@ -139,6 +140,21 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    whether the GPU renderer becomes the default is a separate decision.
    *Exit:* `auto` picks Vulkan on the machines of phase 6 and falls back to OpenGL, then to the software stretch, on a machine
    without a working Vulkan loader; `vulkan` and `gl` force their backend and say so when it is unavailable.
+   *Done so far (Windows, Radeon), ahead of phase 6:* `renderer = auto` is a third value (`host_init` in
+   `runtime/host_common.c`). Like `vulkan` it tries Vulkan, then OpenGL, then the software stretch. The difference: with
+   `gpu_gl = 1`, `auto` asks the Vulkan backend to say no when its GPU renderer cannot be set up (`gfx_vk_need_renderer`,
+   `gvk_ready`), so OpenGL and its GPU renderer get their turn; `vulkan` keeps Vulkan and the CPU draws the picture. `gl`
+   never tries Vulkan. Each choice and each step down is printed (`[video] renderer = auto: Vulkan cannot be used here; trying
+   OpenGL`, `[video] renderer = auto: using OpenGL`). Checked with a test hook, `DMRECOMP_GFX_TEST` (read once at start, a
+   list): `noloader` behaves like a machine without Vulkan, `norenderer` like a device without a depth-stencil format, `nogl`
+   like a machine without OpenGL 3.3. Eleven runs
+   (the three values, with and without each fault, `gpu_gl` 0 and 1) each picked the backend described here, and an unknown
+   value is refused. Scripted runs under `auto` at plain 2x give the OpenGL renderer's shots exactly (BMX 96 of 96, MR 121 of
+   121). With `nogl` added, six more runs reached the software stretch from each of the three values and kept running. The
+   launcher's Video settings have `renderer` and `gpu_gl` (launcher version 7). The SDL front end is compile-checked only
+   (gcc under WSL, the seven runtime files this touches, no warnings). Not done: the default is still `gl` (changing it waits
+   for phase 6); the picture the software stretch shows after a step down was not compared; nothing was run on other
+   hardware or on Linux.
 
 Rough total: 5 to 8 weeks of focused work for phases 1 to 6 if the hardware is at hand, phase 3 being the optional one.
 

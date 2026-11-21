@@ -40,7 +40,7 @@ static int key(int k) { return k && plat_key(k); }
    the console picture; F6/F7/F8/F11 change the display while playing. */
 int g_fullscreen, g_integer_scale, g_filter, g_aspect;   /* filter: 0 nearest, 1 smooth; aspect: 0 = 4:3, 1 = stretch */
 int g_scale_auto = 1;   /* step the internal resolution down when the machine cannot keep up */
-int g_renderer;                                           /* 0 = OpenGL (default), 1 = Vulkan first (early prototype); a backend that cannot start falls back */
+int g_renderer;                                           /* 0 = gl (default), 1 = vulkan, 2 = auto: see host_init; a backend that cannot start falls back */
 int g_upscale, g_fsr_sharp = 80;                          /* upscale: 0 = plain, 1 = FSR 1; sharpness 0..100 */
 static int win_w = 960, win_h = 720;                      /* window_size */
 extern int g_ws_kq; extern unsigned g_gte_rtp;
@@ -96,7 +96,7 @@ static char *trim(char *s) {
 /* one "name = value" setting; returns 0 when the name or value is not understood */
 int host_set_option(const char *name, const char *val) {
     if (!_stricmp(name, "scale")) { int v = atoi(val); if (v != 1 && v != 2 && v != 4) return 0; g_gpu_scale = v; return 1; }
-    if (!_stricmp(name, "renderer")) { if (!_stricmp(val, "gl")) g_renderer = 0; else if (!_stricmp(val, "vulkan")) g_renderer = 1; else return 0; return 1; }
+    if (!_stricmp(name, "renderer")) { if (!_stricmp(val, "gl")) g_renderer = 0; else if (!_stricmp(val, "vulkan")) g_renderer = 1; else if (!_stricmp(val, "auto")) g_renderer = 2; else return 0; return 1; }
     if (!_stricmp(name, "gpu_gl")) { g_gpu_gl = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "scale_auto")) { g_scale_auto = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "filter")) { if (!_stricmp(val, "nearest")) g_filter = 0; else if (!_stricmp(val, "smooth")) g_filter = 1; else return 0; return 1; }
@@ -148,7 +148,8 @@ static void config_write_default(const char *path) {
                "scale = 1\n"
                "# 1 = drop to a lower scale by itself when the game cannot hold full speed at 2 or 4\n"
                "scale_auto = 1\n"
-               "# Graphics API that shows the picture: gl = OpenGL, vulkan = try Vulkan first (early prototype; falls back to OpenGL)\n"
+               "# Graphics API that shows the picture: gl = OpenGL, vulkan = Vulkan first (early prototype; falls back to OpenGL),\n"
+               "# auto = Vulkan when it can do everything asked (with gpu_gl = 1 that includes drawing on the graphics card), else OpenGL\n"
                "renderer = gl\n"
                "# 1 = at scale 2 or 4, draw the picture on the graphics card instead of the processor (early prototype)\n"
                "gpu_gl = 0\n"
@@ -303,13 +304,19 @@ void host_init(void) {
     plat_init();
     last_frame = plat_now_ms();
     fb = calloc((size_t)1024 * 4 * 512 * 4, 4);   /* room for the largest internal resolution */
-    /* the graphics backend is chosen once, here: OpenGL when the platform can give a context, the software stretch otherwise */
-    const GfxBackend *order[3] = { &gfx_gl_backend, &gfx_soft_backend, NULL };
-    if (g_renderer == 1) { order[0] = &gfx_vk_backend; order[1] = &gfx_gl_backend; order[2] = &gfx_soft_backend; }
+    /* the graphics backend is chosen once, here. renderer = gl: OpenGL, else the software stretch. renderer = vulkan: Vulkan
+       first, whatever it can do there (without its GPU renderer the CPU draws the picture). renderer = auto: Vulkan when it can
+       do all that is asked, which with gpu_gl = 1 includes the GPU renderer; otherwise OpenGL gets its turn. Each step down is said. */
+    static const char *const rname[3] = { "gl", "vulkan", "auto" };
+    const GfxBackend *order[4] = { &gfx_gl_backend, &gfx_soft_backend, NULL, NULL };
+    if (g_renderer) { order[0] = &gfx_vk_backend; order[1] = &gfx_gl_backend; order[2] = &gfx_soft_backend; }
+    gfx_vk_need_renderer = g_renderer == 2 && g_gpu_gl;
     for (int i = 0; order[i]; i++) {
         if (order[i]->init(win_w, win_h, GAME_NAME " (static recomp)")) { gfx = order[i]; break; }
         if (!order[i + 1]) { plat_message("Cannot open a window."); plat_exit(1); }
+        fprintf(stderr, "[video] renderer = %s: %s cannot be used here; trying %s\n", rname[g_renderer], order[i]->name, order[i + 1]->name);
     }
+    fprintf(stderr, "[video] renderer = %s: using %s\n", rname[g_renderer], gfx->name);
     show_settings();
     if (g_fullscreen || plat_wants_fullscreen()) set_fullscreen(1);
     plat_audio_init();

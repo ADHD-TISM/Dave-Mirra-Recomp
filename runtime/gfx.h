@@ -35,5 +35,6 @@ typedef struct GfxBackend {
 } GfxBackend;
 
 extern const GfxBackend gfx_gl_backend, gfx_vk_backend, gfx_soft_backend;
-extern const GfxBackend *gfx;         /* the backend in use; the software one until host_init has chosen */
+extern int gfx_vk_need_renderer;      /* host_init sets it before the Vulkan backend's init when Vulkan is only wanted if it can run the GPU renderer too */
+extern const GfxBackend *gfx;        /* the backend in use; the software one until host_init has chosen */
 #endif
