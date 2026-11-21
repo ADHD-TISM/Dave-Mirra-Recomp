@@ -7,9 +7,11 @@
    From the repository root:
      mkdir -p build && gcc -I runtime tools/vktest.c runtime/gfx_vk.c runtime/gpu_vk.c runtime/gfx_vk_spv.c runtime/plat_win32.c \
        -o build/vktest.exe -lgdi32 -lwinmm -lopengl32 && build/vktest.exe
-   Two more runs: `vktest small` makes the vertex buffer 64 KB (DMRECOMP_VK_VBUF_KB, a test hook) so a flush has to split into several
+   Three more runs: `vktest small` makes the vertex buffer 64 KB (DMRECOMP_VK_VBUF_KB, a test hook) so a flush has to split into several
    submits, and `vktest decline` checks that the backend says no, with no device left, when it is asked to start only if the
-   renderer can run and the renderer cannot (renderer = auto with gpu_gl = 1; DMRECOMP_GFX_TEST=norenderer fakes the failure).
+   renderer can run and the renderer cannot (renderer = auto with gpu_gl = 1; DMRECOMP_GFX_TEST=norenderer fakes the failure),
+   and that it starts again without the fault; `vktest keep` checks that asked plainly (renderer = vulkan) it starts with the
+   same fault and only its renderer says no.
    DMRECOMP_VK_VALIDATE=1 runs any of them under the validation layer if that is installed. */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -235,7 +237,8 @@ static void check_detail(const char *what) {   /* a triangle finer than vram's p
 
 /* ---- the cases of tools/gltest.c (copies, overlaps that smear and that do not, hi-res detail, the mask bit), on this renderer ---- */
 /* not inlined: clang 22.1.8 at -O2 vectorises this loop wrongly when it is inlined with constant arguments whose source
-   and destination overlap across the x wrap (pixels in the wrapped part come out wrong; a wrap alone is fine); gcc 16.2, which builds the game, and gpu.c's own loop are not affected */
+   and destination overlap across the x wrap (pixels in the wrapped part come out wrong; a wrap alone is fine); gcc 16.2,
+   which builds the game, and gpu.c's own loop are not affected */
 __attribute__((noinline)) static void cpu_copy(int sx, int sy, int dx, int dy, int w, int h) {   /* what gpu.c does, a pixel at a time */
     for (int yy = 0; yy < h; yy++) for (int xx = 0; xx < w; xx++)
         vram[((dy + yy) & 511) * 1024 + ((dx + xx) & 1023)] = vram[((sy + yy) & 511) * 1024 + ((sx + xx) & 1023)];
@@ -402,6 +405,7 @@ static void check_mask_textured(const char *what) {
 
 int main(int argc, char **argv) {
     int small = argc > 1 && !strcmp(argv[1], "small");
+    _putenv("DMRECOMP_GFX_TEST=");   /* a fault left set in the shell from testing the game must not reach these checks */
     if (argc > 1 && !strcmp(argv[1], "decline")) {
         _putenv("DMRECOMP_GFX_TEST=norenderer");
         gfx_vk_need_renderer = 1;
@@ -413,6 +417,14 @@ int main(int argc, char **argv) {
         int again = be->init(960, 720, "vktest") && be->r_init(2);
         printf("%-50s %s\n", "starts, with its renderer, without the fault", again ? "ok" : "FAIL");
         return on || left || !again;
+    }
+    if (argc > 1 && !strcmp(argv[1], "keep")) {   /* asked for plainly (renderer = vulkan), it starts with the same fault: the CPU draws */
+        _putenv("DMRECOMP_GFX_TEST=norenderer");
+        gfx_vk_need_renderer = 0;
+        int on = be->init(960, 720, "vktest"), r = on && be->r_init(2);
+        printf("%-50s %s\n", "backend starts although the renderer cannot run", on ? "ok" : "FAIL");
+        printf("%-50s %s\n", "its renderer says no", r ? "FAIL" : "ok");
+        return !on || r;
     }
     _putenv(small ? "DMRECOMP_VK_VBUF_KB=64" : "DMRECOMP_VK_VBUF_KB=");
     if (!be->init(960, 720, "vktest")) { printf("the Vulkan backend cannot start\n"); return 2; }
