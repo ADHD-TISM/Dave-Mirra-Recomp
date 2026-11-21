@@ -146,10 +146,11 @@ in `COLOR_ATTACHMENT_OPTIMAL` (and the depth-stencil in its attachment layout) i
    the gcc builds (BMX 97 of 97, MR 94 of 94 shots). After the removal `vktest` passes in its two modes (normal and `small`),
    and a scripted run of each game at plain 2x under Vulkan with the switch unset gives shots identical to the OpenGL ones
    (BMX 96 of 96, MR 120 of 120). Not tested: other hardware, the SDL front end, the out-of-memory paths (no test forces
-   them), and the validation layer after the changes of step 6 (that run was made later: see phase 6 in the roadmap). A side finding: clang 22.1.8 at `-O2` compiles the test
-   model's copy loop wrongly when it is inlined with constant arguments whose source and destination overlap across the x
-   wrap (`gltest` and `vktest` then report one false failure), so the model is now marked `noinline`; gcc 16.2, which builds
-   the game, and `gpu.c`'s own loop give the right result at every level tried (3000 random copies).
+   them), and the validation layer after the changes of step 6 (that run was made later: see phase 6 in the roadmap). A side
+   finding: clang 22.1.8 at `-O2` compiles the test model's copy loop wrongly when it is inlined with constant arguments
+   whose source and destination overlap across the x wrap (`gltest` and `vktest` then report one false failure), so the model
+   is now marked `noinline`; gcc 16.2, which builds the game, and `gpu.c`'s own loop give the right result at every level
+   tried (3000 random copies).
 
 Hardware validation (NVIDIA, Intel, Mesa, the Steam Deck, validation layers) is phase 6; the validation layers are not on this
 machine, so step 1 also added an opt-in switch (`DMRECOMP_VK_VALIDATE=1`, read once at start) that asks for

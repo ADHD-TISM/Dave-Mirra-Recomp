@@ -255,12 +255,17 @@ void plat_audio_push(const int16_t *lr, int frames) {
 double plat_now_ms(void) { return (double)SDL_GetPerformanceCounter() * 1000.0 / (double)SDL_GetPerformanceFrequency(); }
 void plat_sleep_ms(int ms) { SDL_Delay((Uint32)ms); }
 void plat_message(const char *text) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "dmrecomp", text, win); }
-/* The sound device is not closed here. Closing it waits for SDL's sound thread, and that can block for good when the sound
-   server has stalled (seen with PulseAudio under WSLg after some minutes of --turbo: the game stayed alive, without its
-   picture, until it was killed). The window and the display mode are given back; the system takes the rest when the
-   process ends, which is why this leaves through _Exit and flushes the output itself. */
+/* The sound device is not closed here. Closing it waits for SDL's sound thread, and that wait did not end in one case: SDL
+   2.0.20 on PulseAudio under WSLg, after some minutes of --turbo (which sends no sound, so the device sits idle). The game then
+   stayed alive, without its picture, until it was killed. At normal speed the same build ended as it should, and with
+   SDL_AUDIODRIVER=dummy too; whether the sound server or SDL's PulseAudio code is at fault is not known. So: rumble is
+   stopped and the pads are closed (which is what stops it for good), the window and the display mode are given back, and the
+   process leaves through _Exit, not exit: exit would run the libraries' own clean-up while the sound thread is still
+   there. Output is flushed here because _Exit does not do it. Nothing else is written when the game ends. */
 void plat_exit(int code) {
     if (adev) SDL_PauseAudioDevice(adev, 1);
+    for (int i = 0; i < 2; i++) if (pads[i]) { SDL_GameControllerRumble(pads[i], 0, 0, 0); SDL_GameControllerClose(pads[i]); pads[i] = NULL; }
+    SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
     fflush(NULL);
     _Exit(code);
