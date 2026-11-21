@@ -1,2 +1,2 @@
 # The Khronos headers are kept byte for byte as fetched (SOURCE.md lists their hashes): no line-ending conversion.
-runtime/vulkan/* -text
+runtime/vulkan/** -text
