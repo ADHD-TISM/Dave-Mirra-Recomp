@@ -141,21 +141,30 @@ void plat_init(void) {
     if (xi) xinput_get = (XInputGetState_t)(void *)GetProcAddress(xi, "XInputGetState");
     if (xi) xinput_set = (XInputSetState_t)(void *)GetProcAddress(xi, "XInputSetState");
 }
-int plat_video_init(int w, int h, const char *title) {
+static HGLRC glrc;
+void plat_surface_close(void) {
+    if (glrc) { wglMakeCurrent(NULL, NULL); wglDeleteContext(glrc); glrc = NULL; }
+    if (wnd) { if (dc) ReleaseDC(wnd, dc); DestroyWindow(wnd); }
+    wnd = NULL; dc = NULL;
+}
+int plat_surface_open(int kind, int w, int h, const char *title) {
+    plat_surface_close();   /* a pixel format can be set on a window only once, so each attempt gets a new window */
     WNDCLASSA wc = { 0 };
     wc.lpfnWndProc = wndproc; wc.hInstance = GetModuleHandleA(NULL);
     wc.lpszClassName = "dmrecomp"; wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.style = CS_OWNDC;
-    RegisterClassA(&wc);
+    RegisterClassA(&wc);   /* fails harmlessly when the class exists from an earlier attempt */
     RECT r = { 0, 0, w, h };
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
     wnd = CreateWindowA("dmrecomp", title, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                         CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
-    PIXELFORMATDESCRIPTOR pfd = { sizeof pfd, 1, PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER, PFD_TYPE_RGBA, 32 };
+    if (!wnd) { fprintf(stderr, "FATAL: cannot open a window\n"); ExitProcess(1); }
     dc = GetDC(wnd);
+    if (kind != PLAT_SURF_GL) return 1;
+    PIXELFORMATDESCRIPTOR pfd = { sizeof pfd, 1, PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER, PFD_TYPE_RGBA, 32 };
     int pf = ChoosePixelFormat(dc, &pfd);
-    if (!pf || !SetPixelFormat(dc, pf, &pfd)) return 0;
-    HGLRC rc = wglCreateContext(dc);
-    if (!rc || !wglMakeCurrent(dc, rc)) return 0;
+    if (!pf || !SetPixelFormat(dc, pf, &pfd)) { plat_surface_close(); return 0; }
+    glrc = wglCreateContext(dc);
+    if (!glrc || !wglMakeCurrent(dc, glrc)) { plat_surface_close(); return 0; }
     /* pacing is done by host_frame, so do not also wait for the monitor */
     typedef BOOL (WINAPI *swap_fn)(int);
     swap_fn swap = (swap_fn)(void *)wglGetProcAddress("wglSwapIntervalEXT");

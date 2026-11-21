@@ -301,7 +301,10 @@ void host_init(void) {
     fb = calloc((size_t)1024 * 4 * 512 * 4, 4);   /* room for the largest internal resolution */
     /* the graphics backend is chosen once, here: OpenGL when the platform can give a context, the software stretch otherwise */
     gfx = &gfx_gl_backend;
-    if (!gfx->init(win_w, win_h, GAME_NAME " (static recomp)")) { gfx = &gfx_soft_backend; gfx->init(win_w, win_h, GAME_NAME " (static recomp)"); }
+    if (!gfx->init(win_w, win_h, GAME_NAME " (static recomp)")) {
+        gfx = &gfx_soft_backend;
+        if (!gfx->init(win_w, win_h, GAME_NAME " (static recomp)")) { plat_message("Cannot open a window."); plat_exit(1); }
+    }
     show_settings();
     if (g_fullscreen || plat_wants_fullscreen()) set_fullscreen(1);
     plat_audio_init();

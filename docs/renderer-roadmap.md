@@ -1,8 +1,8 @@
 # Renderer roadmap: adding Vulkan next to OpenGL
 
 Status: plan. Phase 1 (finishing the OpenGL path) is in progress: its tests are written, the NVIDIA and Intel runs are not
-done. Phase 2 (the backend seam) is mostly done: the window picture and the GPU renderer now sit behind `runtime/gfx.h`;
-window and surface creation has not moved yet. Phases 3 to 7 are not started. Estimates are rough and are not promises.
+done. Phase 2 (the backend seam) is done: the window, its surface, the window picture and the GPU renderer all sit behind
+`runtime/gfx.h`. Phases 3 to 7 are not started. Estimates are rough and are not promises.
 
 ## Goal
 
@@ -36,9 +36,10 @@ needed today.
 
 ## Where OpenGL is today
 
-- `runtime/plat_win32.c` and `runtime/plat_sdl.c` own the GL context and the window it lives in: `plat_video_init` creates the
-  window and the context (`SDL_WINDOW_OPENGL`, or a pixel format on Win32), `plat_swap` shows the frame, and `plat_gl_proc`
-  looks up entry points (`runtime/host.h`). `plat_soft_present` is the existing no-OpenGL path.
+- `runtime/plat_win32.c` and `runtime/plat_sdl.c` own the window and its surface: `plat_surface_open(kind, ...)` creates both for one kind of surface
+  (`PLAT_SURF_GL`: a window with a compatibility context, `SDL_WINDOW_OPENGL` or a pixel format on Win32; `PLAT_SURF_SOFT`: a
+  plain window) and `plat_surface_close` removes them. `plat_swap` shows the frame, and `plat_gl_proc` looks up entry points
+  (`runtime/host.h`). `plat_soft_present` is the existing no-OpenGL path.
 - `runtime/gfx_gl.c` (the OpenGL backend of `runtime/gfx.h`) draws the window picture with GL: upload of the CPU picture, the
   sharp and smooth filter, FSR (two GLSL 1.20 shaders), and the `--shot-window` grab. `runtime/gfx.c` is the software
   backend. `runtime/host_common.c` builds each frame and hands it to `gfx->present`; `runtime/gpu.c` reaches the GPU
@@ -73,8 +74,11 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    `host_init`. Old and new builds were compared on the same scripted runs: identical screenshots with the CPU picture and with
    the GPU picture, identical window grabs (`--shot-window`, FSR and the smooth filter on) with both, and with the OpenGL
    backend forced off the software path gives the same picture as before.
-   *Not done:* window and surface creation (`plat_video_init` in `plat_win32.c` and `plat_sdl.c`, which still makes the GL
-   context) and recreating the window when falling back; both are needed before a Vulkan backend can exist (phase 4).
+   Window and surface creation moved too: each backend's `init` calls `plat_surface_open` for its own kind of surface, and a
+   failed attempt leaves no window, so the next backend gets a fresh one (a Win32 window takes a pixel format only once). A
+   Vulkan backend adds a kind (a window with `SDL_WINDOW_VULKAN` on SDL, a plain `HWND` on Win32) and nothing else changes. On
+   Windows the same scripted runs gave identical screenshots and window grabs before and after, and a GL attempt forced to
+   fail falls back to the software window with the same pictures; the SDL front end was compile-checked only.
    *Exit:* `gltest` and the scripted run give identical results before and after.
 3. **Modernise GL as a stepping stone** (about a week, optional). Replace `glBegin` and the fixed pipeline with vertex buffers
    and core-profile shaders. This is most of the porting work for Vulkan anyway, it drops the compatibility-profile

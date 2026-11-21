@@ -290,7 +290,7 @@ static void gl_present(const GfxFrame *f) {
 }
 
 static int gfx_gl_init(int w, int h, const char *title) {
-    if (!plat_video_init(w, h, title)) return 0;   /* no OpenGL context: the platform has made a plain window instead */
+    if (!plat_surface_open(PLAT_SURF_GL, w, h, title)) return 0;   /* no OpenGL context: nothing is left open */
     gl_setup();
     return 1;
 }

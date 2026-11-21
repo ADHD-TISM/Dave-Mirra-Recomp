@@ -27,23 +27,32 @@ void plat_init(void) {
 }
 
 /* ------------------------------------------------------------ video --- */
-int plat_video_init(int w, int h, const char *title) {
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    /* the picture is drawn with OpenGL 1.x calls plus optional 2.0 shaders: ask for a compatibility context */
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-    win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
-    if (win) {
-        glc = SDL_GL_CreateContext(win);
-        if (glc) { SDL_GL_SetSwapInterval(0); return 1; }   /* pacing is done by host_frame, so do not also wait for the monitor */
-        SDL_DestroyWindow(win);
+void plat_surface_close(void) {
+    if (ren) { if (tex) SDL_DestroyTexture(tex); tex = NULL; SDL_DestroyRenderer(ren); ren = NULL; }
+    if (glc) { SDL_GL_DeleteContext(glc); glc = NULL; }
+    if (win) { SDL_DestroyWindow(win); win = NULL; }
+}
+int plat_surface_open(int kind, int w, int h, const char *title) {
+    plat_surface_close();
+    if (kind == PLAT_SURF_GL) {
+        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+        /* the picture is drawn with OpenGL 1.x calls plus optional 2.0 shaders: ask for a compatibility context */
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+        win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+        if (win) {
+            glc = SDL_GL_CreateContext(win);
+            if (glc) { SDL_GL_SetSwapInterval(0); return 1; }   /* pacing is done by host_frame, so do not also wait for the monitor */
+        }
+        fprintf(stderr, "[video] no OpenGL (%s); drawing without it\n", SDL_GetError());
+        plat_surface_close();
+        return 0;
     }
-    fprintf(stderr, "[video] no OpenGL (%s); drawing without it\n", SDL_GetError());
     win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, SDL_WINDOW_RESIZABLE);
     if (!win) { fprintf(stderr, "FATAL: cannot open a window: %s\n", SDL_GetError()); exit(1); }
     ren = SDL_CreateRenderer(win, -1, 0);
     if (!ren) { fprintf(stderr, "FATAL: cannot draw in the window: %s\n", SDL_GetError()); exit(1); }
-    return 0;
+    return 1;
 }
 void plat_set_title(const char *title) { SDL_SetWindowTitle(win, title); }
 /* Steam Deck Game Mode runs every app inside gamescope, which shows one fullscreen window: start in fullscreen there. */

@@ -5,7 +5,7 @@
 #include "host.h"
 #include "gfx.h"
 
-static int soft_init(int w, int h, const char *title) { (void)w; (void)h; (void)title; return 1; }
+static int soft_init(int w, int h, const char *title) { return plat_surface_open(PLAT_SURF_SOFT, w, h, title); }
 static void soft_present(const GfxFrame *f) { plat_soft_present(f->fb, f->fb_w, f->fb_h, f->cw, f->ch, f->w, f->h, f->filter); }
 static const uint32_t *soft_grab(int *w, int *h) { (void)w; (void)h; return NULL; }
 static int soft_r_init(int scale) { (void)scale; return 0; }
