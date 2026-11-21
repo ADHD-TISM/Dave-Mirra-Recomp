@@ -88,7 +88,9 @@ static void check_present_fsr(const char *what, int bx, int by, int bw, int bh) 
     be->present(&f);
     int gw = 0, gh = 0; const uint32_t *g = be->grab(&gw, &gh);
     if (!g) { printf("%-50s FAIL (no window grab)\n", what); fails++; return; }
-    static uint32_t a[2000 * 1500]; memcpy(a, g, (size_t)gw * gh * 4);
+    static uint32_t a[2000 * 1500];
+    if ((long)gw * gh > 2000 * 1500) { printf("%-50s skipped (the window is too big for this check)\n", what); return; }
+    memcpy(a, g, (size_t)gw * gh * 4);
     be->r_read(bx, by, bw, bh, buf);   /* the same picture, as the CPU would send it */
     GfxFrame c = f; c.on_gpu = 0; c.fb = buf;
     be->present(&c);
@@ -182,6 +184,33 @@ static void check_many(const char *what, int n) {
         if ((buf[(size_t)j * area.w * S + i] & 0xffffff) != canvas[(j / S) * area.w + i / S]) bad++;
     report(what, bad, (long)area.w * S * area.h * S);
 }
+/* rows rewritten on the CPU, rectangles, then a blit of those rows, all in one flush: with a small vertex buffer the flush splits, the
+   upload goes with the first batch and the blit (last, in a later batch) has to find the rows in vram */
+static void check_split_upload(const char *what, int n) {
+    upload_all();
+    Box area = { 200, 100, 320, 300 };
+    static unsigned canvas[300 * 320];
+    for (int j = 0; j < area.h; j++) for (int i = 0; i < area.w; i++) canvas[j * area.w + i] = want(area.x + i, area.y + j);
+    randomise(250, 11, 77);   /* the CPU changes these rows: vram has them, the picture does not */
+    be->r_dirty(250, 260);
+    srand(5);
+    for (int k = 0; k < n; k++) {
+        int w = 4 + rand() % 40, h = 4 + rand() % 30, x = area.x + rand() % (area.w - w), y = area.y + rand() % (area.h - h);
+        int r = rand() & 255, g = rand() & 255, b = rand() & 255;
+        draw(GK_RECT, -1, x, y, w, h, r, g, b, NULL);
+        for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) canvas[(j - area.y) * area.w + (i - area.x)] = reduce(r, g, b);
+    }
+    GPrim b; memset(&b, 0, sizeof b); b.kind = GK_BLIT; b.x = 0; b.y = 250; b.w = 1024; b.h = 11;
+    be->r_submit(&b);
+    for (int j = 250; j < 261; j++) for (int i = area.x; i < area.x + area.w; i++) canvas[(j - area.y) * area.w + (i - area.x)] = want(i, j);
+    be->r_flush();
+    memset(buf, 0xAA, sizeof(unsigned) * (size_t)area.w * S * area.h * S);
+    be->r_read(area.x, area.y, area.w, area.h, buf);
+    long bad = 0;
+    for (int j = 0; j < area.h * S; j++) for (int i = 0; i < area.w * S; i++)
+        if ((buf[(size_t)j * area.w * S + i] & 0xffffff) != canvas[(j / S) * area.w + i / S]) bad++;
+    report(what, bad, (long)area.w * S * area.h * S);
+}
 static void check_detail(const char *what) {   /* a triangle finer than vram's pixels: its diagonal edge makes blocks that are not one colour */
     upload_all();
     GPrim p; memset(&p, 0, sizeof p); p.kind = GK_TRI; p.clip[2] = 1023; p.clip[3] = 511;
@@ -204,8 +233,8 @@ static void check_detail(const char *what) {   /* a triangle finer than vram's p
 
 int main(int argc, char **argv) {
     int gate = argc > 1 && !strcmp(argv[1], "gate"), small = argc > 1 && !strcmp(argv[1], "small");
-    if (!gate) _putenv("DMRECOMP_VK_RENDERER=1");   /* the renderer is off for the game until the plan's last step */
-    if (small) _putenv("DMRECOMP_VK_VBUF_KB=64");
+    _putenv(gate ? "DMRECOMP_VK_RENDERER=" : "DMRECOMP_VK_RENDERER=1");   /* the renderer is off for the game until the plan's last step */
+    _putenv(small ? "DMRECOMP_VK_VBUF_KB=64" : "DMRECOMP_VK_VBUF_KB=");
     if (!be->init(960, 720, "vktest")) { printf("the Vulkan backend cannot start\n"); return 2; }
     if (gate) {
         int on = be->r_init(2);
@@ -242,13 +271,14 @@ int main(int argc, char **argv) {
         if (kinds[k] == GK_PIX) check_flat(name, GK_PIX, m, 333, 222, 1, 1, 250, 120, 33, NULL);
         else check_flat(name, kinds[k], m, 300, 200, 111, 77, 250, 120, 33, NULL);
     }
-    check_flat("fill (the blend is ignored)", GK_FILL, 1, 300, 200, 111, 77, 250, 120, 33, NULL);
+    check_flat("fill", GK_FILL, -1, 300, 200, 111, 77, 250, 120, 33, NULL);
     check_flat("rectangle, black on a bright area (subtract)", GK_RECT, 2, 300, 200, 64, 64, 255, 255, 255, NULL);
     { int clip[4] = { 340, 220, 380, 250 }; check_flat("rectangle clipped to a drawing area", GK_RECT, -1, 300, 200, 111, 77, 10, 220, 90, clip); }
     { int clip[4] = { 340, 220, 380, 250 }; check_flat("blended triangles clipped to a drawing area", GK_TRI, 1, 300, 200, 111, 77, 60, 60, 200, clip); }
     { int clip[4] = { 500, 500, 100, 100 }; check_flat("an empty drawing area draws nothing", GK_RECT, -1, 300, 200, 111, 77, 10, 220, 90, clip); }
     check_many("many primitives in one flush (200)", 200);
     check_many("many primitives in one flush (1500)", 1500);
+    check_split_upload("rows to upload, 400 rectangles, then a blit (one flush)", 400);
     check_detail("a triangle finer than vram's pixels");
     /* the presenter */
     upload_all();   /* the rows rewritten above are in the picture only where they were blitted */

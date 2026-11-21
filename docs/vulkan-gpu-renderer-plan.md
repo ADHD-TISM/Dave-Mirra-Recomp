@@ -74,14 +74,26 @@ in `COLOR_ATTACHMENT_OPTIMAL` (and the depth-stencil in its attachment layout) i
    dropped at a batch boundary, the average's blend factor) each make it fail. The step also fixes what the step-2 review found: a failed
    target no longer disables the renderer for the session, a failed set-up frees what it had made, a failed submit keeps the
    dirty rows and replaces the fence, `runs()` is shared (`gv_runs`).
-   *Seen, not yet tested:* with `DMRECOMP_VK_RENDERER=1`, `renderer = vulkan` and `gpu_gl = 1` the game already draws textured and
-   translucent primitives through this path and the frame looks right (a Freestyle BMX run at 2x, one frame looked at); step 4
-   is the measured comparison. Copies are still not drawn.
+   Review fixes after step 3 (all in `gpu_vk.c` unless noted): an out-of-memory failure drops only the run it happened in; nothing
+   draws, presents or reads while there is no target; the fence made again after a failed submit is checked (a device that does not
+   recover turns the renderer off); every blend pipeline is made at set-up, so a draw never meets a missing one; `GV_MAX_VERTS`
+   names the bound of 24 (`gpu_emit.h`); `vktest` clears the two environment variables it depends on and has a new check, rows to
+   upload plus 400 rectangles plus a blit in one flush (43 checks; with the upload skipped in a batch that has draws it fails 37).
+   *Step 4 needed no new code:* the decode shader was ported whole in step 2 and the run grouping and two-pass translucency came
+   with step 3, so textured drawing was tested by the measured comparison below.
 4. **Textured decode.** Port `fs_src` (4, 8 and 15-bit textures, palettes, modulation, dithering, the texture window) and the
    two-pass translucency. *Test:* the scripted run against the CPU renderer on both games, and the grab comparison against the
    OpenGL GPU renderer (same scale, same script): the worst frame is held to the OpenGL baseline: against the CPU renderer 0.6 to 0.9 % of the pixels differ by more than 16 of
    255 in the worst frame (Freestyle BMX at 2x, the 261-frame `test-kit/lvl.txt` run on the Radeon: worst 0.86 %, average 0.23 %,
    see `docs/gpu-renderer-testing.md`), and the Vulkan renderer must stay within that, and close to the OpenGL one.
+   *Done (Windows, Radeon, scale 2, the 261-frame script, a shot every 300 frames, the CPU renderer, the OpenGL GPU renderer and the
+   Vulkan GPU renderer run side by side):* Freestyle BMX, 71 shots in common with the CPU run: the OpenGL GPU renderer is worst
+   0.86 % and on average 0.24 % of pixels differing by more than 16 of 255, and the Vulkan one gives exactly the same numbers; the
+   Vulkan and OpenGL GPU shots are identical in all 83 that both runs made. Maximum Remix (built from a copy of the repo with its
+   own generated code, the same script): 84 shots in common with the CPU run, worst 0.62 %, average 0.25 % for both GPU renderers;
+   Vulkan against OpenGL 89 of 89 identical. So the step's exit test holds at the shots taken. What it does not show: only one
+   frame in 300 is compared, copies are not drawn yet by the Vulkan renderer (the runs print that they were asked for), and the
+   mask bit is not drawn (neither game checks it in these runs).
 5. **Copies and the mask bit.** `copy_box` (with the smear rule that turns overlapping copies into blits), the stencil as bit 15
    and its rebuild when check-mask turns on. *Test:* all 31 `gltest` checks in `vktest`.
 6. **FSR and the rest of the path.** FSR on a GPU picture, 2x and 4x, `gpu_gl = 1` under `renderer = vulkan`; playtest of both
