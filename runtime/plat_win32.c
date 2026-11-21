@@ -155,7 +155,7 @@ int plat_surface_open(int kind, int w, int h, const char *title) {
     RegisterClassA(&wc);   /* fails harmlessly when the class exists from an earlier attempt */
     RECT r = { 0, 0, w, h };
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
-    /* hidden until the surface works: a failed attempt then never flashes a window or takes the keyboard focus */
+    /* hidden until plat_surface_show: a failed attempt, or a backend that cannot use the surface, never flashes a window or takes the keyboard focus */
     wnd = CreateWindowA("dmrecomp", title, WS_OVERLAPPEDWINDOW,
                         CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
     if (!wnd) { fprintf(stderr, "[video] cannot open a window\n"); return 0; }
@@ -179,9 +179,9 @@ int plat_surface_open(int kind, int w, int h, const char *title) {
         swap_fn swap = (swap_fn)(void *)wglGetProcAddress("wglSwapIntervalEXT");
         if (swap) swap(0);
     } else if (kind != PLAT_SURF_SOFT) { plat_surface_close(); return 0; }   /* a kind this platform does not know */
-    ShowWindow(wnd, SW_SHOW);
     return 1;
 }
+void plat_surface_show(void) { if (wnd) ShowWindow(wnd, SW_SHOW); }
 void plat_client_size(int *w, int *h) { RECT cr; GetClientRect(wnd, &cr); *w = cr.right; *h = cr.bottom; }
 void plat_swap(void) { SwapBuffers(dc); }
 void *plat_gl_proc(const char *name) { return (void *)wglGetProcAddress(name); }

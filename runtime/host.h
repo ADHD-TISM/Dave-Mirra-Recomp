@@ -31,6 +31,7 @@ void plat_init(void);               /* before anything else */
 enum { PLAT_SURF_GL = 1, PLAT_SURF_SOFT = 2 };
 int  plat_surface_open(int kind, int w, int h, const char *title);
 void plat_surface_close(void);                           /* the window and its surface; no-op when none is open */
+void plat_surface_show(void);                            /* the window stays hidden until the backend has what it needs, then this shows it */
 void plat_set_title(const char *title);
 int  plat_wants_fullscreen(void);   /* the system runs this as a fullscreen app (Steam Deck Game Mode) */
 void plat_set_fullscreen(int on, int w, int h);          /* w = 0: the desktop's own resolution */

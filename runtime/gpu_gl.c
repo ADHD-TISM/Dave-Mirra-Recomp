@@ -172,7 +172,7 @@ static int load(void) {
 
 static int setup_once(void) {
     if (!load()) { fprintf(stderr, "[gpu_gl] this graphics driver lacks OpenGL shaders or framebuffers (it needs an OpenGL 3.3 context); using the CPU picture\n"); return -1; }
-    prog = gls_program(vs_src, fs_src, "[gpu_gl] picture");
+    prog = gls_program(vs_src, fs_src, "picture");
     if (!prog) { fprintf(stderr, "[gpu_gl] the picture shaders are not usable; using the CPU picture\n"); return -1; }
     u_target = q_GetUniformLocation(prog, "target"); u_vram = q_GetUniformLocation(prog, "vram");
     u_pass = q_GetUniformLocation(prog, "pass"); u_alpha = q_GetUniformLocation(prog, "alpha");
@@ -226,21 +226,26 @@ void glg_dirty(int y0, int y1) {
 }
 
 /* ------------------------------------------------------------- drawing --- */
-static GlsVert *vb; static int vn, vcap;   /* the vertices of the run being drawn */
+static GlsVert *vbuf; static int vn, vcap, vfail;   /* the vertices of the run being drawn; vfail: out of memory, the whole run is dropped */
 static void vert(const GPrim *p, int flags, float px, float py, float r, float g, float b, float u, float v) {
+    if (vfail) return;
     if (vn == vcap) {
-        GlsVert *nb = realloc(vb, sizeof *vb * (size_t)(vcap ? vcap * 2 : 4096));
-        if (!nb) return;   /* out of memory: the primitive is dropped */
-        vb = nb; vcap = vcap ? vcap * 2 : 4096;
+        GlsVert *nb = realloc(vbuf, sizeof *vbuf * (size_t)(vcap ? vcap * 2 : 4096));
+        if (!nb) { vfail = 1; return; }   /* a half-built triangle must not be drawn: draw_verts skips the whole run */
+        vbuf = nb; vcap = vcap ? vcap * 2 : 4096;
     }
-    GlsVert *o = &vb[vn++];
+    GlsVert *o = &vbuf[vn++];
     o->x = px; o->y = py;
     o->c[0] = r / 255.0f; o->c[1] = g / 255.0f; o->c[2] = b / 255.0f;
     o->t0[0] = u; o->t0[1] = v; o->t0[2] = (float)p->tx; o->t0[3] = (float)p->ty;
     o->t1[0] = (float)p->cx; o->t1[1] = (float)p->cy; o->t1[2] = (float)p->depth; o->t1[3] = (float)flags;
     for (int i = 0; i < 4; i++) o->t2[i] = (float)p->tw[i];
 }
-static void draw_verts(void) { gls_draw(GL_TRIANGLES, vb, vn); vn = 0; }
+static void draw_verts(void) {
+    if (vfail) { fprintf(stderr, "[gpu_gl] out of memory for the vertices; part of a frame is not drawn\n"); vfail = 0; }
+    else gls_draw(GL_TRIANGLES, vbuf, vn);
+    vn = 0;
+}
 static void quad(const GPrim *p, int flags, float x0, float y0, float x1, float y1, float r, float g, float b,
                  float ul, float vt, float ur, float vb) {
     vert(p, flags, x0, y0, r, g, b, ul, vt); vert(p, flags, x1, y0, r, g, b, ur, vt); vert(p, flags, x1, y1, r, g, b, ur, vb);
@@ -349,7 +354,10 @@ static void copy_box(const GPrim *p, int sx, int sy, int dx, int dy, int w, int 
     }
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, sx * S, sy * S, w * S, h * S);
     unsigned plain = gls_plain_program();   /* the copy is a textured quad of the saved box */
-    if (!plain) { q_UseProgram(prog); q_BindFramebuffer(GL_FRAMEBUFFER, fbo); glBindTexture(GL_TEXTURE_2D, (GLuint)save); return; }
+    if (!plain) {   /* the game never gets here: gfx_gl_init makes this program first */
+        static int said; if (!said) { said = 1; fprintf(stderr, "[gpu_gl] the copy shader is not available; copies are not drawn\n"); }
+        q_UseProgram(prog); q_BindFramebuffer(GL_FRAMEBUFFER, fbo); glBindTexture(GL_TEXTURE_2D, (GLuint)save); return;
+    }
     gls_use(plain); glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND);
     set_stencil(p);   /* the copied pixels' own bit 15 is put back by the stencil-only pass below */
     float tx = (float)(w * S) / (float)tmp_w, ty = (float)(h * S) / (float)tmp_h;

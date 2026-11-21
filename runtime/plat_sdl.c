@@ -39,7 +39,7 @@ int plat_surface_open(int kind, int w, int h, const char *title) {
         /* the picture is drawn with core OpenGL 3.3 (vertex buffers and shaders, nothing from the fixed pipeline) */
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-        win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+        win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);   /* shown by plat_surface_show */
         if (win) {
             glc = SDL_GL_CreateContext(win);
             if (glc) { SDL_GL_SetSwapInterval(0); return 1; }   /* pacing is done by host_frame, so do not also wait for the monitor */
@@ -50,12 +50,13 @@ int plat_surface_open(int kind, int w, int h, const char *title) {
     }
     if (kind != PLAT_SURF_SOFT) return 0;   /* a kind this platform does not know */
     SDL_GL_ResetAttributes();               /* nothing left over from a failed OpenGL attempt */
-    win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, SDL_WINDOW_RESIZABLE);
+    win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
     if (!win) { fprintf(stderr, "[video] cannot open a window: %s\n", SDL_GetError()); return 0; }
     ren = SDL_CreateRenderer(win, -1, 0);
     if (!ren) { fprintf(stderr, "[video] cannot draw in the window: %s\n", SDL_GetError()); plat_surface_close(); return 0; }
     return 1;
 }
+void plat_surface_show(void) { if (win) SDL_ShowWindow(win); }
 void plat_set_title(const char *title) { SDL_SetWindowTitle(win, title); }
 /* Steam Deck Game Mode runs every app inside gamescope, which shows one fullscreen window: start in fullscreen there. */
 int plat_wants_fullscreen(void) { return getenv("SteamGamepadUI") != NULL || getenv("GAMESCOPE_WAYLAND_DISPLAY") != NULL; }

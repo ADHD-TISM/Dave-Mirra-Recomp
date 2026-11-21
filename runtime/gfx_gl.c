@@ -259,6 +259,7 @@ static int gfx_gl_init(int w, int h, const char *title) {
         return 0;
     }
     gl_setup();
+    plat_surface_show();
     return 1;
 }
 static void gfx_gl_present(const GfxFrame *f) { gl_present(f); }

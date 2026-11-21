@@ -53,7 +53,7 @@ for whoever tries it next.
 
 - **Shader compile errors.** NVIDIA's GLSL compiler is stricter than AMD's about implicit int to float
   conversions, constructors, `mod` and `floor` on mixed types. The fragment shader is `fs_src` at the top of
-  `runtime/gpu_gl.c`; the log is printed as `[video] [gpu_gl] picture shader failed: ...`.
+  `runtime/gpu_gl.c`; the log is printed as `[video] picture shader failed: ...` (or `... shaders did not link: ...`).
 - **The vram texture.** It is `GL_RG8` (low byte, high byte), read in the shader as `.rg`. Wrong textures everywhere would
   point here.
 - **The picture target.** A colour texture plus a `GL_DEPTH24_STENCIL8` texture attached as depth-stencil. If the

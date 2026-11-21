@@ -92,7 +92,8 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    checks on a real 3.3 core context. Window grabs with the CPU picture and the GPU picture, with FSR, with the smooth filter,
    were identical to the previous build. With the sharp filter at a window size that is not a whole multiple of the picture
    (512 wide into 1280), about 2 % of the pixels differ: the sample points fall exactly on texel edges there and the
-   interpolators of the fixed pipeline and of a shader round them differently; neither choice is wrong. *Cost:* a machine
+   interpolators of the fixed pipeline and of a shader round them differently; neither choice is wrong (every differing pixel
+   sits in a window column x with x mod 5 = 2, where the texel coordinate is a whole number). *Cost:* a machine
    whose driver offers less than OpenGL 3.3 (some Windows drivers for early Intel graphics stop at 3.1) no longer gets the
    OpenGL path at all, window picture included, and uses the software stretch. The SDL front end was compile-checked only.
    *Exit:* same as phase 2, on a core-profile context.

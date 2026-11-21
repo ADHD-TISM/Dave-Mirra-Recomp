@@ -30,6 +30,7 @@ static unsigned (APIENTRY *f_CreateShader)(unsigned);
 static void (APIENTRY *f_ShaderSource)(unsigned, int, const char *const *, const int *);
 static void (APIENTRY *f_CompileShader)(unsigned), (APIENTRY *f_LinkProgram)(unsigned), (APIENTRY *f_UseProgram)(unsigned), (APIENTRY *f_DeleteShader)(unsigned);
 static void (APIENTRY *f_GetShaderiv)(unsigned, unsigned, int *), (APIENTRY *f_GetProgramiv)(unsigned, unsigned, int *);
+static void (APIENTRY *f_GetProgramInfoLog)(unsigned, int, int *, char *), (APIENTRY *f_DeleteProgram)(unsigned);
 static void (APIENTRY *f_GetShaderInfoLog)(unsigned, int, int *, char *);
 static unsigned (APIENTRY *f_CreateProgram)(void);
 static void (APIENTRY *f_AttachShader)(unsigned, unsigned);
@@ -49,7 +50,7 @@ int gls_init(void) {
           && L(f_ShaderSource, "glShaderSource") && L(f_CompileShader, "glCompileShader") && L(f_LinkProgram, "glLinkProgram")
           && L(f_UseProgram, "glUseProgram") && L(f_DeleteShader, "glDeleteShader") && L(f_GetShaderiv, "glGetShaderiv")
           && L(f_GetProgramiv, "glGetProgramiv") && L(f_GetShaderInfoLog, "glGetShaderInfoLog") && L(f_CreateProgram, "glCreateProgram")
-          && L(f_AttachShader, "glAttachShader") && L(f_GetUniformLocation, "glGetUniformLocation") && L(f_Uniform1i, "glUniform1i");
+          && L(f_GetProgramInfoLog, "glGetProgramInfoLog") && L(f_DeleteProgram, "glDeleteProgram") && L(f_AttachShader, "glAttachShader") && L(f_GetUniformLocation, "glGetUniformLocation") && L(f_Uniform1i, "glUniform1i");
     if (!ok) return 0;
     f_GenVertexArrays(1, &vao); f_BindVertexArray(vao);   /* one vertex array and one buffer, bound for the life of the context */
     f_GenBuffers(1, &vbo); f_BindBuffer(GLS_ARRAY_BUFFER, vbo);
@@ -95,7 +96,12 @@ unsigned gls_program(const char *vs, const char *fs, const char *what) {
     unsigned p = f_CreateProgram(); f_AttachShader(p, v); f_AttachShader(p, f); f_LinkProgram(p);
     f_DeleteShader(v); f_DeleteShader(f);
     int ok = 0; f_GetProgramiv(p, GLS_LINK_STATUS, &ok);
-    if (!ok) { fprintf(stderr, "[video] %s shader did not link\n", what); return 0; }
+    if (!ok) {
+        char log[1024] = ""; f_GetProgramInfoLog(p, sizeof log - 1, NULL, log);
+        fprintf(stderr, "[video] %s shaders did not link: %s\n", what, log);
+        f_DeleteProgram(p);
+        return 0;
+    }
     return p;
 }
 void gls_use(unsigned prog) { if (state > 0) f_UseProgram(prog); }
