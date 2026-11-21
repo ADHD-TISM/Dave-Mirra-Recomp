@@ -1,6 +1,6 @@
 # Plan: the GPU renderer on Vulkan (roadmap phase 5)
 
-Status: plan, nothing written yet. It follows `docs/renderer-roadmap.md` (phase 5) and starts from what phases 2 to 4 left:
+Status: done on the Radeon (steps 1 to 6; what each step measured is written under it). It follows `docs/renderer-roadmap.md` (phase 5) and starts from what phases 2 to 4 left:
 `runtime/gfx_vk.c` shows the CPU picture through Vulkan (blit, FSR) and its renderer calls (`r_*`) say no. This plan makes them
 say yes, so `renderer = vulkan` with `gpu_gl = 1` draws the 2x and 4x picture on the card. The OpenGL renderer
 (`runtime/gpu_gl.c`) is the reference for behaviour: the same `GPrim` queue, the same pixel results.
@@ -123,6 +123,29 @@ in `COLOR_ATTACHMENT_OPTIMAL` (and the depth-stencil in its attachment layout) i
 6. **FSR and the rest of the path.** FSR on a GPU picture, 2x and 4x, `gpu_gl = 1` under `renderer = vulkan`; playtest of both
    games; frame time against the OpenGL renderer. *Exit of the phase:* `vktest` passes and the scripted comparison matches the
    Radeon OpenGL baseline on both games (the roadmap's exit test).
+   *Done (measured on the Radeon):* the review items of step 5 are closed
+   (a mask stamp or a copy box that runs out of vertex memory rolls back by itself and the rest of the flush is drawn; the stamp's
+   vertices are counted against the buffer like a run's; the copy operation carries its own program and blend). `vktest` passes in
+   its three modes. Scripted runs, a shot every 300 frames, OpenGL GPU renderer against Vulkan GPU renderer: the plain 2x picture is
+   identical (Freestyle BMX 81 of 81, Maximum Remix 94 of 94 shots); through FSR (`--shot-window`) the 2x picture in a 1280x960
+   window differs in 5 pixels of 79 shots (BMX) and 5 pixels of 91 shots (MR), and the 4x picture in a 1600x1200 window in at most
+   0.21 % of a shot's pixels, every difference being 1 of 255 (the same rounding difference phase 4 found for the CPU picture).
+   Frame time (`--stats`, the whole program in turbo, one run at a time, frames 1200 to 6000 of the scripted run, no screenshots):
+   guest plus host per frame, OpenGL against Vulkan: BMX 1.89 against 1.98 ms at 2x and 1.90 against 1.96 ms at 4x; MR 1.83 against
+   1.86 ms at 2x and 1.84 against 1.87 ms at 4x. So Vulkan costs at most 0.09 ms a frame more, and the worst 60-frame block's host
+   time was 0.15 ms a frame: the pipelines made when first needed do not show. A first measurement, taken from screenshot file
+   times, had shown Vulkan twice as slow at 4x: that was the screenshot read-back, which runs on every shown frame while
+   `--shot-every` is set. The read-back buffers were in uncached memory, slow for the CPU to read; `vk_make_buffer` now asks for
+   cached memory for a buffer the CPU reads (host time with screenshots at 4x: 4.66 ms a frame before, 0.23 to 0.30 ms after,
+   OpenGL 0.42 ms). After that change `vktest` passes in its three modes and the BMX comparisons above give the same result (plain
+   96 of 96 identical; FSR at 4x at most 0.21 % of pixels, by 1 of 255). Both games were then played by hand at 4x (menus,
+   a movie, levels) with no fault seen, and the environment switch `DMRECOMP_VK_RENDERER` of the earlier steps was removed
+   (with `vktest gate`, which tested it): `gpu_gl = 1` now works under `renderer = vulkan` with nothing else set. The launcher
+   builds the game with clang (llvm-mingw); its builds give the same plain 2x pictures as the gcc builds (BMX 97 of 97, MR 94 of
+   94 shots). Not tested: other hardware, and the SDL front end.
+   A side finding: clang 22.1.8 at `-O2` compiles the test model's copy loop wrongly when it is inlined with constant arguments
+   that wrap in x (`gltest` and `vktest` then report one false failure), so the model is now marked `noinline`; gcc 16.2, which
+   builds the game, and `gpu.c`'s own loop give the right result at every level tried (3000 random copies).
 
 Hardware validation (NVIDIA, Intel, Mesa, the Steam Deck, validation layers) is phase 6; the validation layers are not on this
 machine, so step 1 also added an opt-in switch (`DMRECOMP_VK_VALIDATE=1`, read once at start) that asks for

@@ -1,8 +1,8 @@
 /* The Vulkan backend (docs/renderer-roadmap.md, phase 4): shows the CPU picture in the window. Plainly, the picture is copied into
    an image and blitted into the swapchain image with the nearest or the linear filter (vkCmdBlitImage), black bars included (the
    swapchain image is cleared first). With FSR on, two render passes do it instead: EASU into an image of the picture's final size,
-   then RCAS into the swapchain image (the SPIR-V is in gfx_vk_spv.c, made from runtime/shaders by tools/shaders.py). Not here
-   yet in the game: the GPU hi-res renderer (gpu_vk.c; its r_init says no unless DMRECOMP_VK_RENDERER is set, so gpu_gl keeps the CPU picture). The device and the helpers other Vulkan files
+   then RCAS into the swapchain image (the SPIR-V is in gfx_vk_spv.c, made from runtime/shaders by tools/shaders.py). With
+   gpu_gl = 1 the GPU hi-res renderer (gpu_vk.c) draws the picture instead and the presenter copies the visible box out of it. The device and the helpers other Vulkan files
    share are declared in vk_ctx.h. DMRECOMP_VK_VALIDATE=1 (read once, at start) turns on the validation layer if it is installed.
    Vulkan is opened at run time (plat_vk_loader), so a machine without it just fails init and the next backend is tried. */
 #include <stdio.h>
@@ -61,7 +61,9 @@ int vk_make_buffer(size_t size, VkBufferUsageFlags use, VkBuffer *b, VkDeviceMem
     VkBufferCreateInfo bi = { .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size, .usage = use, .sharingMode = VK_SHARING_MODE_EXCLUSIVE };
     if (vkCreateBuffer(vkc.dev, &bi, NULL, b) != VK_SUCCESS) return 0;
     VkMemoryRequirements mr; vkGetBufferMemoryRequirements(vkc.dev, *b, &mr);
-    int t = vk_find_mem(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    /* a buffer the CPU reads back (screenshots, --shot-window) wants cached memory: reading uncached (write-combined) memory is many times slower */
+    int t = (use & VK_BUFFER_USAGE_TRANSFER_DST_BIT) ? vk_find_mem(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT) : -1;
+    if (t < 0) t = vk_find_mem(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     if (t < 0) return 0;
     VkMemoryAllocateInfo ai = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = mr.size, .memoryTypeIndex = (uint32_t)t };
     if (vkAllocateMemory(vkc.dev, &ai, NULL, m) != VK_SUCCESS) return 0;
@@ -610,7 +612,7 @@ static void vk_present(const GfxFrame *f) {
 }
 static const uint32_t *vk_grab(int *w, int *h) { if (!grab_ok) return NULL; grab_ok = 0; *w = grab_w; *h = grab_h; return grab; }   /* one-shot, like the OpenGL one */
 
-/* the GPU hi-res renderer lives in gpu_vk.c (step 2 of docs/vulkan-gpu-renderer-plan.md: off unless DMRECOMP_VK_RENDERER is set) */
+/* the GPU hi-res renderer lives in gpu_vk.c (docs/vulkan-gpu-renderer-plan.md) */
 static int vk_r_init(int scale) { return gvk_init(scale); }
 static void vk_r_submit(const GPrim *p) { gvk_submit(p); }
 static void vk_r_mask(int set, int check) { gvk_mask(set, check); }

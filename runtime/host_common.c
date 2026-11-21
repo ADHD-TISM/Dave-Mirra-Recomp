@@ -148,7 +148,7 @@ static void config_write_default(const char *path) {
                "scale = 1\n"
                "# 1 = drop to a lower scale by itself when the game cannot hold full speed at 2 or 4\n"
                "scale_auto = 1\n"
-               "# Graphics API that shows the picture: gl = OpenGL, vulkan = try Vulkan first (early prototype: gpu_gl is ignored; falls back to OpenGL)\n"
+               "# Graphics API that shows the picture: gl = OpenGL, vulkan = try Vulkan first (early prototype; falls back to OpenGL)\n"
                "renderer = gl\n"
                "# 1 = at scale 2 or 4, draw the picture on the graphics card instead of the processor (early prototype)\n"
                "gpu_gl = 0\n"

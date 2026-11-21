@@ -170,7 +170,7 @@ static VkPipeline get_pipe(int prog, int bl, int st, int cm) {
     VkPipeline *pl = &pipes[prog][bl][st][cm];
     if (!*pl && !pipe_bad[prog][bl][st][cm]) {
         *pl = make_pipeline(prog, bl, st, cm);
-        if (!*pl) { pipe_bad[prog][bl][st][cm] = 1; fprintf(stderr, "[gpu_vk] a pipeline (program %d, blend %d, stencil %d) cannot be made; draws that need it are skipped\n", prog, bl, st); }
+        if (!*pl) { pipe_bad[prog][bl][st][cm] = 1; fprintf(stderr, "[gpu_vk] a pipeline (program %d, blend %d, stencil %d, colour mask %d) cannot be made; draws that need it are skipped\n", prog, bl, st, cm); }
     }
     return *pl;
 }
@@ -201,7 +201,8 @@ static int setup_once(void) {
     if (!vs_mod || !fs_mod[PROG_DECODE] || !fs_mod[PROG_COPY]) return -1;
     /* the pipelines every frame needs are made now, so a failure is a failure to start; the others (stencil states) when first used */
     for (int b = 0; b < BL_N; b++) if (!get_pipe(PROG_DECODE, b, ST_OFF, 0)) return -1;
-    for (int st = ST_OFF; st <= ST_CK_KEEP; st++) if (st == ST_OFF || st >= ST_CK_REPL) if (!get_pipe(PROG_COPY, BL_OFF, st, 0)) return -1;
+    static const int copy_states[] = { ST_OFF, ST_CK_REPL, ST_CK_KEEP };   /* a copy without the mask, and with it checked (set or kept) */
+    for (size_t k = 0; k < sizeof copy_states / sizeof copy_states[0]; k++) if (!get_pipe(PROG_COPY, BL_OFF, copy_states[k], 0)) return -1;
     /* command buffers, fences, per-slot buffers */
     VkFenceCreateInfo fi = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
     VkCommandBufferAllocateInfo ba = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, .commandPool = vkc.pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1 };
@@ -265,8 +266,6 @@ static int make_target(int scale) {
 int gvk_init(int scale) {
     if (state < 0 || !vkc.dev) return 0;
     if (state == 0) {
-        const char *on = getenv("DMRECOMP_VK_RENDERER");   /* step 2 of the plan: not for the game yet */
-        if (!on || !*on || !strcmp(on, "0")) { state = -1; return 0; }
         state = setup_once();
         if (state < 0) {
             fprintf(stderr, "[gpu_vk] the renderer could not be set up; using the CPU picture\n");
@@ -365,7 +364,7 @@ static void submit_batch(void) {
         VkClearValue clears[2] = { { .color = { .float32 = { 0, 0, 0, 0 } } }, { .depthStencil = { 1.0f, 0 } } };
         for (int i = 0; i < nd; i++) {
             const Op *o = &dr[i];
-            if (o->op == OP_COPY) {   /* save the box at the source, then draw it back at the destination (the quad is the next op's vertices: o->first) */
+            if (o->op == OP_COPY) {   /* save the box at the source, then draw it back at the destination (o->first, o->count: the quad's vertices) */
                 if (inpass) { vkCmdEndRenderPass(sl->cb); inpass = 0; }
                 layout(sl->cb, tgt.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -392,14 +391,14 @@ static void submit_batch(void) {
             }
             int set = o->op == OP_COPY ? 1 : 0;
             if (set != curset) { vkCmdBindDescriptorSets(sl->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, playout, 0, 1, &dset[set], 0, NULL); curset = set; }
-            VkPipeline pl = get_pipe(o->op == OP_COPY ? PROG_COPY : o->prog, o->op == OP_COPY ? BL_OFF : o->blend, o->stencil, o->cmask);
+            VkPipeline pl = get_pipe(o->prog, o->blend, o->stencil, o->cmask);
             if (!pl) continue;   /* said once when it could not be made */
             if (pl != bound) { vkCmdBindPipeline(sl->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pl); bound = pl; }
             VkRect2D sc = { { 0, 0 }, { w, h } };
             if (o->op == OP_DRAW && !(o->clip[0] == 0 && o->clip[1] == 0 && o->clip[2] == 1023 && o->clip[3] == 511))
                 sc = (VkRect2D){ { o->clip[0] * S, o->clip[1] * S }, { (uint32_t)((o->clip[2] - o->clip[0] + 1) * S), (uint32_t)((o->clip[3] - o->clip[1] + 1) * S) } };
             vkCmdSetScissor(sl->cb, 0, 1, &sc);
-            Push pc = { { (float)w, (float)h }, o->op == OP_COPY ? 0 : o->pass, o->op == OP_COPY ? 1.0f : o->alpha };
+            Push pc = { { (float)w, (float)h }, o->pass, o->alpha };
             vkCmdPushConstants(sl->cb, playout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
             vkCmdDraw(sl->cb, (uint32_t)o->count, 1, (uint32_t)o->first, 0);
             if (o->op == OP_REBUILD) { vkCmdEndRenderPass(sl->cb); inpass = 0; }
@@ -436,11 +435,12 @@ static void add_copy(const GPrim *p, const int cap) {
         int x0 = cx[i], x1 = i + 1 < nx ? cx[i + 1] : w, y0 = cy[j], y1 = j + 1 < ny ? cy[j + 1] : h;
         int bw = x1 - x0, bh = y1 - y0, dx = (p->x + x0) & 1023, dy = (p->y + y0) & 511;
         if (gv.n + 2 * GV_MAX_VERTS > cap) submit_batch();
+        const int bn = gv.n, bnd = nd;   /* after a possible submit: where a failed box rolls back to */
         GPrim z; memset(&z, 0, sizeof z);   /* the quad: positions at the destination, texture coordinates 0..(box / saved image) */
         int first = gv.n;
         gv_quad(&gv, &z, 0, (float)(dx * S), (float)(dy * S), (float)((dx + bw) * S), (float)((dy + bh) * S), 255, 255, 255,
                 0, 0, (float)(bw * S) / (float)(1024 * S), (float)(bh * S) / (float)(512 * S));
-        Op c = { .op = OP_COPY, .first = first, .count = gv.n - first, .stencil = p->chkm ? (p->setm ? ST_CK_REPL : ST_CK_KEEP) : ST_OFF,
+        Op c = { .op = OP_COPY, .first = first, .count = gv.n - first, .prog = PROG_COPY, .blend = BL_OFF, .pass = 0, .alpha = 1.0f, .stencil = p->chkm ? (p->setm ? ST_CK_REPL : ST_CK_KEEP) : ST_OFF,
                  .sx = (p->sx + x0) & 1023, .sy = (p->sy + y0) & 511, .w = bw, .h = bh };
         if (!gv.fail) add_op(&c);
         if (p->chkm) {   /* the console copies bit 15 with the pixel, so mirror it from vram (already copied on the CPU), as an upload does */
@@ -451,6 +451,7 @@ static void add_copy(const GPrim *p, const int cap) {
             b.clip[2] = 1023; b.clip[3] = 511;
             if (!gv.fail) add_stamp(&b, sfirst, gv.n - sfirst, ST_CK_REPL);
         }
+        if (gv.fail) { fprintf(stderr, "[gpu_vk] out of memory for the vertices; a copy is not drawn\n"); gv.n = bn; nd = bnd; gv.fail = 0; }
     }
 }
 
@@ -462,9 +463,7 @@ void gvk_flush(void) {
     while (i < qn) {
         const GPrim *f = &q[i];
         if (f->kind == GK_COPY) {
-            int keep_n = gv.n, keep_nd = nd;
-            add_copy(f, cap); i++;
-            if (gv.fail) { fprintf(stderr, "[gpu_vk] out of memory for the vertices; a copy is not drawn\n"); gv.n = keep_n; nd = keep_nd; gv.fail = 0; }
+            add_copy(f, cap); i++;   /* a box that runs out of memory rolls itself back */
             continue;
         }
         int j = i + 1;
@@ -480,9 +479,16 @@ void gvk_flush(void) {
         } else {
             add_run(f, start, gv.n - start);
             if (f->chkm && (f->kind == GK_BLIT || (f->textured && !f->setm && (f->kind == GK_TRI || f->kind == GK_RECT)))) {   /* only under check-mask */
+                /* same_state keeps check-mask prims apart, so this is one prim; the loop is the same as the run's: full buffer, submit, go on */
                 int sfirst = gv.n;
-                for (int k = i; k < j; k++) if (f->kind == GK_BLIT || q[k].textured) gv_emit(&gv, &q[k], S);   /* a run can mix in flat prims */
-                if (!gv.fail) add_stamp(f, sfirst, gv.n - sfirst, f->kind == GK_BLIT ? ST_ALW1 : ST_CK_REPL);
+                const int sst = f->kind == GK_BLIT ? ST_ALW1 : ST_CK_REPL;
+                for (int k = i; k < j && !gv.fail; k++) {
+                    if (!(f->kind == GK_BLIT || q[k].textured)) continue;   /* a run can mix in flat prims */
+                    if (gv.n + 2 * GV_MAX_VERTS > cap) { add_stamp(f, sfirst, gv.n - sfirst, sst); submit_batch(); sfirst = 0; }
+                    gv_emit(&gv, &q[k], S);
+                }
+                if (gv.fail) { fprintf(stderr, "[gpu_vk] out of memory for the vertices; a mask stamp is not drawn\n"); gv.n = sfirst; gv.fail = 0; }   /* the run before it stays */
+                else add_stamp(f, sfirst, gv.n - sfirst, sst);
             }
         }
         i = j;

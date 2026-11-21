@@ -3,7 +3,8 @@
 Status: plan. Phase 1 (finishing the OpenGL path) is in progress: its tests are written, the NVIDIA and Intel runs are not
 done. Phase 2 (the backend seam) is done: the window, its surface, the window picture and the GPU renderer all sit behind
 `runtime/gfx.h`. Phase 3 (core-profile OpenGL) is done on the Radeon. Phase 4 is done on the Radeon: Vulkan shows the CPU picture, FSR
-included. Phases 5 to 7 are not started. Estimates are rough and are not
+included. Phase 5 is done on the Radeon: `gpu_gl = 1` under `renderer = vulkan` draws the 2x and 4x picture on the card
+(`docs/vulkan-gpu-renderer-plan.md`). Phases 6 and 7 are not started. Estimates are rough and are not
 promises.
 
 ## Goal
@@ -113,8 +114,8 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    tie differently). FSR: 57 of 63 grabs identical and the other 6 differ by at most 1 of 255 in under 0.01 % of the pixels;
    at an odd window size (1001x751) 46 of 64 identical, the rest the same way (the picture is placed like the OpenGL one, its
    offset counted from the bottom). Resizing, minimising and restoring the window work. With the loader made unavailable the run says so
-   and uses OpenGL, with identical grabs (64 of 64). Under Vulkan `gpu_gl` is ignored (the renderer calls say no, so the CPU
-   picture is used): the GPU renderer is phase 5. The SDL front end is compile-checked only.
+   and uses OpenGL, with identical grabs (64 of 64). Under Vulkan `gpu_gl` was ignored in this phase (the renderer calls said no, so the CPU
+   picture was used): the GPU renderer is phase 5. The SDL front end is compile-checked only.
    *Shaders:* the GLSL for Vulkan is in `runtime/shaders` (`fsr_easu.frag` and `fsr_rcas.frag` are ports of the OpenGL ones with
    push constants and a top-left origin, `fullscreen.vert` draws one triangle). `tools/shaders.py build <glslang>` compiles them
    to SPIR-V 1.0 (`-V --target-env vulkan1.0`, glslang 16.6.0, the Khronos release; `glslc` was not available) and writes
@@ -127,6 +128,8 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    decode shader as SPIR-V, one pipeline per blend and stencil state, two-pass translucency, copies and the check-mask rebuild.
    *Exit:* a Vulkan version of `gltest` (including the check-mask cases from phase 1) passes, and the scripted comparison
    matches the Radeon OpenGL baseline on both games.
+   *Done (Windows, Radeon):* `runtime/gpu_vk.c`; `tools/vktest.c` passes, the scripted comparison matches on both games and both
+   were played by hand. The steps and the measurements are in `docs/vulkan-gpu-renderer-plan.md`.
 6. **Hardware validation** (a week or more). AMD, NVIDIA and Intel on Windows, and Linux with Mesa and NVIDIA drivers, a Steam
    Deck if one is available, with the validation layers on. The least predictable phase: it depends on having the hardware.
    *Exit:* no validation errors, no regressions against OpenGL on any of them.
