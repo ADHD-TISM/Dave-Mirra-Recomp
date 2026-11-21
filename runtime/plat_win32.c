@@ -155,20 +155,23 @@ int plat_surface_open(int kind, int w, int h, const char *title) {
     RegisterClassA(&wc);   /* fails harmlessly when the class exists from an earlier attempt */
     RECT r = { 0, 0, w, h };
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
-    wnd = CreateWindowA("dmrecomp", title, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+    /* hidden until the surface works: a failed attempt then never flashes a window or takes the keyboard focus */
+    wnd = CreateWindowA("dmrecomp", title, WS_OVERLAPPEDWINDOW,
                         CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
-    if (!wnd) { fprintf(stderr, "FATAL: cannot open a window\n"); ExitProcess(1); }
+    if (!wnd) { fprintf(stderr, "[video] cannot open a window\n"); return 0; }
     dc = GetDC(wnd);
-    if (kind != PLAT_SURF_GL) return 1;
-    PIXELFORMATDESCRIPTOR pfd = { sizeof pfd, 1, PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER, PFD_TYPE_RGBA, 32 };
-    int pf = ChoosePixelFormat(dc, &pfd);
-    if (!pf || !SetPixelFormat(dc, pf, &pfd)) { plat_surface_close(); return 0; }
-    glrc = wglCreateContext(dc);
-    if (!glrc || !wglMakeCurrent(dc, glrc)) { plat_surface_close(); return 0; }
-    /* pacing is done by host_frame, so do not also wait for the monitor */
-    typedef BOOL (WINAPI *swap_fn)(int);
-    swap_fn swap = (swap_fn)(void *)wglGetProcAddress("wglSwapIntervalEXT");
-    if (swap) swap(0);
+    if (kind == PLAT_SURF_GL) {
+        PIXELFORMATDESCRIPTOR pfd = { sizeof pfd, 1, PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER, PFD_TYPE_RGBA, 32 };
+        int pf = ChoosePixelFormat(dc, &pfd);
+        if (!pf || !SetPixelFormat(dc, pf, &pfd)) { plat_surface_close(); return 0; }
+        glrc = wglCreateContext(dc);
+        if (!glrc || !wglMakeCurrent(dc, glrc)) { plat_surface_close(); return 0; }
+        /* pacing is done by host_frame, so do not also wait for the monitor */
+        typedef BOOL (WINAPI *swap_fn)(int);
+        swap_fn swap = (swap_fn)(void *)wglGetProcAddress("wglSwapIntervalEXT");
+        if (swap) swap(0);
+    } else if (kind != PLAT_SURF_SOFT) { plat_surface_close(); return 0; }   /* a kind this platform does not know */
+    ShowWindow(wnd, SW_SHOW);
     return 1;
 }
 void plat_client_size(int *w, int *h) { RECT cr; GetClientRect(wnd, &cr); *w = cr.right; *h = cr.bottom; }

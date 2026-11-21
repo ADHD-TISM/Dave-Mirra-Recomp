@@ -27,7 +27,7 @@ void plat_init(void);               /* before anything else */
 /* The window and the surface a graphics backend draws on (gfx.h). plat_surface_open makes both for one kind of surface and
    returns 1; when this platform cannot give that kind it leaves nothing open and returns 0, so the caller can try another kind.
    PLAT_SURF_GL: an OpenGL compatibility context, current on the calling thread. PLAT_SURF_SOFT: a plain window the CPU picture
-   is stretched into with plat_soft_present (a failure here ends the program: there is nothing left to try). */
+   is stretched into with plat_soft_present. Any other kind returns 0. */
 enum { PLAT_SURF_GL = 1, PLAT_SURF_SOFT = 2 };
 int  plat_surface_open(int kind, int w, int h, const char *title);
 void plat_surface_close(void);                           /* the window and its surface; no-op when none is open */

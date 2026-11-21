@@ -48,10 +48,12 @@ int plat_surface_open(int kind, int w, int h, const char *title) {
         plat_surface_close();
         return 0;
     }
+    if (kind != PLAT_SURF_SOFT) return 0;   /* a kind this platform does not know */
+    SDL_GL_ResetAttributes();               /* nothing left over from a failed OpenGL attempt */
     win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, SDL_WINDOW_RESIZABLE);
-    if (!win) { fprintf(stderr, "FATAL: cannot open a window: %s\n", SDL_GetError()); exit(1); }
+    if (!win) { fprintf(stderr, "[video] cannot open a window: %s\n", SDL_GetError()); return 0; }
     ren = SDL_CreateRenderer(win, -1, 0);
-    if (!ren) { fprintf(stderr, "FATAL: cannot draw in the window: %s\n", SDL_GetError()); exit(1); }
+    if (!ren) { fprintf(stderr, "[video] cannot draw in the window: %s\n", SDL_GetError()); plat_surface_close(); return 0; }
     return 1;
 }
 void plat_set_title(const char *title) { SDL_SetWindowTitle(win, title); }
