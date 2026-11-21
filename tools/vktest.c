@@ -7,8 +7,10 @@
    From the repository root:
      mkdir -p build && gcc -I runtime tools/vktest.c runtime/gfx_vk.c runtime/gpu_vk.c runtime/gfx_vk_spv.c runtime/plat_win32.c \
        -o build/vktest.exe -lgdi32 -lwinmm -lopengl32 && build/vktest.exe
-   One more run: `vktest small` makes the vertex buffer 64 KB (DMRECOMP_VK_VBUF_KB, a test hook) so a flush has to split into several
-   submits. DMRECOMP_VK_VALIDATE=1 runs either under the validation layer if that is installed. */
+   Two more runs: `vktest small` makes the vertex buffer 64 KB (DMRECOMP_VK_VBUF_KB, a test hook) so a flush has to split into several
+   submits, and `vktest decline` checks that the backend says no, with no device left, when it is asked to start only if the
+   renderer can run and the renderer cannot (renderer = auto with gpu_gl = 1; DMRECOMP_GFX_TEST=norenderer fakes the failure).
+   DMRECOMP_VK_VALIDATE=1 runs any of them under the validation layer if that is installed. */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
@@ -17,6 +19,7 @@
 #include "hw.h"
 #include "host.h"
 #include "gfx.h"
+#include "vk_ctx.h"
 
 u16 vram[512 * 1024];
 void host_hotkey(int which) { (void)which; }
@@ -399,6 +402,18 @@ static void check_mask_textured(const char *what) {
 
 int main(int argc, char **argv) {
     int small = argc > 1 && !strcmp(argv[1], "small");
+    if (argc > 1 && !strcmp(argv[1], "decline")) {
+        _putenv("DMRECOMP_GFX_TEST=norenderer");
+        gfx_vk_need_renderer = 1;
+        int on = be->init(960, 720, "vktest"), left = vkc.dev != VK_NULL_HANDLE || vkc.inst != VK_NULL_HANDLE;
+        printf("%-50s %s\n", "backend says no when the renderer cannot run", on ? "FAIL" : "ok");
+        printf("%-50s %s\n", "no device or instance is left", left ? "FAIL" : "ok");
+        _putenv("DMRECOMP_GFX_TEST=");   /* and it starts when asked again without the fault */
+        gfx_vk_need_renderer = 1;
+        int again = be->init(960, 720, "vktest") && be->r_init(2);
+        printf("%-50s %s\n", "starts, with its renderer, without the fault", again ? "ok" : "FAIL");
+        return on || left || !again;
+    }
     _putenv(small ? "DMRECOMP_VK_VBUF_KB=64" : "DMRECOMP_VK_VBUF_KB=");
     if (!be->init(960, 720, "vktest")) { printf("the Vulkan backend cannot start\n"); return 2; }
     srand(7);

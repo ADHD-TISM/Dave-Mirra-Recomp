@@ -841,7 +841,7 @@ SETTINGS = [
     ("scale_auto", "Video", "Lower it when too slow", "bool", B01, "1",
      "1 = drop to a lower internal resolution by itself when the game cannot hold full speed at 2 or 4"),
     ("renderer", "Video", "Graphics API", "choice", ["gl", "vulkan", "auto"], "gl",
-     "Graphics API that shows the picture: gl = OpenGL, vulkan = Vulkan first (falls back to OpenGL), "
+     "Graphics API that shows the picture: gl = OpenGL, vulkan = Vulkan first (early prototype; falls back to OpenGL), "
      "auto = Vulkan when it can do everything asked, else OpenGL"),
     ("gpu_gl", "Video", "Draw 2x / 4x on the graphics card (early prototype)", "bool", B01, "0",
      "1 = at scale 2 or 4 the graphics card draws the picture instead of the processor (early prototype)"),

@@ -149,10 +149,11 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    list): `noloader` behaves like a machine without Vulkan, `norenderer` like a device without a depth-stencil format, `nogl`
    like a machine without OpenGL 3.3. Eleven runs
    (the three values, with and without each fault, `gpu_gl` 0 and 1) each picked the backend described here, and an unknown
-   value is refused. Scripted runs under `auto` at plain 2x give the OpenGL renderer's shots exactly (BMX 96 of 96, MR 121 of
-   121). With `nogl` added, six more runs reached the software stretch from each of the three values and kept running. The
+   value is refused. Scripted runs under `auto` at plain 2x give the OpenGL renderer's shots exactly (BMX 94 of 94, MR 108 of
+   108, the runs made with the code as committed). With `nogl` added, six more runs reached the software stretch from each of the three values and kept running. The
    launcher's Video settings have `renderer` and `gpu_gl` (launcher version 7). The SDL front end is compile-checked only
-   (gcc under WSL, the seven runtime files this touches, no warnings). Not done: the default is still `gl` (changing it waits
+   (gcc under WSL with `-fsyntax-only -Wall`: `host_common.c`, `gfx_vk.c`, `gpu_vk.c`, `gfx_gl.c`, `gfx.c`, `plat_sdl.c` and `gpu.c`; no warnings). `vktest decline` checks that the Vulkan backend says no and leaves no device behind when
+   its renderer cannot be set up. Not done: the default is still `gl` (changing it waits
    for phase 6); the picture the software stretch shows after a step down was not compared; nothing was run on other
    hardware or on Linux.
 
