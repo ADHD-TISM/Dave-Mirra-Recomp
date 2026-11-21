@@ -7,7 +7,8 @@
 #include <stddef.h>
 #include "vulkan/vulkan.h"
 
-/* every device and instance function the backend calls; loaded together, so one that is missing fails the backend's init */
+/* every device and instance function the Vulkan backend and the GPU renderer call; loaded together, so one that is missing fails the
+   backend's init (all are Vulkan 1.0 core, apart from the swapchain and surface ones) */
 #define VK_FUNCS(X) \
     X(vkDestroyInstance) X(vkEnumeratePhysicalDevices) X(vkGetPhysicalDeviceProperties) X(vkGetPhysicalDeviceQueueFamilyProperties) \
     X(vkGetPhysicalDeviceMemoryProperties) X(vkGetPhysicalDeviceFormatProperties) X(vkCreateDevice) X(vkEnumerateDeviceExtensionProperties) \
@@ -26,8 +27,7 @@
     X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets) X(vkCreatePipelineLayout) X(vkDestroyPipelineLayout) \
     X(vkCreateGraphicsPipelines) X(vkDestroyPipeline) X(vkCmdBeginRenderPass) X(vkCmdEndRenderPass) X(vkCmdBindPipeline) \
     X(vkCmdBindDescriptorSets) X(vkCmdPushConstants) X(vkCmdDraw) X(vkCmdSetViewport) X(vkCmdSetScissor) \
-    X(vkCmdCopyImage) X(vkCmdBindVertexBuffers) X(vkCmdSetStencilReference) X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) \
-    X(vkCmdClearDepthStencilImage)
+    X(vkCmdCopyImage) X(vkCmdBindVertexBuffers) X(vkCmdSetStencilReference) X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask)
 #define X(n) extern PFN_##n n;
 VK_FUNCS(X)
 #undef X
