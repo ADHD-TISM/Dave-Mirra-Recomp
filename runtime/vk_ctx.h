@@ -44,7 +44,7 @@ typedef struct {
 extern VkCtx vkc;                           /* filled in by the Vulkan backend's init; all zero when it is not running */
 
 int  vk_find_mem(uint32_t type_bits, VkMemoryPropertyFlags want);   /* a memory type index, or -1 */
-int  vk_make_buffer(size_t size, VkBufferUsageFlags use, VkBuffer *b, VkDeviceMemory *m, void **map);   /* host-visible, coherent, mapped */
+int  vk_make_buffer(size_t size, VkBufferUsageFlags use, VkBuffer *b, VkDeviceMemory *m, void **map);   /* host-visible, coherent, mapped; cached too when use has TRANSFER_DST, which means the CPU reads it back */
 void vk_free_buffer(VkBuffer *b, VkDeviceMemory *m, void **map);
 VkShaderModule vk_make_module(const uint32_t *code, size_t words);   /* VK_NULL_HANDLE on failure */
 void vk_image_barrier(VkCommandBuffer c, VkImage img, VkImageLayout from, VkImageLayout to, VkAccessFlags sa, VkAccessFlags da,

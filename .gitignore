@@ -20,6 +20,7 @@ dmrecomp.ini
 testrun/
 dist/
 .code-review-graph/
+.serena/
 launcher/dist/
 __pycache__/
 launcher/tools/

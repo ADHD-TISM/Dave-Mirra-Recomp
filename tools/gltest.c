@@ -28,8 +28,8 @@ void *plat_gl_proc(const char *name) { return (void *)wglGetProcAddress(name); }
 static int fails;
 static unsigned want(int x, int y) { u16 p = vram[(y & 511) * 1024 + (x & 1023)]; return ((p & 31) << 3) << 16 | (((p >> 5) & 31) << 3) << 8 | (((p >> 10) & 31) << 3); }
 
-/* not inlined: clang 22.1.8 at -O2 vectorises this loop wrongly when it is inlined with constant arguments that wrap in x
-   (pixels in the wrapped part come out wrong); gcc 16.2, which builds the game, and gpu.c's own loop are not affected */
+/* not inlined: clang 22.1.8 at -O2 vectorises this loop wrongly when it is inlined with constant arguments whose source
+   and destination overlap across the x wrap (pixels in the wrapped part come out wrong; a wrap alone is fine); gcc 16.2, which builds the game, and gpu.c's own loop are not affected */
 __attribute__((noinline)) static void cpu_copy(int sx, int sy, int dx, int dy, int w, int h) {   /* what gpu.c does, a pixel at a time */
     for (int yy = 0; yy < h; yy++) for (int xx = 0; xx < w; xx++)
         vram[((dy + yy) & 511) * 1024 + ((dx + xx) & 1023)] = vram[((sy + yy) & 511) * 1024 + ((sx + xx) & 1023)];

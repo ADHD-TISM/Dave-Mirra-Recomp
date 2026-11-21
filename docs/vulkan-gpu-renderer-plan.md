@@ -52,8 +52,8 @@ in `COLOR_ATTACHMENT_OPTIMAL` (and the depth-stencil in its attachment layout) i
    draw shaders ported to GLSL 450 (`runtime/shaders/gpu_draw.vert`, `gpu_decode.frag`), blits, `r_read`, and the presenter's copy of
    the visible box (with wraps) from the target into `pic`. The vertex code both renderers use moved to `runtime/gpu_emit.h`
    (`gpu_gl.c` uses it too: `gltest` still passes 31 of 31 and the OpenGL grabs are identical to before). The SPIR-V moved to
-   `runtime/gfx_vk_spv.c` and `.h`, so it is compiled once. The renderer says no unless `DMRECOMP_VK_RENDERER` is set, because only
-   blits are drawn so far. `tools/vktest.c` makes 16 checks (plain and wrapping display boxes, whole vram, dirty rows, two spans,
+   `runtime/gfx_vk_spv.c` and `.h`, so it is compiled once. The renderer said no unless `DMRECOMP_VK_RENDERER` was set, because only
+   blits were drawn at this step (the switch was removed in step 6). `tools/vktest.c` makes 16 checks (plain and wrapping display boxes, whole vram, dirty rows, two spans,
    first and last row, a blit that wraps both edges, the window picture with and without a wrap, and the 4x picture); all pass on
    the Radeon, and three deliberate breaks (the upload row, the presenter's piece offset, the read-back offset) each make it fail.
    Not tried: the validation layer (not installed here), other hardware.
@@ -137,14 +137,16 @@ in `COLOR_ATTACHMENT_OPTIMAL` (and the depth-stencil in its attachment layout) i
    times, had shown Vulkan twice as slow at 4x: that was the screenshot read-back, which runs on every shown frame while
    `--shot-every` is set. The read-back buffers were in uncached memory, slow for the CPU to read; `vk_make_buffer` now asks for
    cached memory for a buffer the CPU reads (host time with screenshots at 4x: 4.66 ms a frame before, 0.23 to 0.30 ms after,
-   OpenGL 0.42 ms). After that change `vktest` passes in its three modes and the BMX comparisons above give the same result (plain
+   OpenGL 0.42 ms). After that change `vktest` passed in its three modes (normal, `small`, `gate`) and the BMX comparisons above give the same result (plain
    96 of 96 identical; FSR at 4x at most 0.21 % of pixels, by 1 of 255). Both games were then played by hand at 4x (menus,
    a movie, levels) with no fault seen, and the environment switch `DMRECOMP_VK_RENDERER` of the earlier steps was removed
    (with `vktest gate`, which tested it): `gpu_gl = 1` now works under `renderer = vulkan` with nothing else set. The launcher
    builds the game with clang (llvm-mingw); its builds give the same plain 2x pictures as the gcc builds (BMX 97 of 97, MR 94 of
-   94 shots). Not tested: other hardware, and the SDL front end.
+   94 shots). After the removal `vktest` passes in its two modes (normal and `small`), and a scripted run of each game at plain
+   2x under Vulkan with the switch unset gives the OpenGL shots (BMX 96 of 96, MR 120 of 120). Not tested: other hardware, the
+   SDL front end, the out-of-memory paths (no test forces them), and the validation layer after the changes of step 6.
    A side finding: clang 22.1.8 at `-O2` compiles the test model's copy loop wrongly when it is inlined with constant arguments
-   that wrap in x (`gltest` and `vktest` then report one false failure), so the model is now marked `noinline`; gcc 16.2, which
+   whose source and destination overlap across the x wrap (`gltest` and `vktest` then report one false failure), so the model is now marked `noinline`; gcc 16.2, which
    builds the game, and `gpu.c`'s own loop give the right result at every level tried (3000 random copies).
 
 Hardware validation (NVIDIA, Intel, Mesa, the Steam Deck, validation layers) is phase 6; the validation layers are not on this
