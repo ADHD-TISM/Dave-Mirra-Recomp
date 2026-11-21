@@ -1,7 +1,7 @@
 /* The 2x / 4x picture drawn by the graphics card. See gpu_gl.h.
-   Needs a compatibility-profile OpenGL context with shaders (GLSL 1.20), framebuffer
-   objects and a packed depth-stencil attachment, i.e. OpenGL 3.0 or ARB_framebuffer_object
-   (entry points are looked up at run time; anything less falls back to the CPU picture).
+   Needs an OpenGL 3.3 context (core or compatibility profile: nothing here uses the fixed pipeline), with
+   framebuffer objects and a packed depth-stencil attachment (entry points are looked up at run time; anything
+   less falls back to the CPU picture). Vertices go through gl_stream.c.
    Vram is mirrored in a 1024x512 two-channel texture (low byte, high byte) and the
    fragment shader decodes the 4-bit, 8-bit and 15-bit texels, palettes, modulation,
    dithering and blend modes itself. */
@@ -19,6 +19,7 @@
 #include "host.h"
 #include "gpu_gl.h"
 #include "vram_cuts.h"
+#include "gl_stream.h"
 #ifndef APIENTRY
 #define APIENTRY
 #endif
@@ -31,18 +32,6 @@
 #ifndef GL_TEXTURE2
 #define GL_TEXTURE2 0x84C2
 #endif
-#ifndef GL_VERTEX_SHADER
-#define GL_VERTEX_SHADER 0x8B31
-#endif
-#ifndef GL_FRAGMENT_SHADER
-#define GL_FRAGMENT_SHADER 0x8B30
-#endif
-#ifndef GL_COMPILE_STATUS
-#define GL_COMPILE_STATUS 0x8B81
-#endif
-#ifndef GL_LINK_STATUS
-#define GL_LINK_STATUS 0x8B82
-#endif
 #ifndef GL_FRAMEBUFFER
 #define GL_FRAMEBUFFER 0x8D40
 #endif
@@ -52,9 +41,8 @@
 #ifndef GL_FRAMEBUFFER_COMPLETE
 #define GL_FRAMEBUFFER_COMPLETE 0x8CD5
 #endif
-#ifndef GL_LUMINANCE8_ALPHA8
-#define GL_LUMINANCE8_ALPHA8 0x8045
-#endif
+#define GLG_RG 0x8227
+#define GLG_RG8 0x822B
 #ifndef GL_RGBA8
 #define GL_RGBA8 0x8058
 #endif
@@ -78,13 +66,7 @@
 #define GLG_UNSIGNED_INT_24_8 0x84FA
 #define GLG_DEPTH_STENCIL_ATTACHMENT 0x821A
 
-static GLuint (APIENTRY *q_CreateShader)(GLenum);
-static void (APIENTRY *q_ShaderSource)(GLuint, GLsizei, const char *const *, const GLint *);
-static void (APIENTRY *q_CompileShader)(GLuint), (APIENTRY *q_LinkProgram)(GLuint), (APIENTRY *q_UseProgram)(GLuint);
-static void (APIENTRY *q_GetShaderiv)(GLuint, GLenum, GLint *), (APIENTRY *q_GetProgramiv)(GLuint, GLenum, GLint *);
-static void (APIENTRY *q_GetShaderInfoLog)(GLuint, GLsizei, GLsizei *, char *);
-static GLuint (APIENTRY *q_CreateProgram)(void);
-static void (APIENTRY *q_AttachShader)(GLuint, GLuint);
+static void (APIENTRY *q_UseProgram)(GLuint);
 static GLint (APIENTRY *q_GetUniformLocation)(GLuint, const char *);
 static void (APIENTRY *q_Uniform1i)(GLint, GLint), (APIENTRY *q_Uniform1f)(GLint, GLfloat), (APIENTRY *q_Uniform2f)(GLint, GLfloat, GLfloat);
 static void (APIENTRY *q_GenFramebuffers)(GLsizei, GLuint *);
@@ -92,27 +74,28 @@ static void (APIENTRY *q_BindFramebuffer)(GLenum, GLuint);
 static void (APIENTRY *q_FramebufferTexture2D)(GLenum, GLenum, GLenum, GLuint, GLint);
 static GLenum (APIENTRY *q_CheckFramebufferStatus)(GLenum);
 static void (APIENTRY *q_ActiveTexture)(GLenum);
-static void (APIENTRY *q_MultiTexCoord4f)(GLenum, GLfloat, GLfloat, GLfloat, GLfloat);
 static void (APIENTRY *q_BlendEquation)(GLenum);
 
 static const char *const vs_src =
-"#version 120\n"
+"#version 330 core\n"
 "uniform vec2 target;\n"
-"varying vec4 t0, t1, t2; varying vec3 col;\n"
+"layout(location = 0) in vec2 pos; layout(location = 1) in vec3 color;\n"
+"layout(location = 2) in vec4 a0; layout(location = 3) in vec4 a1; layout(location = 4) in vec4 a2;\n"
+"out vec4 t0, t1, t2; out vec3 col;\n"
 "void main() {\n"
-"  gl_Position = vec4(gl_Vertex.x / target.x * 2.0 - 1.0, gl_Vertex.y / target.y * 2.0 - 1.0, 0.0, 1.0);\n"
-"  col = gl_Color.rgb; t0 = gl_MultiTexCoord0; t1 = gl_MultiTexCoord1; t2 = gl_MultiTexCoord2;\n"
+"  gl_Position = vec4(pos.x / target.x * 2.0 - 1.0, pos.y / target.y * 2.0 - 1.0, 0.0, 1.0);\n"
+"  col = color; t0 = a0; t1 = a1; t2 = a2;\n"
 "}\n";
 
 /* t0 = u, v, page x, page y; t1 = palette x, palette y, depth, flags (1 textured, 2 raw, 4 dither, 8 direct vram copy);
    t2 = texture window. pass: 0 everything, 1 only texels without the semi-transparency bit, 2 only those with it. */
 static const char *const fs_src =
-"#version 120\n"
+"#version 330 core\n"
 "uniform sampler2D vram; uniform int pass; uniform float alpha;\n"
-"varying vec4 t0, t1, t2; varying vec3 col;\n"
+"in vec4 t0, t1, t2; in vec3 col; out vec4 fragColor;\n"
 "float word(float x, float y) {\n"
 "  x = mod(x, 1024.0); y = mod(y, 512.0);\n"
-"  vec2 c = texture2D(vram, vec2((x + 0.5) / 1024.0, (y + 0.5) / 512.0)).ra * 255.0;\n"
+"  vec2 c = texture(vram, vec2((x + 0.5) / 1024.0, (y + 0.5) / 512.0)).rg * 255.0;\n"
 "  return floor(c.x + 0.5) + floor(c.y + 0.5) * 256.0;\n"
 "}\n"
 "float win(float u, float m, float o) {\n"
@@ -164,7 +147,7 @@ static const char *const fs_src =
 "    if (dith) m += dth(gl_FragCoord.xy);\n"
 "    c5 = floor(clamp(m, 0.0, 255.0) / 8.0);\n"
 "  }\n"
-"  gl_FragColor = vec4(c5 * 8.0 / 255.0, alpha);\n"
+"  fragColor = vec4(c5 * 8.0 / 255.0, alpha);\n"
 "}\n";
 
 static int state;                     /* 0 untried, 1 ready, -1 unavailable */
@@ -177,42 +160,20 @@ static int dirty0 = 512, dirty1 = -1;
 #define QMAX 8192
 static GPrim *q; static int qn;
 
-static GLuint compile(GLenum type, const char *src, const char *what) {
-    GLuint s = q_CreateShader(type);
-    q_ShaderSource(s, 1, &src, NULL); q_CompileShader(s);
-    GLint ok = 0; q_GetShaderiv(s, GL_COMPILE_STATUS, &ok);
-    if (!ok) {
-        char log[1024] = ""; q_GetShaderInfoLog(s, sizeof log - 1, NULL, log);
-        fprintf(stderr, "[gpu_gl] %s shader failed: %s\n", what, log);
-        return 0;
-    }
-    return s;
-}
-
 static int load(void) {
 #define L(var, nm) (var = plat_gl_proc(nm))
-    int ok = L(q_CreateShader, "glCreateShader") && L(q_ShaderSource, "glShaderSource") && L(q_CompileShader, "glCompileShader")
-          && L(q_GetShaderiv, "glGetShaderiv") && L(q_GetShaderInfoLog, "glGetShaderInfoLog") && L(q_CreateProgram, "glCreateProgram")
-          && L(q_AttachShader, "glAttachShader") && L(q_LinkProgram, "glLinkProgram") && L(q_GetProgramiv, "glGetProgramiv")
-          && L(q_UseProgram, "glUseProgram") && L(q_GetUniformLocation, "glGetUniformLocation") && L(q_Uniform1i, "glUniform1i")
+    int ok = L(q_UseProgram, "glUseProgram") && L(q_GetUniformLocation, "glGetUniformLocation") && L(q_Uniform1i, "glUniform1i")
           && L(q_Uniform1f, "glUniform1f") && L(q_Uniform2f, "glUniform2f")
-          && (L(q_ActiveTexture, "glActiveTexture") || L(q_ActiveTexture, "glActiveTextureARB"))
-          && (L(q_MultiTexCoord4f, "glMultiTexCoord4f") || L(q_MultiTexCoord4f, "glMultiTexCoord4fARB"))
-          && (L(q_BlendEquation, "glBlendEquation") || L(q_BlendEquation, "glBlendEquationEXT"))
-          && (L(q_GenFramebuffers, "glGenFramebuffers") || L(q_GenFramebuffers, "glGenFramebuffersEXT"))
-          && (L(q_BindFramebuffer, "glBindFramebuffer") || L(q_BindFramebuffer, "glBindFramebufferEXT"))
-          && (L(q_FramebufferTexture2D, "glFramebufferTexture2D") || L(q_FramebufferTexture2D, "glFramebufferTexture2DEXT"))
-          && (L(q_CheckFramebufferStatus, "glCheckFramebufferStatus") || L(q_CheckFramebufferStatus, "glCheckFramebufferStatusEXT"));
-    return ok;
+          && L(q_ActiveTexture, "glActiveTexture") && L(q_BlendEquation, "glBlendEquation")
+          && L(q_GenFramebuffers, "glGenFramebuffers") && L(q_BindFramebuffer, "glBindFramebuffer")
+          && L(q_FramebufferTexture2D, "glFramebufferTexture2D") && L(q_CheckFramebufferStatus, "glCheckFramebufferStatus");
+    return ok && gls_init();
 }
 
 static int setup_once(void) {
-    if (!load()) { fprintf(stderr, "[gpu_gl] this graphics driver lacks OpenGL shaders or framebuffers (it needs a compatibility-profile OpenGL 3.0 context); using the CPU picture\n"); return -1; }
-    GLuint vs = compile(GL_VERTEX_SHADER, vs_src, "vertex"), fs = compile(GL_FRAGMENT_SHADER, fs_src, "fragment");
-    if (!vs || !fs) return -1;
-    prog = q_CreateProgram(); q_AttachShader(prog, vs); q_AttachShader(prog, fs); q_LinkProgram(prog);
-    GLint ok = 0; q_GetProgramiv(prog, GL_LINK_STATUS, &ok);
-    if (!ok) { fprintf(stderr, "[gpu_gl] shaders did not link; using the CPU picture\n"); return -1; }
+    if (!load()) { fprintf(stderr, "[gpu_gl] this graphics driver lacks OpenGL shaders or framebuffers (it needs an OpenGL 3.3 context); using the CPU picture\n"); return -1; }
+    prog = gls_program(vs_src, fs_src, "[gpu_gl] picture");
+    if (!prog) { fprintf(stderr, "[gpu_gl] the picture shaders are not usable; using the CPU picture\n"); return -1; }
     u_target = q_GetUniformLocation(prog, "target"); u_vram = q_GetUniformLocation(prog, "vram");
     u_pass = q_GetUniformLocation(prog, "pass"); u_alpha = q_GetUniformLocation(prog, "alpha");
     q_ActiveTexture(GL_TEXTURE1);
@@ -220,7 +181,7 @@ static int setup_once(void) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE8_ALPHA8, 1024, 512, 0, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, vram);
+    glTexImage2D(GL_TEXTURE_2D, 0, GLG_RG8, 1024, 512, 0, GLG_RG, GL_UNSIGNED_BYTE, vram);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     glGenTextures(1, &fbo_tex); glGenTextures(1, &tmp_tex); glGenTextures(1, &sten_tex);
     q_GenFramebuffers(1, &fbo);
@@ -265,13 +226,21 @@ void glg_dirty(int y0, int y1) {
 }
 
 /* ------------------------------------------------------------- drawing --- */
+static GlsVert *vb; static int vn, vcap;   /* the vertices of the run being drawn */
 static void vert(const GPrim *p, int flags, float px, float py, float r, float g, float b, float u, float v) {
-    glColor3f(r / 255.0f, g / 255.0f, b / 255.0f);
-    q_MultiTexCoord4f(GL_TEXTURE0, u, v, (float)p->tx, (float)p->ty);
-    q_MultiTexCoord4f(GL_TEXTURE1, (float)p->cx, (float)p->cy, (float)p->depth, (float)flags);
-    q_MultiTexCoord4f(GL_TEXTURE2, (float)p->tw[0], (float)p->tw[1], (float)p->tw[2], (float)p->tw[3]);
-    glVertex2f(px, py);
+    if (vn == vcap) {
+        GlsVert *nb = realloc(vb, sizeof *vb * (size_t)(vcap ? vcap * 2 : 4096));
+        if (!nb) return;   /* out of memory: the primitive is dropped */
+        vb = nb; vcap = vcap ? vcap * 2 : 4096;
+    }
+    GlsVert *o = &vb[vn++];
+    o->x = px; o->y = py;
+    o->c[0] = r / 255.0f; o->c[1] = g / 255.0f; o->c[2] = b / 255.0f;
+    o->t0[0] = u; o->t0[1] = v; o->t0[2] = (float)p->tx; o->t0[3] = (float)p->ty;
+    o->t1[0] = (float)p->cx; o->t1[1] = (float)p->cy; o->t1[2] = (float)p->depth; o->t1[3] = (float)flags;
+    for (int i = 0; i < 4; i++) o->t2[i] = (float)p->tw[i];
 }
+static void draw_verts(void) { gls_draw(GL_TRIANGLES, vb, vn); vn = 0; }
 static void quad(const GPrim *p, int flags, float x0, float y0, float x1, float y1, float r, float g, float b,
                  float ul, float vt, float ur, float vb) {
     vert(p, flags, x0, y0, r, g, b, ul, vt); vert(p, flags, x1, y0, r, g, b, ur, vt); vert(p, flags, x1, y1, r, g, b, ur, vb);
@@ -363,9 +332,9 @@ static void draw_run(int a, int b, int pass, int blend) {
     q_Uniform1i(u_pass, pass);
     q_Uniform1f(u_alpha, !blend ? 1.0f : f->semimode == 0 ? 0.5f : f->semimode == 3 ? 0.25f : 1.0f);
     set_blend(blend, f->semimode);
-    glBegin(GL_TRIANGLES);
+    vn = 0;
     for (int i = a; i < b; i++) emit(&q[i]);
-    glEnd();
+    draw_verts();
 }
 
 /* one box that wraps neither at the source nor at the destination */
@@ -379,17 +348,15 @@ static void copy_box(const GPrim *p, int sx, int sy, int dx, int dy, int w, int 
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tmp_w, tmp_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     }
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, sx * S, sy * S, w * S, h * S);
-    q_UseProgram(0); glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND); glEnable(GL_TEXTURE_2D);
+    unsigned plain = gls_plain_program();   /* the copy is a textured quad of the saved box */
+    if (!plain) { q_UseProgram(prog); q_BindFramebuffer(GL_FRAMEBUFFER, fbo); glBindTexture(GL_TEXTURE_2D, (GLuint)save); return; }
+    gls_use(plain); glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND);
     set_stencil(p);   /* the copied pixels' own bit 15 is put back by the stencil-only pass below */
-    glColor4f(1, 1, 1, 1);
     float tx = (float)(w * S) / (float)tmp_w, ty = (float)(h * S) / (float)tmp_h;
     float W = 1024.0f * S, H = 512.0f * S;
     float x0 = (float)(dx * S) / W * 2 - 1, x1 = (float)((dx + w) * S) / W * 2 - 1;
     float y0 = (float)(dy * S) / H * 2 - 1, y1 = (float)((dy + h) * S) / H * 2 - 1;
-    glBegin(GL_QUADS);
-    glTexCoord2f(0, 0); glVertex2f(x0, y0); glTexCoord2f(tx, 0); glVertex2f(x1, y0);
-    glTexCoord2f(tx, ty); glVertex2f(x1, y1); glTexCoord2f(0, ty); glVertex2f(x0, y1);
-    glEnd();
+    gls_quad(x0, y0, x1, y1, 0, 0, tx, ty);
     glBindTexture(GL_TEXTURE_2D, (GLuint)save);
     q_UseProgram(prog);
     if (!p->chkm) return;
@@ -400,7 +367,7 @@ static void copy_box(const GPrim *p, int sx, int sy, int dx, int dy, int w, int 
     glStencilFunc(GL_NOTEQUAL, 1, 1);
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-    glBegin(GL_TRIANGLES); emit(&b); glEnd();
+    vn = 0; emit(&b); draw_verts();
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 }
 /* the console wraps a copy around the edges of vram, at the source and at the destination independently: cut it into boxes
@@ -432,10 +399,10 @@ void glg_mask(int set, int check) {
         glEnable(GL_STENCIL_TEST); glStencilFunc(GL_ALWAYS, 1, 0xff); glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
         q_Uniform1i(u_pass, 2); q_Uniform1f(u_alpha, 1.0f);
-        glBegin(GL_TRIANGLES); emit(&b); glEnd();
+        vn = 0; emit(&b); draw_verts();
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glDisable(GL_STENCIL_TEST);
-        q_UseProgram(0); glColor4f(1, 1, 1, 1);   /* the window picture is drawn with the fixed pipeline */
+        q_UseProgram(0);
         q_BindFramebuffer(GL_FRAMEBUFFER, 0);
     }
     cur_set = set != 0; cur_chk = c;
@@ -468,7 +435,7 @@ static void upload_dirty(void) {
     q_ActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, vtex);
     if (dirty1 >= dirty0) {
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, dirty0, 1024, dirty1 - dirty0 + 1, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, &vram[dirty0 * 1024]);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, dirty0, 1024, dirty1 - dirty0 + 1, GLG_RG, GL_UNSIGNED_BYTE, &vram[dirty0 * 1024]);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
         dirty0 = 512; dirty1 = -1;
     }
@@ -506,9 +473,9 @@ void glg_flush(void) {
             glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
             glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
             q_Uniform1i(u_pass, 2); q_Uniform1f(u_alpha, 1.0f); set_blend(0, 0);
-            glBegin(GL_TRIANGLES);
+            vn = 0;
             for (int k = i; k < j; k++) if (f->kind == GK_BLIT || q[k].textured) emit(&q[k]);   /* a run can mix in flat prims */
-            glEnd();
+            draw_verts();
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         }
         i = j;
@@ -516,7 +483,6 @@ void glg_flush(void) {
     qn = 0;
     q_UseProgram(0);
     glDisable(GL_BLEND); glDisable(GL_SCISSOR_TEST); glDisable(GL_STENCIL_TEST); q_BlendEquation(GL_FUNC_ADD);
-    glColor4f(1, 1, 1, 1);   /* the window picture is drawn with the fixed pipeline: it would be tinted by the last vertex colour */
     q_BindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 

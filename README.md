@@ -70,7 +70,7 @@ the original console picture; delete the file to get them back.
 | --- | --- | --- |
 | `scale` | `1` original, `2`, `4` internal 3D resolution. The CPU draws it, and 4 is 16 times the pixels: use 2 on a laptop | F6 cycles |
 | `scale_auto` | `1` drops `scale` by itself when the game cannot hold full speed, `0` never | |
-| `gpu_gl` | `1` draws the 2x / 4x picture on the graphics card instead of the CPU (needs a compatibility-profile OpenGL 3.0 context, i.e. shaders, framebuffers and a depth-stencil buffer; falls back to the CPU picture if the driver cannot). **Early prototype**, off by default: played by hand with both games on Windows on an AMD Radeon RX 7900 XTX, and a scripted run matches the CPU picture to under 0.9% of pixels on its worst frame; not tried on NVIDIA or Intel graphics, on Linux or on a Steam Deck (how to test it: `docs/gpu-renderer-testing.md`) | `0` |
+| `gpu_gl` | `1` draws the 2x / 4x picture on the graphics card instead of the CPU (needs an OpenGL 3.3 context, i.e. shaders, framebuffers and a depth-stencil buffer; without 3.3 the whole OpenGL path is skipped and the platform stretches the picture, and other missing pieces fall back to the CPU picture). **Early prototype**, off by default: played by hand with both games on Windows on an AMD Radeon RX 7900 XTX, and a scripted run matches the CPU picture to under 0.9% of pixels on its worst frame; not tried on NVIDIA or Intel graphics, on Linux or on a Steam Deck (how to test it: `docs/gpu-renderer-testing.md`) | `0` |
 | `filter` | `nearest` sharp pixels, `smooth` blended | F7 |
 | `aspect` | `4:3`, `stretch` | F8 |
 | `integer_scale` | `0`, `1` whole multiples of 240 lines only | |

@@ -4,7 +4,7 @@
    does not smear keep the picture's hi-res detail, and the mask bit (set-mask and check-mask on rectangles and copies, with the
    stencil rebuilt from vram when checking starts). Every line should say ok.
    From the repository root:
-     mkdir -p build && gcc -I runtime tools/gltest.c runtime/gpu_gl.c -o build/gltest.exe -lopengl32 -lgdi32 && build/gltest.exe
+     mkdir -p build && gcc -I runtime tools/gltest.c runtime/gpu_gl.c runtime/gl_stream.c -o build/gltest.exe -lopengl32 -lgdi32 && build/gltest.exe
    It prints the renderer, so it also shows which graphics card the context landed on. Not a test of gameplay, textured
    drawing or the window picture. */
 #define WIN32_LEAN_AND_MEAN
@@ -114,8 +114,16 @@ int main(void) {
     HDC dc = GetDC(w); PIXELFORMATDESCRIPTOR pf = {0}; pf.nSize = sizeof pf; pf.nVersion = 1; pf.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
     pf.iPixelType = PFD_TYPE_RGBA; pf.cColorBits = 32; pf.cDepthBits = 24; pf.cStencilBits = 8;
     SetPixelFormat(dc, ChoosePixelFormat(dc, &pf), &pf);
-    wglMakeCurrent(dc, wglCreateContext(dc));
-    printf("renderer: %s\n", glGetString(GL_RENDERER));
+    HGLRC legacy = wglCreateContext(dc);   /* the game's context: OpenGL 3.3 core, made through a plain one (see plat_win32.c) */
+    if (!legacy || !wglMakeCurrent(dc, legacy)) { printf("no OpenGL context\n"); return 2; }
+    typedef HGLRC (WINAPI *ctx_fn)(HDC, HGLRC, const int *);
+    ctx_fn make_ctx = (ctx_fn)(void *)wglGetProcAddress("wglCreateContextAttribsARB");
+    static const int attribs[] = { 0x2091, 3, 0x2092, 3, 0x9126, 1, 0 };
+    HGLRC core = make_ctx ? make_ctx(dc, NULL, attribs) : NULL;
+    if (!core) { printf("no OpenGL 3.3 core context\n"); return 2; }
+    wglMakeCurrent(NULL, NULL); wglDeleteContext(legacy);
+    if (!wglMakeCurrent(dc, core)) { printf("cannot use the core context\n"); return 2; }
+    printf("renderer: %s, OpenGL %s\n", glGetString(GL_RENDERER), glGetString(GL_VERSION));
     srand(7);
     for (int i = 0; i < 512 * 1024; i++) vram[i] = (u16)(rand() & 0x7fff);   /* no mask bits: texels are plain colours */
     if (!glg_init(S)) { printf("glg_init failed\n"); return 2; }

@@ -2,7 +2,8 @@
 
 Status: plan. Phase 1 (finishing the OpenGL path) is in progress: its tests are written, the NVIDIA and Intel runs are not
 done. Phase 2 (the backend seam) is done: the window, its surface, the window picture and the GPU renderer all sit behind
-`runtime/gfx.h`. Phases 3 to 7 are not started. Estimates are rough and are not promises.
+`runtime/gfx.h`. Phase 3 (core-profile OpenGL) is done on the Radeon. Phases 4 to 7 are not started. Estimates are rough and are not
+promises.
 
 ## Goal
 
@@ -37,12 +38,12 @@ needed today.
 ## Where OpenGL is today
 
 - `runtime/plat_win32.c` and `runtime/plat_sdl.c` own the window and its surface:
-  `plat_surface_open(kind, ...)` creates both for one kind of surface (`PLAT_SURF_GL`: a window with a compatibility context,
+  `plat_surface_open(kind, ...)` creates both for one kind of surface (`PLAT_SURF_GL`: a window with an OpenGL 3.3 core context,
   `SDL_WINDOW_OPENGL` or a pixel format on Win32; `PLAT_SURF_SOFT`: a plain window) and `plat_surface_close` removes them.
   `plat_swap` shows the frame, and `plat_gl_proc` looks up entry points (`runtime/host.h`). `plat_soft_present` is the
   existing no-OpenGL path.
 - `runtime/gfx_gl.c` (the OpenGL backend of `runtime/gfx.h`) draws the window picture with GL: upload of the CPU picture, the
-  sharp and smooth filter, FSR (two GLSL 1.20 shaders), and the `--shot-window` grab. `runtime/gfx.c` is the software
+  sharp and smooth filter, FSR (two GLSL 3.30 shaders), and the `--shot-window` grab. `runtime/gfx.c` is the software
   backend. `runtime/host_common.c` builds each frame and hands it to `gfx->present`; `runtime/gpu.c` reaches the GPU
   renderer through `gfx->r_*`.
 - `runtime/gpu_gl.c` (the experimental GPU hi-res renderer, `gpu_gl=1`) draws the 2x and 4x picture. Its whole interface is
@@ -82,9 +83,18 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    `HWND` and `HINSTANCE` for `vkCreateWin32SurfaceKHR`), which `host.h` does not have yet. On Windows the same scripted runs gave identical screenshots and window grabs before and after, and a GL attempt forced to
    fail falls back to the software window with the same pictures; the SDL front end was compile-checked only.
    *Exit:* `gltest` and the scripted run give identical results before and after.
-3. **Modernise GL as a stepping stone** (about a week, optional). Replace `glBegin` and the fixed pipeline with vertex buffers
-   and core-profile shaders. This is most of the porting work for Vulkan anyway, it drops the compatibility-profile
+3. **Modernise GL as a stepping stone** (about a week, optional). Replace `glBegin` and the fixed pipeline with vertex
+   buffers and core-profile shaders. This is most of the porting work for Vulkan anyway, it drops the compatibility-profile
    requirement, and it can be checked against the baseline before any new API is involved.
+   *Done (Radeon only):* the game asks for an OpenGL 3.3 core context (`wglCreateContextAttribsARB` on Win32, the core
+   profile attributes on SDL). All vertices go through one streamed buffer (`runtime/gl_stream.c`); the shaders are GLSL 3.30;
+   the vram texture is `GL_RG8` instead of luminance-alpha; nothing from the fixed pipeline is left. `gltest` passes all 31
+   checks on a real 3.3 core context. Window grabs with the CPU picture and the GPU picture, with FSR, with the smooth filter,
+   were identical to the previous build. With the sharp filter at a window size that is not a whole multiple of the picture
+   (512 wide into 1280), about 2 % of the pixels differ: the sample points fall exactly on texel edges there and the
+   interpolators of the fixed pipeline and of a shader round them differently; neither choice is wrong. *Cost:* a machine
+   whose driver offers less than OpenGL 3.3 (some Windows drivers for early Intel graphics stop at 3.1) no longer gets the
+   OpenGL path at all, window picture included, and uses the software stretch. The SDL front end was compile-checked only.
    *Exit:* same as phase 2, on a core-profile context.
 4. **Vulkan device and presentation** (about a week). The loader, instance, device and swapchain on both front ends; upload of
    the CPU picture, filter, FSR and the window grab. The backend is chosen once per run for the presenter and the renderer

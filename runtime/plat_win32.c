@@ -164,8 +164,16 @@ int plat_surface_open(int kind, int w, int h, const char *title) {
         PIXELFORMATDESCRIPTOR pfd = { sizeof pfd, 1, PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER, PFD_TYPE_RGBA, 32 };
         int pf = ChoosePixelFormat(dc, &pfd);
         if (!pf || !SetPixelFormat(dc, pf, &pfd)) { plat_surface_close(); return 0; }
+        /* an OpenGL 3.3 core context: wglCreateContextAttribsARB is found through a plain context made current first, which is then dropped */
         glrc = wglCreateContext(dc);
         if (!glrc || !wglMakeCurrent(dc, glrc)) { plat_surface_close(); return 0; }
+        typedef HGLRC (WINAPI *ctx_fn)(HDC, HGLRC, const int *);
+        ctx_fn make_ctx = (ctx_fn)(void *)wglGetProcAddress("wglCreateContextAttribsARB");
+        static const int attribs[] = { 0x2091 /* major */, 3, 0x2092 /* minor */, 3, 0x9126 /* profile */, 1 /* core */, 0 };
+        HGLRC core = make_ctx ? make_ctx(dc, NULL, attribs) : NULL;
+        if (!core) { fprintf(stderr, "[video] no OpenGL 3.3 core context\n"); plat_surface_close(); return 0; }
+        wglMakeCurrent(NULL, NULL); wglDeleteContext(glrc); glrc = core;
+        if (!wglMakeCurrent(dc, glrc)) { plat_surface_close(); return 0; }
         /* pacing is done by host_frame, so do not also wait for the monitor */
         typedef BOOL (WINAPI *swap_fn)(int);
         swap_fn swap = (swap_fn)(void *)wglGetProcAddress("wglSwapIntervalEXT");

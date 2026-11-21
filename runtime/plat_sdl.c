@@ -36,9 +36,9 @@ int plat_surface_open(int kind, int w, int h, const char *title) {
     plat_surface_close();
     if (kind == PLAT_SURF_GL) {
         SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-        /* the picture is drawn with OpenGL 1.x calls plus optional 2.0 shaders: ask for a compatibility context */
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+        /* the picture is drawn with core OpenGL 3.3 (vertex buffers and shaders, nothing from the fixed pipeline) */
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
         win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
         if (win) {
             glc = SDL_GL_CreateContext(win);
