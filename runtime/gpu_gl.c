@@ -428,21 +428,11 @@ void glg_flush(void) {
 }
 
 /* ------------------------------------------------------------- display --- */
-/* The display box wraps around the edges of vram like the CPU picture does (a 640 wide box starting at x 512, say): cut one axis
-   of it into the one or two runs that do not wrap. out[i] = { first vram coordinate, offset inside the box, length }. */
-static int runs(int s, int n, int size, int out[2][3]) {
-    s &= size - 1;
-    if (n > size) n = size;
-    out[0][0] = s; out[0][1] = 0; out[0][2] = n < size - s ? n : size - s;
-    if (n <= size - s) return 1;
-    out[1][0] = 0; out[1][1] = size - s; out[1][2] = n - (size - s);
-    return 2;
-}
 void glg_present(int x, int y, int w, int h) {
     if (state <= 0 || w <= 0 || h <= 0) return;
     if (w > 1024) w = 1024;
     if (h > 512) h = 512;
-    int rx[2][3], ry[2][3], nx = runs(x, w, 1024, rx), ny = runs(y, h, 512, ry);
+    int rx[2][3], ry[2][3], nx = gv_runs(x, w, 1024, rx), ny = gv_runs(y, h, 512, ry);
     q_ActiveTexture(GL_TEXTURE0);
     q_BindFramebuffer(GL_FRAMEBUFFER, fbo);
     if (nx == 1 && ny == 1) glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, rx[0][0] * S, ry[0][0] * S, w * S, h * S, 0);
@@ -457,7 +447,7 @@ void glg_read(int x, int y, int w, int h, unsigned *dst) {
     if (state <= 0 || w <= 0 || h <= 0) return;
     if (w > 1024) w = 1024;
     if (h > 512) h = 512;
-    int rx[2][3], ry[2][3], nx = runs(x, w, 1024, rx), ny = runs(y, h, 512, ry);
+    int rx[2][3], ry[2][3], nx = gv_runs(x, w, 1024, rx), ny = gv_runs(y, h, 512, ry);
     q_BindFramebuffer(GL_FRAMEBUFFER, fbo);
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
     glPixelStorei(GL_PACK_ROW_LENGTH, w * S);   /* the pieces land in one picture w * S wide */

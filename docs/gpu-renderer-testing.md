@@ -46,7 +46,7 @@ for whoever tries it next.
    ```
    (`lvl.txt` is one line of comma-separated `frame:button` events such as `90:st,300:x`; the button names are in
    `host_set_script`, `runtime/host_common.c`), and compare the `shot_*.png` files
-   pixel by pixel. On the Radeon the worst frame had 0.6 to 0.9 % of its pixels differing by more than 16 (of 255) (measured locally on
+   pixel by pixel. On the Radeon the worst frame had 0.6 to 0.9 % of its pixels differing by more than 16 of 255 (measured locally on
    Freestyle BMX at scale 2 with a 261-frame button script: worst frame 0.86 %, average 0.23 %; the script is not in the repo); most
    frames match exactly. A card that is far above that, or whose differences form patterns, is worth a look.
 
