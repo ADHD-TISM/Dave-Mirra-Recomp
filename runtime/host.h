@@ -28,10 +28,14 @@ void plat_init(void);               /* before anything else */
    returns 1; when this platform cannot give that kind it leaves nothing open and returns 0, so the caller can try another kind.
    PLAT_SURF_GL: an OpenGL 3.3 core context, current on the calling thread. PLAT_SURF_SOFT: a plain window the CPU picture
    is stretched into with plat_soft_present. Any other kind returns 0. */
-enum { PLAT_SURF_GL = 1, PLAT_SURF_SOFT = 2 };
+enum { PLAT_SURF_GL = 1, PLAT_SURF_SOFT = 2, PLAT_SURF_VK = 3 };   /* PLAT_SURF_VK: a window a Vulkan surface can be made for (see below) */
 int  plat_surface_open(int kind, int w, int h, const char *title);
 void plat_surface_close(void);                           /* the window and its surface; no-op when none is open */
 void plat_surface_show(void);                            /* the window stays hidden until the backend has what it needs, then this shows it */
+/* Vulkan, after plat_surface_open(PLAT_SURF_VK): the platform opens the system loader (vulkan-1.dll, libvulkan.so.1) at run time */
+void *plat_vk_loader(void);                              /* the loader's vkGetInstanceProcAddr, NULL when there is no loader */
+int  plat_vk_extensions(const char **names, int max);    /* instance extensions the window's surface needs; the count, 0 on failure */
+int  plat_vk_surface(void *instance, uint64_t *surface); /* make the VkSurfaceKHR for the window; 1 on success */
 void plat_set_title(const char *title);
 int  plat_wants_fullscreen(void);   /* the system runs this as a fullscreen app (Steam Deck Game Mode) */
 void plat_set_fullscreen(int on, int w, int h);          /* w = 0: the desktop's own resolution */

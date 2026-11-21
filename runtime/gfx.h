@@ -34,6 +34,6 @@ typedef struct GfxBackend {
     void (*r_read)(int x, int y, int w, int h, unsigned *dst);
 } GfxBackend;
 
-extern const GfxBackend gfx_gl_backend, gfx_soft_backend;
+extern const GfxBackend gfx_gl_backend, gfx_vk_backend, gfx_soft_backend;
 extern const GfxBackend *gfx;         /* the backend in use; the software one until host_init has chosen */
 #endif

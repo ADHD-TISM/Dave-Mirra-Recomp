@@ -3,6 +3,9 @@
 #ifdef DM_SDL   /* the whole file: a build that compiles every runtime file without choosing gets the Win32 one */
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#define VK_NO_PROTOTYPES          /* the loader is opened at run time: nothing links against Vulkan */
+#include "vulkan/vulkan.h"
+#include <SDL_vulkan.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -11,6 +14,7 @@
 static SDL_Window *win;
 static SDL_GLContext glc;
 static SDL_Renderer *ren;            /* only without OpenGL */
+static int is_vk;                    /* the window was made for Vulkan */
 static SDL_Texture *tex; static int tex_w, tex_h, tex_smooth;
 static SDL_GameController *pads[2];
 static SDL_AudioDeviceID adev;
@@ -31,6 +35,7 @@ void plat_surface_close(void) {
     if (ren) { if (tex) SDL_DestroyTexture(tex); tex = NULL; SDL_DestroyRenderer(ren); ren = NULL; }
     if (glc) { SDL_GL_DeleteContext(glc); glc = NULL; }
     if (win) { SDL_DestroyWindow(win); win = NULL; }
+    if (is_vk) { SDL_Vulkan_UnloadLibrary(); is_vk = 0; }
 }
 int plat_surface_open(int kind, int w, int h, const char *title) {
     plat_surface_close();
@@ -48,6 +53,13 @@ int plat_surface_open(int kind, int w, int h, const char *title) {
         plat_surface_close();
         return 0;
     }
+    if (kind == PLAT_SURF_VK) {
+        if (SDL_Vulkan_LoadLibrary(NULL) != 0) { fprintf(stderr, "[video] no Vulkan loader (%s)\n", SDL_GetError()); return 0; }
+        is_vk = 1;
+        win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
+        if (!win) { fprintf(stderr, "[video] cannot open a Vulkan window: %s\n", SDL_GetError()); plat_surface_close(); return 0; }
+        return 1;
+    }
     if (kind != PLAT_SURF_SOFT) return 0;   /* a kind this platform does not know */
     SDL_GL_ResetAttributes();               /* nothing left over from a failed OpenGL attempt */
     win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
@@ -57,6 +69,18 @@ int plat_surface_open(int kind, int w, int h, const char *title) {
     return 1;
 }
 void plat_surface_show(void) { if (win) SDL_ShowWindow(win); }
+void *plat_vk_loader(void) { return is_vk ? (void *)SDL_Vulkan_GetVkGetInstanceProcAddr() : NULL; }
+int plat_vk_extensions(const char **names, int max) {
+    unsigned n = 0;
+    if (!is_vk || !SDL_Vulkan_GetInstanceExtensions(win, &n, NULL) || n > (unsigned)max) return 0;
+    return SDL_Vulkan_GetInstanceExtensions(win, &n, names) ? (int)n : 0;
+}
+int plat_vk_surface(void *instance, uint64_t *surface) {
+    VkSurfaceKHR s = VK_NULL_HANDLE;
+    if (!is_vk || !SDL_Vulkan_CreateSurface(win, (VkInstance)instance, &s)) return 0;
+    *surface = (uint64_t)s;
+    return 1;
+}
 void plat_set_title(const char *title) { SDL_SetWindowTitle(win, title); }
 /* Steam Deck Game Mode runs every app inside gamescope, which shows one fullscreen window: start in fullscreen there. */
 int plat_wants_fullscreen(void) { return getenv("SteamGamepadUI") != NULL || getenv("GAMESCOPE_WAYLAND_DISPLAY") != NULL; }
@@ -80,7 +104,8 @@ void plat_set_fullscreen(int on, int w, int h) {
     SDL_ShowCursor(on ? SDL_DISABLE : SDL_ENABLE);
 }
 void plat_client_size(int *w, int *h) {
-    if (glc) SDL_GL_GetDrawableSize(win, w, h);
+    if (is_vk) SDL_Vulkan_GetDrawableSize(win, w, h);
+    else if (glc) SDL_GL_GetDrawableSize(win, w, h);
     else if (SDL_GetRendererOutputSize(ren, w, h) != 0) SDL_GetWindowSize(win, w, h);
 }
 void plat_swap(void) { SDL_GL_SwapWindow(win); }

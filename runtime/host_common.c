@@ -40,6 +40,7 @@ static int key(int k) { return k && plat_key(k); }
    the console picture; F6/F7/F8/F11 change the display while playing. */
 int g_fullscreen, g_integer_scale, g_filter, g_aspect;   /* filter: 0 nearest, 1 smooth; aspect: 0 = 4:3, 1 = stretch */
 int g_scale_auto = 1;   /* step the internal resolution down when the machine cannot keep up */
+int g_renderer;                                           /* 0 = OpenGL (default), 1 = Vulkan first (early prototype); a backend that cannot start falls back */
 int g_upscale, g_fsr_sharp = 80;                          /* upscale: 0 = plain, 1 = FSR 1; sharpness 0..100 */
 static int win_w = 960, win_h = 720;                      /* window_size */
 extern int g_ws_kq; extern unsigned g_gte_rtp;
@@ -95,6 +96,7 @@ static char *trim(char *s) {
 /* one "name = value" setting; returns 0 when the name or value is not understood */
 int host_set_option(const char *name, const char *val) {
     if (!_stricmp(name, "scale")) { int v = atoi(val); if (v != 1 && v != 2 && v != 4) return 0; g_gpu_scale = v; return 1; }
+    if (!_stricmp(name, "renderer")) { if (!_stricmp(val, "gl")) g_renderer = 0; else if (!_stricmp(val, "vulkan")) g_renderer = 1; else return 0; return 1; }
     if (!_stricmp(name, "gpu_gl")) { g_gpu_gl = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "scale_auto")) { g_scale_auto = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "filter")) { if (!_stricmp(val, "nearest")) g_filter = 0; else if (!_stricmp(val, "smooth")) g_filter = 1; else return 0; return 1; }
@@ -146,6 +148,8 @@ static void config_write_default(const char *path) {
                "scale = 1\n"
                "# 1 = drop to a lower scale by itself when the game cannot hold full speed at 2 or 4\n"
                "scale_auto = 1\n"
+               "# Graphics API that shows the picture: gl = OpenGL, vulkan = try Vulkan first (early prototype: gpu_gl is ignored; falls back to OpenGL)\n"
+               "renderer = gl\n"
                "# 1 = at scale 2 or 4, draw the picture on the graphics card instead of the processor (early prototype)\n"
                "gpu_gl = 0\n"
                "# How the picture is enlarged to the window: nearest = sharp pixels, smooth = blended (F7)\n"
@@ -300,10 +304,11 @@ void host_init(void) {
     last_frame = plat_now_ms();
     fb = calloc((size_t)1024 * 4 * 512 * 4, 4);   /* room for the largest internal resolution */
     /* the graphics backend is chosen once, here: OpenGL when the platform can give a context, the software stretch otherwise */
-    gfx = &gfx_gl_backend;
-    if (!gfx->init(win_w, win_h, GAME_NAME " (static recomp)")) {
-        gfx = &gfx_soft_backend;
-        if (!gfx->init(win_w, win_h, GAME_NAME " (static recomp)")) { plat_message("Cannot open a window."); plat_exit(1); }
+    const GfxBackend *order[3] = { &gfx_gl_backend, &gfx_soft_backend, NULL };
+    if (g_renderer == 1) { order[0] = &gfx_vk_backend; order[1] = &gfx_gl_backend; order[2] = &gfx_soft_backend; }
+    for (int i = 0; order[i]; i++) {
+        if (order[i]->init(win_w, win_h, GAME_NAME " (static recomp)")) { gfx = order[i]; break; }
+        if (!order[i + 1]) { plat_message("Cannot open a window."); plat_exit(1); }
     }
     show_settings();
     if (g_fullscreen || plat_wants_fullscreen()) set_fullscreen(1);

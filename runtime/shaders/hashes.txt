@@ -1,0 +1,4 @@
+# sha256 of source + compiler options (-V --target-env vulkan1.0), checked by tools/shaders.py check
+28c86be0138ac920aa141951a988c4bc7e3f8590932397b0471d5023a374d85f  fsr_easu.frag
+8fb58da4673c68dc5db9c53e029e723e7f326e44fbb45dd30d31a8c03c984739  fsr_rcas.frag
+f1ef72aef0468f7472057a609331fbef4b568d8dd1478b67f29d403f2f2e2e43  fullscreen.vert

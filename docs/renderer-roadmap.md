@@ -2,7 +2,8 @@
 
 Status: plan. Phase 1 (finishing the OpenGL path) is in progress: its tests are written, the NVIDIA and Intel runs are not
 done. Phase 2 (the backend seam) is done: the window, its surface, the window picture and the GPU renderer all sit behind
-`runtime/gfx.h`. Phase 3 (core-profile OpenGL) is done on the Radeon. Phases 4 to 7 are not started. Estimates are rough and are not
+`runtime/gfx.h`. Phase 3 (core-profile OpenGL) is done on the Radeon. Phase 4 is done on the Radeon: Vulkan shows the CPU picture, FSR
+included. Phases 5 to 7 are not started. Estimates are rough and are not
 promises.
 
 ## Goal
@@ -21,10 +22,10 @@ needed today.
    no dependencies and should keep it that way.
 2. **Platforms: Windows and Linux only.** macOS, and with it MoltenVK, is out of scope for now.
 3. **Shaders: compiled SPIR-V is checked into the repository next to the GLSL source**, so users need no shader compiler. A
-   contributor who changes a shader regenerates the SPIR-V with `glslc` and commits both. Different `glslc` versions produce
+   contributor who changes a shader regenerates the SPIR-V with `glslang` (or `glslc`) and commits both. Different `glslc` versions produce
    different bytes from the same source, so nothing compares bytes: a hash of the GLSL source (with the files it includes and
-   the `glslc` options used) is recorded next to each `.spv`. A small check in `tools/`, built like `tools/gltest.c` (the
-   repo has no test runner), recomputes the hash and fails when the source changed without the SPIR-V being regenerated. It
+   the compiler options used) is recorded next to the SPIR-V. A small check in `tools/` (`tools/shaders.py check`; the
+   repo has no test runner) recomputes the hash and fails when the source changed without the SPIR-V being regenerated. It
    needs no compiler, and it cannot tell whether the committed `.spv` is right, only that it is not stale.
 4. **OpenGL stays as the fallback**, not only for a transition period. The full chain is Vulkan, then OpenGL, then the
    platform's software stretch (`plat_soft_present`, which exists today for machines without OpenGL). OpenGL is removed only
@@ -100,6 +101,26 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
 4. **Vulkan device and presentation** (about a week). The loader, instance, device and swapchain on both front ends; upload of
    the CPU picture, filter, FSR and the window grab. The backend is chosen once per run for the presenter and the renderer
    together: until phase 5, `gpu_gl=1` keeps the OpenGL presenter, because `glg_present` hands its picture to a GL texture.
+   *Done so far (Windows, Radeon):* `runtime/gfx_vk.c` opens the loader at run time (`vulkan-1.dll`), makes an instance, picks
+   a device (a discrete one first), makes a swapchain (no vsync wait if the driver offers one) and shows the CPU picture with
+   `vkCmdBlitImage`, nearest or linear, black bars included, so it needs no shader. With FSR on it draws EASU into an image of
+   the picture's final size and RCAS into the swapchain image, from SPIR-V in `runtime/gfx_vk_spv.inc`. It also does the
+   `--shot-window` read-back.
+   `PLAT_SURF_VK`, `plat_vk_loader`, `plat_vk_extensions` and `plat_vk_surface` are the platform side (Win32, and SDL with
+   `SDL_WINDOW_VULKAN`). The setting `renderer = gl | vulkan` (default `gl`) puts Vulkan first in the fallback chain; `auto` is
+   phase 7. Window grabs against OpenGL, same runs: smooth filter 65 of 65 identical, sharp filter at a whole-multiple window
+   size 67 of 67 identical; at 512 into 1280 the same x mod 5 = 2 texel-edge ties as in phase 3 (blit and shader round the
+   tie differently). FSR: 55 of 61 grabs identical and the other 6 differ by at most 1 of 255 in under 0.01 % of the pixels;
+   at an odd window size (1001x751) 46 of 64 identical, the rest the same way (the picture is placed like the OpenGL one, its
+   offset counted from the bottom). Resizing, minimising and restoring the window work. With the loader made unavailable the run says so
+   and uses OpenGL, with identical grabs (64 of 64). Under Vulkan `gpu_gl` is ignored (the renderer calls say no, so the CPU
+   picture is used): the GPU renderer is phase 5. The SDL front end is compile-checked only.
+   *Shaders:* the GLSL for Vulkan is in `runtime/shaders` (`fsr_easu.frag` and `fsr_rcas.frag` are ports of the OpenGL ones with
+   push constants and a top-left origin, `fullscreen.vert` draws one triangle). `tools/shaders.py build <glslang>` compiles them
+   to SPIR-V 1.0 (`-V --target-env vulkan1.0`, glslang 16.6.0, the Khronos release; `glslc` was not available) and writes
+   `runtime/gfx_vk_spv.inc` and `runtime/shaders/hashes.txt`; `tools/shaders.py check` needs no compiler and fails when a source
+   changed without the SPIR-V being regenerated (decision 3, as a Python tool, not C).
+   *Not done:* validation layers, NVIDIA, Intel, Mesa and Linux (untested), the SDL front end (compile-checked only).
    *Exit:* every CPU-renderer run, including FSR, looks the same as through OpenGL, and a machine with no Vulkan loader still
    starts through the fallback chain.
 5. **Vulkan GPU renderer** (2 to 3 weeks). The vram texture with dirty-row uploads, the offscreen target with stencil, the

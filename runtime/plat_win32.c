@@ -6,6 +6,9 @@
 #include <GL/gl.h>
 #include <stdio.h>
 #include <string.h>
+#define VK_NO_PROTOTYPES          /* the loader is opened at run time: nothing links against Vulkan */
+#define VK_USE_PLATFORM_WIN32_KHR
+#include "vulkan/vulkan.h"
 #include "host.h"
 
 static HWND wnd;
@@ -178,10 +181,32 @@ int plat_surface_open(int kind, int w, int h, const char *title) {
         typedef BOOL (WINAPI *swap_fn)(int);
         swap_fn swap = (swap_fn)(void *)wglGetProcAddress("wglSwapIntervalEXT");
         if (swap) swap(0);
-    } else if (kind != PLAT_SURF_SOFT) { plat_surface_close(); return 0; }   /* a kind this platform does not know */
+    } else if (kind != PLAT_SURF_SOFT && kind != PLAT_SURF_VK) { plat_surface_close(); return 0; }   /* a kind this platform does not know */
     return 1;
 }
 void plat_surface_show(void) { if (wnd) ShowWindow(wnd, SW_SHOW); }
+static PFN_vkGetInstanceProcAddr vk_gipa;
+void *plat_vk_loader(void) {
+    if (!vk_gipa) {
+        HMODULE m = LoadLibraryA("vulkan-1.dll");
+        if (m) vk_gipa = (PFN_vkGetInstanceProcAddr)(void *)GetProcAddress(m, "vkGetInstanceProcAddr");
+    }
+    return (void *)vk_gipa;
+}
+int plat_vk_extensions(const char **names, int max) {
+    if (max < 2) return 0;
+    names[0] = "VK_KHR_surface"; names[1] = "VK_KHR_win32_surface";
+    return 2;
+}
+int plat_vk_surface(void *instance, uint64_t *surface) {
+    PFN_vkCreateWin32SurfaceKHR create = vk_gipa && wnd ? (PFN_vkCreateWin32SurfaceKHR)(void *)vk_gipa((VkInstance)instance, "vkCreateWin32SurfaceKHR") : NULL;
+    if (!create) return 0;
+    VkWin32SurfaceCreateInfoKHR ci = { .sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR, .hinstance = GetModuleHandleA(NULL), .hwnd = wnd };
+    VkSurfaceKHR s = VK_NULL_HANDLE;
+    if (create((VkInstance)instance, &ci, NULL, &s) != VK_SUCCESS) return 0;
+    *surface = (uint64_t)s;
+    return 1;
+}
 void plat_client_size(int *w, int *h) { RECT cr; GetClientRect(wnd, &cr); *w = cr.right; *h = cr.bottom; }
 void plat_swap(void) { SwapBuffers(dc); }
 void *plat_gl_proc(const char *name) { return (void *)wglGetProcAddress(name); }
