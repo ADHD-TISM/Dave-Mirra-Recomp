@@ -46,7 +46,7 @@ static VkShaderModule vs_mod, fs_mod;
 static size_t vbuf_bytes = VBUF_BYTES;                          /* DMRECOMP_VK_VBUF_KB (a test hook) can make it smaller */
 static VkCommandBuffer ucb; static VkFence ufence;                            /* reads and the first layout changes */
 static VkBuffer rbuf; static VkDeviceMemory rmem; static void *rmap; static size_t rsize;   /* the read-back */
-static int ignored;                             /* copies seen so far (said once: they are not drawn yet) */
+static int said_copies;                         /* copies are not drawn yet: said once */
 typedef struct { int first, count, blend, clip[4]; int32_t pass; float alpha; } Draw;   /* a range of the batch's vertices and its state */
 static Draw *dr; static int nd, dcap;
 
@@ -172,7 +172,8 @@ static int setup_once(void) {
     VkPipelineLayoutCreateInfo pli = { .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1, .pSetLayouts = &dsl, .pushConstantRangeCount = 1, .pPushConstantRanges = &pcr };
     if (vkCreatePipelineLayout(vkc.dev, &pli, NULL, &playout) != VK_SUCCESS || !make_pass()) return -1;
     vs_mod = vk_make_module(spv_gpu_draw_vert, sizeof spv_gpu_draw_vert / 4); fs_mod = vk_make_module(spv_gpu_decode_frag, sizeof spv_gpu_decode_frag / 4);
-    if (!vs_mod || !fs_mod || !get_pipe(BL_OFF)) return -1;
+    if (!vs_mod || !fs_mod) return -1;
+    for (int b = 0; b < BL_N; b++) if (!get_pipe(b)) { fprintf(stderr, "[gpu_vk] a blend pipeline cannot be made\n"); return -1; }
     /* command buffers, fences, per-slot buffers */
     VkFenceCreateInfo fi = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
     VkCommandBufferAllocateInfo ba = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, .commandPool = vkc.pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1 };
@@ -326,7 +327,7 @@ static void submit_batch(void) {
         for (int i = 0; i < nd; i++) {
             const Draw *d = &dr[i];
             VkPipeline pl = get_pipe(d->blend);
-            if (!pl) { fprintf(stderr, "[gpu_vk] a blend pipeline could not be made; a draw is skipped\n"); continue; }
+            if (!pl) continue;   /* cannot happen: set-up made them all */
             if (pl != bound) { vkCmdBindPipeline(sl->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pl); bound = pl; }
             VkRect2D sc = { { 0, 0 }, { w, h } };
             if (!(d->clip[0] == 0 && d->clip[1] == 0 && d->clip[2] == 1023 && d->clip[3] == 511))
@@ -349,27 +350,34 @@ static void submit_batch(void) {
         vkDeviceWaitIdle(vkc.dev);
         VkFenceCreateInfo fi = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };   /* the fence was reset and nothing will signal it */
         vkDestroyFence(vkc.dev, sl->fence, NULL); sl->fence = VK_NULL_HANDLE;
-        vkCreateFence(vkc.dev, &fi, NULL, &sl->fence);
+        if (vkCreateFence(vkc.dev, &fi, NULL, &sl->fence) != VK_SUCCESS) {   /* the device is unwell: no more drawing this session */
+            sl->fence = VK_NULL_HANDLE;
+            fprintf(stderr, "[gpu_vk] the device does not recover; using the CPU picture from now on\n");
+            state = -1;
+        }
     }
     gv.n = 0; nd = 0;
 }
 
 void gvk_flush(void) {
-    if (state <= 0 || !qn) return;
+    if (state <= 0 || !tgt_scale || !qn) return;
     gv.n = 0; gv.fail = 0; nd = 0;
     const int cap = (int)(vbuf_bytes / sizeof(GlsVert));
     int i = 0;
     while (i < qn) {
         const GPrim *f = &q[i];
-        if (f->kind == GK_COPY) { if (!ignored++) fprintf(stderr, "[gpu_vk] copies are not drawn yet (step 5)\n"); i++; continue; }
+        if (f->kind == GK_COPY) { if (!said_copies) { said_copies = 1; fprintf(stderr, "[gpu_vk] copies are not drawn yet (step 5)\n"); } i++; continue; }
         int j = i + 1;
         while (j < qn && same_state(f, &q[j])) j++;
         int start = gv.n;
-        for (int k = i; k < j; k++) {
-            if (gv.n + 24 > cap) { add_run(f, start, gv.n - start); submit_batch(); start = 0; }   /* the slot's buffer is full: submit, go on in the other slot */
+        for (int k = i; k < j && !gv.fail; k++) {
+            if (gv.n + GV_MAX_VERTS > cap) { add_run(f, start, gv.n - start); submit_batch(); start = 0; }   /* the slot's buffer is full: submit, go on in the other slot */
             gv_emit(&gv, &q[k], S);
         }
-        add_run(f, start, gv.n - start);
+        if (gv.fail) {   /* out of memory for the vertices: this run is lost (what came before it is drawn), the rest of the flush goes on */
+            fprintf(stderr, "[gpu_vk] out of memory for the vertices; part of a frame is not drawn\n");
+            gv.n = start; gv.fail = 0;
+        } else add_run(f, start, gv.n - start);
         i = j;
     }
     submit_batch();
@@ -377,7 +385,7 @@ void gvk_flush(void) {
 }
 
 void gvk_submit(const GPrim *p) {
-    if (state <= 0) return;
+    if (state <= 0 || !tgt_scale) return;
     if (qn == QMAX) gvk_flush();
     q[qn] = *p; q[qn].setm = cur_set; q[qn].chkm = cur_chk;
     qn++;
@@ -385,7 +393,7 @@ void gvk_submit(const GPrim *p) {
 
 /* ---- display: the visible box wraps around the edges of vram like the CPU picture does (gv_runs, gpu_emit.h) ---- */
 void gvk_present_copy(VkCommandBuffer c, VkImage dst, int x, int y, int w, int h) {
-    if (state <= 0 || w <= 0 || h <= 0) return;
+    if (state <= 0 || !tgt_scale || w <= 0 || h <= 0) return;
     if (w > 1024) w = 1024;
     if (h > 512) h = 512;
     int rx[2][3], ry[2][3], nx = gv_runs(x, w, 1024, rx), ny = gv_runs(y, h, 512, ry);
@@ -403,7 +411,7 @@ void gvk_present_copy(VkCommandBuffer c, VkImage dst, int x, int y, int w, int h
 }
 
 void gvk_read(int x, int y, int w, int h, unsigned *dst) {
-    if (state <= 0 || w <= 0 || h <= 0) return;
+    if (state <= 0 || !tgt_scale || w <= 0 || h <= 0) return;
     if (w > 1024) w = 1024;
     if (h > 512) h = 512;
     gvk_flush();

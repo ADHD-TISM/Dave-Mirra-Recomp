@@ -8,6 +8,7 @@
 #include "gpu_gl.h"
 #include "gl_stream.h"
 
+#define GV_MAX_VERTS 24   /* the most vertices gv_emit adds for one primitive: four pieces of a wrapped box, two triangles each */
 typedef struct { GlsVert *v; int n, cap, fail; } GpuVerts;
 
 static inline void gv_vert(GpuVerts *g, const GPrim *p, int flags, float px, float py, float r, float gr, float b, float u, float v) {
