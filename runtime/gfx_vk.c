@@ -1,8 +1,8 @@
 /* The Vulkan backend (docs/renderer-roadmap.md, phase 4): shows the CPU picture in the window. Plainly, the picture is copied into
    an image and blitted into the swapchain image with the nearest or the linear filter (vkCmdBlitImage), black bars included (the
    swapchain image is cleared first). With FSR on, two render passes do it instead: EASU into an image of the picture's final size,
-   then RCAS into the swapchain image (the SPIR-V is in gfx_vk_spv.inc, made from runtime/shaders by tools/shaders.py). Not here
-   yet: the GPU hi-res renderer (r_init says no, so gpu_gl keeps the CPU picture). The device and the helpers other Vulkan files
+   then RCAS into the swapchain image (the SPIR-V is in gfx_vk_spv.c, made from runtime/shaders by tools/shaders.py). Not here
+   yet in the game: the GPU hi-res renderer (gpu_vk.c; its r_init says no unless DMRECOMP_VK_RENDERER is set, so gpu_gl keeps the CPU picture). The device and the helpers other Vulkan files
    share are declared in vk_ctx.h. DMRECOMP_VK_VALIDATE=1 (read once, at start) turns on the validation layer if it is installed.
    Vulkan is opened at run time (plat_vk_loader), so a machine without it just fails init and the next backend is tried. */
 #include <stdio.h>
@@ -13,7 +13,8 @@
 #include "hw.h"
 #include "host.h"
 #include "gfx.h"
-#include "gfx_vk_spv.inc"
+#include "gfx_vk_spv.h"
+#include "gpu_vk.h"
 
 #define X(n) PFN_##n n;
 VK_FUNCS(X)
@@ -228,6 +229,7 @@ static int make_swapchain(int cw, int ch) {
 }
 
 static void teardown(void) {
+    if (vkc.dev) gvk_shutdown();
     if (vkc.dev) { vkDeviceWaitIdle(vkc.dev); free_picture(); free_fsr_target(); vk_free_buffer(&rb, &rb_mem, &rb_map); destroy_swapchain(); }
     if (vkc.dev) {
         if (pipe_easu) vkDestroyPipeline(vkc.dev, pipe_easu, NULL);
@@ -249,8 +251,9 @@ static void teardown(void) {
     if (vkc.inst && surf) vkDestroySurfaceKHR(vkc.inst, surf, NULL);
     surf = VK_NULL_HANDLE;
     if (vkc.inst && msgr && destroy_msgr) destroy_msgr(vkc.inst, msgr, NULL);
-    msgr = VK_NULL_HANDLE;
-    if (vkc.inst) { vkDestroyInstance(vkc.inst, NULL); vkc.inst = VK_NULL_HANDLE; }
+    msgr = VK_NULL_HANDLE; destroy_msgr = NULL;
+    if (vkc.inst) vkDestroyInstance(vkc.inst, NULL);
+    memset(&vkc, 0, sizeof vkc);   /* what other Vulkan files read: all zero while the backend is not running */
 }
 
 static int pick_device(void) {
@@ -415,7 +418,8 @@ static int setup(void) {
     const char *ext[9]; int ne = plat_vk_extensions(ext, 8);
     if (!create || ne <= 0) { fprintf(stderr, "[video] Vulkan cannot show a window here\n"); return 0; }
     const char *layer[1] = { "VK_LAYER_KHRONOS_validation" }; uint32_t nlayer = 0; int messenger = 0;
-    if (getenv("DMRECOMP_VK_VALIDATE") && validation_available(&messenger)) { nlayer = 1; if (messenger) ext[ne++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME; }
+    const char *want_validation = getenv("DMRECOMP_VK_VALIDATE");   /* set and not "0" */
+    if (want_validation && *want_validation && strcmp(want_validation, "0") && validation_available(&messenger)) { nlayer = 1; if (messenger) ext[ne++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME; }
     VkApplicationInfo ai = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "dmrecomp", .apiVersion = VK_API_VERSION_1_0 };
     VkInstanceCreateInfo ci = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &ai, .enabledExtensionCount = (uint32_t)ne, .ppEnabledExtensionNames = ext,
                                  .enabledLayerCount = nlayer, .ppEnabledLayerNames = layer };
@@ -505,8 +509,9 @@ static void vk_present(const GfxFrame *f) {
         disable_fsr();
         fsr = 0;
     }
+    if (f->on_gpu) gvk_flush();   /* the renderer's queued drawing goes to the queue before this frame's commands */
     vkWaitForFences(vkc.dev, 1, &fence, VK_TRUE, UINT64_MAX);
-    memcpy(stage_map, f->fb, (size_t)f->fb_w * f->fb_h * 4);
+    if (!f->on_gpu) memcpy(stage_map, f->fb, (size_t)f->fb_w * f->fb_h * 4);
     uint32_t idx = 0;
     VkResult r = vkAcquireNextImageKHR(vkc.dev, swap, UINT64_MAX, acq, VK_NULL_HANDLE, &idx);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) { sc_dirty = 1; return; }
@@ -519,7 +524,8 @@ static void vk_present(const GfxFrame *f) {
     const VkPipelineStageFlags TOP = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, XFER = VK_PIPELINE_STAGE_TRANSFER_BIT, FRAG = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     barrier(pic, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT, TOP, XFER);
     VkBufferImageCopy bc = { .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, .imageExtent = { (uint32_t)pic_w, (uint32_t)pic_h, 1 } };
-    vkCmdCopyBufferToImage(cb, stage, pic, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bc);
+    if (f->on_gpu) gvk_present_copy(cb, pic, f->box[0], f->box[1], f->box[2], f->box[3]);
+    else vkCmdCopyBufferToImage(cb, stage, pic, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bc);
     VkImage si = simg[idx];
     int want = f->grab;
     size_t need = (size_t)sext.width * sext.height * 4;
@@ -604,13 +610,13 @@ static void vk_present(const GfxFrame *f) {
 }
 static const uint32_t *vk_grab(int *w, int *h) { if (!grab_ok) return NULL; grab_ok = 0; *w = grab_w; *h = grab_h; return grab; }   /* one-shot, like the OpenGL one */
 
-/* the GPU hi-res renderer is not ported yet: r_init says no, so gpu_gl keeps the CPU picture */
-static int vk_r_init(int scale) { (void)scale; return 0; }
-static void vk_r_submit(const GPrim *p) { (void)p; }
-static void vk_r_mask(int set, int check) { (void)set; (void)check; }
-static void vk_r_dirty(int y0, int y1) { (void)y0; (void)y1; }
-static void vk_r_flush(void) { }
-static void vk_r_read(int x, int y, int w, int h, unsigned *dst) { (void)x; (void)y; (void)w; (void)h; (void)dst; }
+/* the GPU hi-res renderer lives in gpu_vk.c (step 2 of docs/vulkan-gpu-renderer-plan.md: off unless DMRECOMP_VK_RENDERER is set) */
+static int vk_r_init(int scale) { return gvk_init(scale); }
+static void vk_r_submit(const GPrim *p) { gvk_submit(p); }
+static void vk_r_mask(int set, int check) { gvk_mask(set, check); }
+static void vk_r_dirty(int y0, int y1) { gvk_dirty(y0, y1); }
+static void vk_r_flush(void) { gvk_flush(); }
+static void vk_r_read(int x, int y, int w, int h, unsigned *dst) { gvk_read(x, y, w, h, dst); }
 
 const GfxBackend gfx_vk_backend = {
     .name = "Vulkan", .hw = 1,

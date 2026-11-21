@@ -20,6 +20,7 @@
 #include "gpu_gl.h"
 #include "vram_cuts.h"
 #include "gl_stream.h"
+#include "gpu_emit.h"
 #ifndef APIENTRY
 #define APIENTRY
 #endif
@@ -226,80 +227,12 @@ void glg_dirty(int y0, int y1) {
 }
 
 /* ------------------------------------------------------------- drawing --- */
-static GlsVert *vbuf; static int vn, vcap, vfail;   /* the vertices of the run being drawn; vfail: out of memory, the whole run is dropped */
-static void vert(const GPrim *p, int flags, float px, float py, float r, float g, float b, float u, float v) {
-    if (vfail) return;
-    if (vn == vcap) {
-        GlsVert *nb = realloc(vbuf, sizeof *vbuf * (size_t)(vcap ? vcap * 2 : 4096));
-        if (!nb) { vfail = 1; return; }   /* a half-built triangle must not be drawn: draw_verts skips the whole run */
-        vbuf = nb; vcap = vcap ? vcap * 2 : 4096;
-    }
-    GlsVert *o = &vbuf[vn++];
-    o->x = px; o->y = py;
-    o->c[0] = r / 255.0f; o->c[1] = g / 255.0f; o->c[2] = b / 255.0f;
-    o->t0[0] = u; o->t0[1] = v; o->t0[2] = (float)p->tx; o->t0[3] = (float)p->ty;
-    o->t1[0] = (float)p->cx; o->t1[1] = (float)p->cy; o->t1[2] = (float)p->depth; o->t1[3] = (float)flags;
-    for (int i = 0; i < 4; i++) o->t2[i] = (float)p->tw[i];
-}
+static GpuVerts gv;   /* the vertices of the run being drawn (gpu_emit.h); gv.fail: out of memory, the whole run is dropped */
+static void emit(const GPrim *p) { gv_emit(&gv, p, S); }
 static void draw_verts(void) {
-    if (vfail) { fprintf(stderr, "[gpu_gl] out of memory for the vertices; part of a frame is not drawn\n"); vfail = 0; }
-    else gls_draw(GL_TRIANGLES, vbuf, vn);
-    vn = 0;
-}
-static void quad(const GPrim *p, int flags, float x0, float y0, float x1, float y1, float r, float g, float b,
-                 float ul, float vt, float ur, float vb) {
-    vert(p, flags, x0, y0, r, g, b, ul, vt); vert(p, flags, x1, y0, r, g, b, ur, vt); vert(p, flags, x1, y1, r, g, b, ur, vb);
-    vert(p, flags, x0, y0, r, g, b, ul, vt); vert(p, flags, x1, y1, r, g, b, ur, vb); vert(p, flags, x0, y1, r, g, b, ul, vb);
-}
-static int pflags(const GPrim *p) {
-    return (p->textured || p->kind == GK_BLIT ? 1 : 0) | (p->raw ? 2 : 0) | (p->dither ? 4 : 0) | (p->kind == GK_BLIT ? 8 : 0);
-}
-/* a box in vram wraps around the edges: up to four pieces */
-static void pieces(int x, int y, int w, int h, int out[4][4], int *n) {
-    int xs[2][2], ys[2][2], nx = 0, ny = 0;
-    x &= 1023; y &= 511;
-    xs[nx][0] = x; xs[nx][1] = w > 1024 - x ? 1024 - x : w; nx++;
-    if (w > 1024 - x) { xs[nx][0] = 0; xs[nx][1] = w - (1024 - x); nx++; }
-    ys[ny][0] = y; ys[ny][1] = h > 512 - y ? 512 - y : h; ny++;
-    if (h > 512 - y) { ys[ny][0] = 0; ys[ny][1] = h - (512 - y); ny++; }
-    *n = 0;
-    for (int j = 0; j < ny; j++) for (int i = 0; i < nx; i++) {
-        out[*n][0] = xs[i][0]; out[*n][1] = ys[j][0]; out[*n][2] = xs[i][1]; out[*n][3] = ys[j][1]; (*n)++;
-    }
-}
-static void emit(const GPrim *p) {
-    float s = (float)S;
-    int fl = pflags(p);
-    switch (p->kind) {
-    case GK_TRI:
-        for (int i = 0; i < 3; i++)   /* the picture is sampled at pixel corners, so corners sit half a pixel in */
-            vert(p, fl, p->vx[i] * s + 0.5f, p->vy[i] * s + 0.5f, (float)p->vr[i], (float)p->vg[i], (float)p->vb[i], (float)p->vu[i], (float)p->vv[i]);
-        break;
-    case GK_RECT: {
-        float ul = (float)p->u0, vt = (float)p->v0, ur, vb;
-        if (p->flipx) ul += 1.0f - 0.004f;
-        if (p->flipy) vt += 1.0f - 0.004f;
-        ur = p->flipx ? ul - (float)p->w : ul + (float)p->w;
-        vb = p->flipy ? vt - (float)p->h : vt + (float)p->h;
-        quad(p, fl, p->x * s, p->y * s, (p->x + p->w) * s, (p->y + p->h) * s, (float)p->r, (float)p->g, (float)p->b, ul, vt, ur, vb);
-        break;
-    }
-    case GK_PIX: case GK_FILL: {
-        int pc[4][4], n;
-        pieces(p->x, p->y, p->w, p->h, pc, &n);
-        float r = (float)((p->col & 31) * 8), g = (float)(((p->col >> 5) & 31) * 8), b = (float)(((p->col >> 10) & 31) * 8);
-        for (int i = 0; i < n; i++) quad(p, fl, pc[i][0] * s, pc[i][1] * s, (pc[i][0] + pc[i][2]) * s, (pc[i][1] + pc[i][3]) * s, r, g, b, 0, 0, 0, 0);
-        break;
-    }
-    case GK_BLIT: {
-        int pc[4][4], n;
-        pieces(p->x, p->y, p->w, p->h, pc, &n);
-        for (int i = 0; i < n; i++)
-            quad(p, fl, pc[i][0] * s, pc[i][1] * s, (pc[i][0] + pc[i][2]) * s, (pc[i][1] + pc[i][3]) * s, 255, 255, 255,
-                 (float)pc[i][0], (float)pc[i][1], (float)(pc[i][0] + pc[i][2]), (float)(pc[i][1] + pc[i][3]));
-        break;
-    }
-    }
+    if (gv.fail) { fprintf(stderr, "[gpu_gl] out of memory for the vertices; part of a frame is not drawn\n"); gv.fail = 0; }
+    else gls_draw(GL_TRIANGLES, gv.v, gv.n);
+    gv.n = 0;
 }
 
 static void cliprect(const GPrim *p, int c[4]) {
@@ -337,7 +270,7 @@ static void draw_run(int a, int b, int pass, int blend) {
     q_Uniform1i(u_pass, pass);
     q_Uniform1f(u_alpha, !blend ? 1.0f : f->semimode == 0 ? 0.5f : f->semimode == 3 ? 0.25f : 1.0f);
     set_blend(blend, f->semimode);
-    vn = 0;
+    gv.n = 0;
     for (int i = a; i < b; i++) emit(&q[i]);
     draw_verts();
 }
@@ -375,7 +308,7 @@ static void copy_box(const GPrim *p, int sx, int sy, int dx, int dy, int w, int 
     glStencilFunc(GL_NOTEQUAL, 1, 1);
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-    vn = 0; emit(&b); draw_verts();
+    gv.n = 0; emit(&b); draw_verts();
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 }
 /* the console wraps a copy around the edges of vram, at the source and at the destination independently: cut it into boxes
@@ -407,7 +340,7 @@ void glg_mask(int set, int check) {
         glEnable(GL_STENCIL_TEST); glStencilFunc(GL_ALWAYS, 1, 0xff); glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
         q_Uniform1i(u_pass, 2); q_Uniform1f(u_alpha, 1.0f);
-        vn = 0; emit(&b); draw_verts();
+        gv.n = 0; emit(&b); draw_verts();
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glDisable(GL_STENCIL_TEST);
         q_UseProgram(0);
@@ -481,7 +414,7 @@ void glg_flush(void) {
             glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
             glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
             q_Uniform1i(u_pass, 2); q_Uniform1f(u_alpha, 1.0f); set_blend(0, 0);
-            vn = 0;
+            gv.n = 0;
             for (int k = i; k < j; k++) if (f->kind == GK_BLIT || q[k].textured) emit(&q[k]);   /* a run can mix in flat prims */
             draw_verts();
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);

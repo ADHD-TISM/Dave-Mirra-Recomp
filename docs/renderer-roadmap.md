@@ -104,7 +104,7 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    *Done so far (Windows, Radeon):* `runtime/gfx_vk.c` opens the loader at run time (`vulkan-1.dll`), makes an instance, picks
    a device (a discrete one first), makes a swapchain (no vsync wait if the driver offers one) and shows the CPU picture with
    `vkCmdBlitImage`, nearest or linear, black bars included, so it needs no shader. With FSR on it draws EASU into an image of
-   the picture's final size and RCAS into the swapchain image, from SPIR-V in `runtime/gfx_vk_spv.inc`. It also does the
+   the picture's final size and RCAS into the swapchain image, from SPIR-V in `runtime/gfx_vk_spv.c`. It also does the
    `--shot-window` read-back.
    `PLAT_SURF_VK`, `plat_vk_loader`, `plat_vk_extensions` and `plat_vk_surface` are the platform side (Win32, and SDL with
    `SDL_WINDOW_VULKAN`). The setting `renderer = gl | vulkan` (default `gl`) puts Vulkan first in the fallback chain; `auto` is
@@ -118,7 +118,7 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    *Shaders:* the GLSL for Vulkan is in `runtime/shaders` (`fsr_easu.frag` and `fsr_rcas.frag` are ports of the OpenGL ones with
    push constants and a top-left origin, `fullscreen.vert` draws one triangle). `tools/shaders.py build <glslang>` compiles them
    to SPIR-V 1.0 (`-V --target-env vulkan1.0`, glslang 16.6.0, the Khronos release; `glslc` was not available) and writes
-   `runtime/gfx_vk_spv.inc` and `runtime/shaders/hashes.txt`; `tools/shaders.py check` needs no compiler and fails when a source
+   `runtime/gfx_vk_spv.c` and `runtime/shaders/hashes.txt`; `tools/shaders.py check` needs no compiler and fails when a source
    changed without the SPIR-V being regenerated (decision 3, as a Python tool, not C).
    *Not done:* validation layers, NVIDIA, Intel, Mesa and Linux (untested), the SDL front end (compile-checked only).
    *Exit:* every CPU-renderer run, including FSR, looks the same as through OpenGL, and a machine with no Vulkan loader still
