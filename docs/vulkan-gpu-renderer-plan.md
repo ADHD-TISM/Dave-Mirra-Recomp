@@ -47,7 +47,7 @@ in `COLOR_ATTACHMENT_OPTIMAL` (and the depth-stencil in its attachment layout) i
    yet: a fill of the whole target from vram (`GK_BLIT`) is the only draw. *Test:* a Vulkan version of `tools/gltest.c`
    (`tools/vktest.c`, its own small window and the same checks): the display-box and the plain upload cases.
    *Done:* `runtime/gpu_vk.c` (interface in `gpu_vk.h`): the `B8G8R8A8` target with a depth-stencil image beside it (the format is
-   picked from what the device offers; on the Radeon the check ran, and it is the one that needs only the attachment feature), the
+   picked from what the device offers; on the Radeon it is `D32_SFLOAT_S8_UINT`, as the message at start says), the
    `R8G8` vram image with dirty rows copied in through a staging buffer, two frame slots, a render pass and one pipeline, the
    draw shaders ported to GLSL 450 (`runtime/shaders/gpu_draw.vert`, `gpu_decode.frag`), blits, `r_read`, and the presenter's copy of
    the visible box (with wraps) from the target into `pic`. The vertex code both renderers use moved to `runtime/gpu_emit.h`
@@ -61,6 +61,22 @@ in `COLOR_ATTACHMENT_OPTIMAL` (and the depth-stencil in its attachment layout) i
    *Test:* new `vktest` cases (every rectangle case in `gltest` uses the mask bit, so they belong to step 5): a flat rectangle,
    fill, pixel and triangle at each of the five blend modes against a CPU model of the blend (the arithmetic of `gpu.c`), a
    scissored draw, and a triangle finer than vram's pixels (the hi-res detail).
+   *Done:* a flush groups the queued primitives into runs of the same state (`same_state`, as in `gpu_gl.c`), and each run is a draw
+   with the blend pipeline it needs (average, add, subtract, quarter-add, none; made when first used and cached) and its drawing
+   area as the scissor; translucent textured primitives get the two draws (opaque texels, then translucent ones). When the
+   vertices of a flush would not fit in a slot's buffer it submits what it has and goes on in the other slot (the flush-on-full
+   rule), which `vktest small` forces with a 64 KB buffer (`DMRECOMP_VK_VBUF_KB`, a test hook). `vktest` now makes 42 checks, all
+   of which pass on the Radeon in the normal, the `small` and the `gate` runs: flat rectangle, triangles (two that make a
+   rectangle, so a pixel drawn twice along the diagonal would show) and pixel at all five blend modes against a CPU model of the
+   blend, a fill (the blend is ignored), drawing areas (clipped, and empty), 200 and 1500 primitives in one flush against a
+   painter's-algorithm model, a triangle finer than vram's pixels, the presenter's copy with FSR (it must equal the same picture
+   sent from the CPU), the 4x picture and going back to 2x. Four deliberate breaks (the subtract operation, the scissor, a run
+   dropped at a batch boundary, the average's blend factor) each make it fail. The step also fixes what the step-2 review found: a failed
+   target no longer disables the renderer for the session, a failed set-up frees what it had made, a failed submit keeps the
+   dirty rows and replaces the fence, `runs()` is shared (`gv_runs`).
+   *Seen, not yet tested:* with `DMRECOMP_VK_RENDERER=1`, `renderer = vulkan` and `gpu_gl = 1` the game already draws textured and
+   translucent primitives through this path and the frame looks right (a Freestyle BMX run at 2x, one frame looked at); step 4
+   is the measured comparison. Copies are still not drawn.
 4. **Textured decode.** Port `fs_src` (4, 8 and 15-bit textures, palettes, modulation, dithering, the texture window) and the
    two-pass translucency. *Test:* the scripted run against the CPU renderer on both games, and the grab comparison against the
    OpenGL GPU renderer (same scale, same script): the worst frame is held to the OpenGL baseline: against the CPU renderer 0.6 to 0.9 % of the pixels differ by more than 16 of
