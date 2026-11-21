@@ -423,7 +423,7 @@ int main(int argc, char **argv) {
         gfx_vk_need_renderer = 0;
         int on = be->init(960, 720, "vktest"), r = on && be->r_init(2);
         printf("%-50s %s\n", "backend starts although the renderer cannot run", on ? "ok" : "FAIL");
-        printf("%-50s %s\n", "its renderer says no", r ? "FAIL" : "ok");
+        printf("%-50s %s\n", "its renderer says no", !on ? "not run" : r ? "FAIL" : "ok");
         return !on || r;
     }
     _putenv(small ? "DMRECOMP_VK_VBUF_KB=64" : "DMRECOMP_VK_VBUF_KB=");

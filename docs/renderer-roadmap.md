@@ -2,11 +2,11 @@
 
 Status: plan. Phase 1 (finishing the OpenGL path) is in progress: its tests are written, the NVIDIA and Intel runs are not
 done. Phase 2 (the backend seam) is done: the window, its surface, the window picture and the GPU renderer all sit behind
-`runtime/gfx.h`. Phase 3 (core-profile OpenGL) is done on the Radeon. Phase 4 is done on the Radeon: Vulkan shows the CPU picture, FSR
-included. Phase 5 is done on the Radeon: `gpu_gl = 1` under `renderer = vulkan` draws the 2x and 4x picture on the card
-(`docs/vulkan-gpu-renderer-plan.md`). Phase 6 is not started. Phase 7 is started: the setting `renderer = auto` exists, the
-default is still `gl`. Estimates are rough and are not
-promises.
+`runtime/gfx.h`. Phase 3 (core-profile OpenGL) is done on the Radeon. Phase 4 is done on the Radeon: Vulkan shows the CPU
+picture, FSR included. Phase 5 is done on the Radeon: `gpu_gl = 1` under `renderer = vulkan` draws the 2x and 4x picture on
+the card (`docs/vulkan-gpu-renderer-plan.md`). Phase 6 is started (the Radeon under the validation layer, and Linux under WSL
+2 with Mesa's OpenGL and software Vulkan drivers). Phase 7 is started: the setting `renderer = auto` exists, the default is
+still `gl`. Estimates are rough and are not promises.
 
 ## Goal
 
@@ -134,6 +134,36 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
 6. **Hardware validation** (a week or more). AMD, NVIDIA and Intel on Windows, and Linux with Mesa and NVIDIA drivers, a Steam
    Deck if one is available, with the validation layers on. The least predictable phase: it depends on having the hardware.
    *Exit:* no validation errors, no regressions against OpenGL on any of them.
+   *Done so far:* the Radeon on Windows under the validation layer, and Linux under WSL 2 with two Mesa drivers. With the
+   Khronos layer (the unpinned nightly build the plan's step 5 used, through `VK_LAYER_PATH`, nothing installed) and
+   `DMRECOMP_VK_VALIDATE=1`, the code as of phase 7 gives no layer message in `vktest` (normal, `small`, `decline`, `keep`)
+   nor in four scripted game runs: Freestyle BMX with `renderer = vulkan` at 2x and with `auto` at 4x through FSR, Maximum
+   Remix with `auto` at 2x and with `vulkan` at 4x through FSR, all with `gpu_gl = 1`; the two plain 2x runs also match the
+   OpenGL baseline (64 of 64 and 71 of 71 shots). On Linux, the SDL front end built with gcc and CMake under WSL 2 (Ubuntu
+   22.04, SDL 2.0.20, X11 through WSLg) and ran the Freestyle BMX script with `gpu_gl = 1` at 2x on Mesa 23.2.1's D3D12
+   driver (`GL_RENDERER` "D3D12 (AMD Radeon(TM) Graphics)", OpenGL 4.2 core): 75 of 75 shots are identical to the Windows
+   Radeon OpenGL baseline. That system has no Vulkan loader, so it is also the roadmap's machine without one: `renderer =
+   vulkan` and `renderer = auto` both said so (`[video] no Vulkan loader (Failed loading libvulkan.so.1 ...)`), went to
+   OpenGL, and gave the same shots (74 of 74 each). Then, with Ubuntu's `mesa-vulkan-drivers` and `vulkan-validationlayers`
+   installed, Vulkan on Linux through Mesa's software driver (lavapipe: `llvmpipe (LLVM 15.0.7, 256 bits)`, depth-stencil
+   D24S8, the first run on that format): `renderer = vulkan` and `renderer = auto` both use it, give the same shots as each
+   other (68 of 68), and the layer (1.3.204) gives no message with the GPU renderer or with the CPU picture. Against the
+   Windows OpenGL baseline the lavapipe shots are the same scenes but not the same pixels: 6 of 69 identical, at most 0.15 %
+   of a shot's pixels differ (0.03 % on average), nearly all by 4 or 8 of 255 and a few by more (largest 200). The 11132
+   differing pixels of the 69 shots were located: they are single pixels scattered inside surfaces (9905 of 10398 horizontal
+   runs are one pixel long), not lines along polygon edges, and 73 % of them are not on a colour edge of the picture at all.
+   By size: 43 % differ by 8, which is one step of the 5-bit colour the shader rounds to (`floor(col * 255 + 0.5)`, then
+   `floor(m / 8)`), 47 % by 4, 8 % by 1 or 2, and 1 % by more. That is what a rasteriser that interpolates vertex colours and
+   texture coordinates a little differently would give: a value next to a rounding threshold lands on the other side. The
+   reading of the three groups (a colour step, a colour step halved by a half-and-half blend, the blend's own rounding, and
+   for the rest a neighbouring texel) fits the numbers but was not traced pixel by pixel to the primitives, and `vktest`,
+   which would say exactly, is a Win32 program and has not run on lavapipe. A fault found on the way, not a renderer one:
+   after some minutes of `--turbo` the game did not end when told to (SIGTERM), under OpenGL and Vulkan alike; it stopped
+   inside SDL's closing of the PulseAudio device, and with `SDL_AUDIODRIVER=dummy` it ended. `plat_exit` in
+   `runtime/plat_sdl.c` no longer closes the sound device (it gives back the window and the display mode and leaves); three
+   runs of 170 seconds then ended with code 0. Not done: Vulkan on Linux on a graphics card (lavapipe is a CPU driver),
+   NVIDIA and Intel on Windows, Linux on real hardware with Mesa's own drivers or NVIDIA's, Maximum Remix on Linux, and a
+   Steam Deck.
 7. **Make Vulkan the default presentation where it works** (not estimated). A new setting, `renderer = auto | vulkan | gl`,
    picks the presentation and GPU-renderer backend: `auto` uses Vulkan when the device supports what is needed and falls back
    otherwise; the other two force one. It does not change what `gpu_gl` means: the CPU renderer stays the default picture, and

@@ -255,5 +255,14 @@ void plat_audio_push(const int16_t *lr, int frames) {
 double plat_now_ms(void) { return (double)SDL_GetPerformanceCounter() * 1000.0 / (double)SDL_GetPerformanceFrequency(); }
 void plat_sleep_ms(int ms) { SDL_Delay((Uint32)ms); }
 void plat_message(const char *text) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "dmrecomp", text, win); }
-void plat_exit(int code) { SDL_Quit(); exit(code); }
+/* The sound device is not closed here. Closing it waits for SDL's sound thread, and that can block for good when the sound
+   server has stalled (seen with PulseAudio under WSLg after some minutes of --turbo: the game stayed alive, without its
+   picture, until it was killed). The window and the display mode are given back; the system takes the rest when the
+   process ends, which is why this leaves through _Exit and flushes the output itself. */
+void plat_exit(int code) {
+    if (adev) SDL_PauseAudioDevice(adev, 1);
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    fflush(NULL);
+    _Exit(code);
+}
 #endif
