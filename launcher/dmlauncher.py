@@ -1007,8 +1007,13 @@ def play(P, C, disc_path, log):
                 else:
                     with open(cur, "rb") as held:
                         _log_lock(held)        # fails when a game still writes it
+                        # another launcher may have moved this file away between the open and the lock: then the name
+                        # now belongs to its new log, which must not be moved
+                        if os.fstat(held.fileno()).st_ino != os.stat(cur).st_ino:
+                            raise OSError("another launcher started a game at the same moment")
                         os.replace(cur, old)   # moved while the lock is held, so no other launcher moves it too
-            # opened without emptying it: when another launcher made this file a moment ago, its game's lines must stay
+            # Opened without emptying it. Where there are file locks, a log another launcher made a moment ago keeps its
+            # game's lines: the lock below fails first. On Windows that guard is the os.replace above, which fails.
             out = os.fdopen(os.open(cur, os.O_WRONLY | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o644), "wb")
             _log_lock(out)
             out.truncate(0)
@@ -1598,7 +1603,8 @@ def gui(root_dir, pinned=False, notice=None):
 
     dbg = stabs["Debug"]
     dc = tk.BooleanVar(value=C.get("debug_console", False))
-    ttk.Checkbutton(dbg, text="Show the console window while playing", variable=dc).pack(anchor="w", pady=2)
+    if WINDOWS:                         # elsewhere there is no console window to show: the messages always go to the log
+        ttk.Checkbutton(dbg, text="Show the console window while playing", variable=dc).pack(anchor="w", pady=2)
     dflags = {}
     for flag, text in DEBUG_FLAGS:
         v = tk.BooleanVar(value=flag in C.get("debug_flags", []))

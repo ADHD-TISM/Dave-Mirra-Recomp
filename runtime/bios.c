@@ -599,7 +599,12 @@ void bios_call_b(void) {
     case 0x19: hook_buf = A0; break;
     case 0x20: undeliver_event(A0, A1); break;
     case 0x35:  /* write(fd, buf, n): fd 0/1 are the TTY */
-        if (A0 <= 1) { for (u32 i = 0; i < A2; i++) fputc(mr8(A1 + i), stdout); fflush(stdout); V0 = A2; }
+        if (A0 <= 1) {   /* stdout is unbuffered (host_init): collect the bytes, so that a line is one write, not one per byte */
+            char b[256]; u32 n = 0;
+            for (u32 i = 0; i < A2; i++) { b[n++] = (char)mr8(A1 + i); if (n == sizeof b) { fwrite(b, 1, n, stdout); n = 0; } }
+            if (n) fwrite(b, 1, n, stdout);
+            fflush(stdout); V0 = A2;
+        }
         else V0 = mc_frw(A0, A1, A2, 1);
         break;
     case 0x32: { char n[64]; gstr(A0, n, sizeof n); V0 = mc_fopen(n, A1); break; }
