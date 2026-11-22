@@ -4,7 +4,7 @@ about 20 seconds; do not click in it meanwhile. The launcher asks GitHub for the
 
     python tools/launchertest.py launcher/dmlauncher.py <an empty scratch folder> [window position such as +100+100]
 
-The scratch folder must not exist, be empty, or be one this test made before (it leaves a file named .launchertest in it);
+The scratch folder must be new, empty, or one this test made before (it leaves a file named .launchertest in it);
 then it is deleted and made again. Any other folder is refused. Prints one line per check and "N of N checks passed"; exit
 code 0 when all pass."""
 import sys, os, json, shutil, time, importlib.util
@@ -14,7 +14,7 @@ from tkinter import ttk
 SRC, T = sys.argv[1], os.path.abspath(sys.argv[2])
 MARK = os.path.join(T, ".launchertest")
 if os.path.exists(T) and (not os.path.isdir(T) or (os.listdir(T) and not os.path.isfile(MARK))):
-    sys.exit("%s is not empty and was not made by this test: not touched. Name an empty or new folder." % T)
+    sys.exit("%s is a file, or a folder this test did not make: not touched. Name an empty or new folder." % T)
 shutil.rmtree(T, ignore_errors=True)
 os.makedirs(T)
 open(MARK, "w").close()

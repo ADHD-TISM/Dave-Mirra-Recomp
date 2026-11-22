@@ -117,13 +117,14 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    is placed like the OpenGL one, its offset counted from the bottom). Resizing, minimising and restoring the window work.
    With the loader made unavailable the run says so and uses OpenGL, with identical grabs (64 of 64). Under Vulkan `gpu_gl`
    was ignored in this phase (the renderer calls said no, so the CPU picture was used): the GPU renderer is phase 5. The SDL
-   front end is compile-checked only.
+   front end was compile-checked only.
    *Shaders:* the GLSL for Vulkan is in `runtime/shaders` (`fsr_easu.frag` and `fsr_rcas.frag` are ports of the OpenGL ones with
    push constants and a top-left origin, `fullscreen.vert` draws one triangle). `tools/shaders.py build <glslang>` compiles them
    to SPIR-V 1.0 (`-V --target-env vulkan1.0`, glslang 16.6.0, the Khronos release; `glslc` was not available) and writes
    `runtime/gfx_vk_spv.c` and `runtime/shaders/hashes.txt`; `tools/shaders.py check` needs no compiler and fails when a source
    changed without the SPIR-V being regenerated (decision 3, as a Python tool, not C).
-   *Not done:* validation layers, NVIDIA, Intel, Mesa and Linux (untested), the SDL front end (compile-checked only).
+   *Not done:* validation layers, NVIDIA, Intel, Mesa and Linux (untested), the SDL front end (compile-checked only at that
+   point).
    *Exit:* every CPU-renderer run, including FSR, looks the same as through OpenGL, and a machine with no Vulkan loader still
    starts through the fallback chain.
 5. **Vulkan GPU renderer** (2 to 3 weeks). The vram texture with dirty-row uploads, the offscreen target with stencil, the
@@ -214,16 +215,16 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    values: `software` makes every Vulkan device count as the CPU type, and `nopad` makes the game not read gamepads. Checked
    on the Radeon with no ini file and no renderer setting, ten runs side by side: both games print `[video] renderer = auto:
    using Vulkan` and give the shots of their `renderer = gl` runs (Freestyle BMX 83 of 83, Maximum Remix 95 of 95); with
-   `noloader` Freestyle BMX goes to OpenGL and gives them too (82 of 82); with `software` it prints that the only device
-   draws on the CPU and is passed over, uses OpenGL (83 of 83), and under `renderer = vulkan` keeps Vulkan (83 of 83); with
-   `gpu_gl = 1` at 2x both games give the OpenGL renderer's baseline shots (67 of 67 and 77 of 77), and with `software` added
-   Freestyle BMX draws them with OpenGL's renderer (68 of 68). `vktest` passes in its four modes with this code. About
-   `nopad`: the Win32 front end reads a gamepad whether or not its window has the focus, and two earlier rounds of such runs
-   came out disturbed (in the first the last six or seven shots of each comparison differed, in the second nearly all); one
-   gamepad was connected, nobody watched it, and every round with `nopad` was clean. Not done: the picture the software
-   stretch shows after a step down was not compared; `auto` as the default was not run on NVIDIA or Intel graphics, so a
-   Vulkan driver there that starts but draws wrongly is what a new user, or one coming from a release, would now get, with
-   `renderer = gl` as the way back.
+   `noloader` Freestyle BMX goes to OpenGL and gives them too (82 of 82); with `software` it prints that the devices draw on
+   the CPU and are passed over (this machine has two Vulkan devices, the card and the processor's own graphics), uses OpenGL
+   (83 of 83), and under `renderer = vulkan` keeps Vulkan (83 of 83); with `gpu_gl = 1` at 2x both games give the OpenGL
+   renderer's baseline shots (67 of 67 and 77 of 77), and with `software` added Freestyle BMX draws them with OpenGL's
+   renderer (68 of 68). `vktest` passes in its four modes with this code. About `nopad`: the Win32 front end reads a gamepad
+   whether or not its window has the focus, and two earlier rounds of such runs came out disturbed (in the first the last six
+   or seven shots of each comparison differed, in the second nearly all); one gamepad was connected, nobody watched it, and
+   every round with `nopad` was clean. Not done: the picture the software stretch shows after a step down was not compared;
+   `auto` as the default was not run on NVIDIA or Intel graphics, so a Vulkan driver there that starts but draws wrongly is
+   what a new user, or one coming from a release, would now get, with `renderer = gl` as the way back.
 
 Rough total: 5 to 8 weeks of focused work for phases 1 to 6 if the hardware is at hand, phase 3 being the optional one.
 
