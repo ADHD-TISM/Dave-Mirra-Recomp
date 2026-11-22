@@ -317,13 +317,36 @@ void host_hotkey(int which) {
     }
     show_settings();
 }
+/* The guest's return addresses on its stack, for the reports below: up to max words that point into the code below hi.
+   The words are read from memory directly, and only up to the end of the area sp is in. mr32 must not be used here: some
+   functions keep their stack at the end of the scratchpad (sp = 1f8003e4), and a walk with mr32 runs on from there into
+   the hardware registers, where a read takes a CD response byte or a pad byte, clears a timer flag or takes MDEC data.
+   Where such a function saved the caller's sp in one of the scratchpad's last 2 words (main_800273ec does), the walk goes
+   on from there, after a '|'; where it did not, the walk ends with the scratchpad. */
+static void print_stack(u32 hi, int max) {
+    u32 p = PHYS(cpu.r[29]), off, next = 0; int k = 0;
+    if (IS_SCR(p)) {
+        for (off = p & 0x3fcu; off < 0x400u && k < max; off += 4) {
+            u32 w; memcpy(&w, psx_scratch + off, 4);
+            if (off >= 0x3f8u && w >= 0x801f0000u && w < 0x80200000u && !(w & 3)) next = w;   /* the saved sp, not a return address */
+            else if (w >= 0x80010000u && w < hi && !(w & 3)) { fprintf(stderr, " %08x", w); k++; }
+        }
+        if (!next) return;
+        fprintf(stderr, " |"); p = PHYS(next);
+    }
+    if (!IS_RAM(p)) { fprintf(stderr, " (sp is not in memory)"); return; }
+    for (off = p & 0x1ffffcu; off < 0x200000u && k < max; off += 4) {
+        u32 w; memcpy(&w, psx_ram + off, 4);
+        if (w >= 0x80010000u && w < hi && !(w & 3)) { fprintf(stderr, " %08x", w); k++; }
+    }
+}
 static unsigned run_frames;   /* frames since start, for host_quit's report */
 void host_quit(void) {
     /* where the game stood when it was closed: after a freeze this is the trace that is left (the game's messages go to a
        log file when it is started from the launcher) */
     fprintf(stderr, "[exit] closed after %u s of game time: ra=%08x sp=%08x sr=%08x istat=%03x imask=%03x\n", run_frames / 60, cpu.r[31], cpu.r[29], cpu.sr, i_stat, i_mask);
     fprintf(stderr, "[exit] guest return addresses on the stack:");
-    int k = 0; for (u32 sp = cpu.r[29]; sp < 0x80200000u && k < 24; sp += 4) { u32 w = mr32(sp); if (w >= 0x80010000u && w < 0x80200000u && !(w & 3)) { fprintf(stderr, " %08x", w); k++; } }
+    print_stack(0x80200000u, 24);
     fprintf(stderr, "\n");
     bios_report_stall("exit");
     g_rumble = 0; host_pad_rumble(0, 0, 0); host_pad_rumble(1, 0, 0); plat_exit(0);
@@ -501,7 +524,7 @@ void host_frame(void) {
         else if (++still % 600 == 0) {
             fprintf(stderr, "[watchdog] no flips, movie frames, disc reads or drawing for %u s: ra=%08x sp=%08x sr=%08x istat=%03x imask=%03x\n", still / 60, cpu.r[31], cpu.r[29], cpu.sr, i_stat, i_mask);
             fprintf(stderr, "[watchdog] guest return addresses on the stack:");
-            int k = 0; for (u32 sp = cpu.r[29]; sp < 0x80200000u && k < 24; sp += 4) { u32 w = mr32(sp); if (w >= 0x80010000u && w < 0x80200000u && !(w & 3)) { fprintf(stderr, " %08x", w); k++; } }
+            print_stack(0x80200000u, 24);
             fprintf(stderr, "\n");
             bios_report_stall("watchdog");
         }
@@ -512,7 +535,7 @@ void host_frame(void) {
         if (frame_no % 3600 == 0) {
             static unsigned f0, m0;
             fprintf(stderr, "[state] minute %u: %u flips, %u movie pictures; ra=%08x sp=%08x; stack:", frame_no / 3600, g_flip_total - f0, g_mdec_frames - m0, cpu.r[31], cpu.r[29]);
-            int k = 0; for (u32 sp = cpu.r[29]; sp < 0x80200000u && k < 8; sp += 4) { u32 w = mr32(sp); if (w >= 0x80010000u && w < 0x80200000u && !(w & 3)) { fprintf(stderr, " %08x", w); k++; } }
+            print_stack(0x80200000u, 8);
             fprintf(stderr, "\n");
             f0 = g_flip_total; m0 = g_mdec_frames;
         }
@@ -521,7 +544,7 @@ void host_frame(void) {
     if (g_stats && frame_no % 60 == 0) {
         fprintf(stderr, "[stats] t=%us mdec=%u sectors=%u prims=%u flips=%u ra=%08x sp=%08x exc=%d sr=%08x istat=%03x imask=%03x\n", frame_no / 60, g_stat_mdec, g_stat_sectors, g_stat_prims, g_stat_flips, cpu.r[31], cpu.r[29], bios_in_exception, cpu.sr, i_stat, i_mask);
         g_stat_mdec = g_stat_sectors = g_stat_prims = g_stat_flips = 0;
-        if (g_stats > 1) { fprintf(stderr, "[stack]"); int k = 0; for (u32 sp = cpu.r[29]; sp < 0x80200000u && k < 40; sp += 4) { u32 w = mr32(sp); if (w >= 0x80010000u && w < 0x800ee000u && !(w & 3)) { fprintf(stderr, " %08x", w); k++; } } fprintf(stderr, "\n"); }
+        if (g_stats > 1) { fprintf(stderr, "[stack]"); print_stack(0x800ee000u, 40); fprintf(stderr, "\n"); }
     }
     static u64 last_audio_cycles;
     static s16 mix[4096 * 2];

@@ -151,10 +151,13 @@ your own use.
 If the game stops making progress (no display flips, movie frames, disc reads or drawing
 for 10 seconds), the game prints a `[watchdog]` report: the guest's return addresses
 and the last BIOS calls. A game that hangs while it still draws is not caught by
-that, so the game also prints one `[state]` line a minute (where it is, and how many
-display flips and movie frames the minute had) and, when its window is closed, an
-`[exit]` report of the same kind as the watchdog's. After a freeze, close the game
-by its window, not from Task Manager, so that the `[exit]` report is written.
+that, so the game also prints one `[state]` line per minute of game time (3600
+frames; where it is, and how many display flips and movie frames the minute had) and,
+when its window is closed, an `[exit]` report of the same kind as the watchdog's.
+After a freeze, close the game by its window, not from Task Manager, so that the
+`[exit]` report is written. A window that no longer responds to its close button
+gives no `[exit]` report; the `[state]` lines before it are what is left then. The
+`[exit]` report was checked on Windows only, not yet on Linux with the game.
 
 Started from the launcher (its window, or `dmlauncher.py play`), the game's messages
 are kept in `last-run.log` in the game folder (`game/dmbmx` or `game/maxremix`), and

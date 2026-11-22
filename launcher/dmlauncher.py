@@ -975,10 +975,16 @@ DEBUG_FLAGS = [("--stats", "Print speed statistics (flips = frames per second)")
 def _log_lock(f):
     """Take the lock that says "a game is writing this log". Windows needs none: it refuses to move or replace a file
     that a running game has open. Elsewhere an open file can be moved and deleted, so the launcher locks the log it
-    hands to the game; the game inherits the lock and holds it until it ends. Raises OSError when it is held."""
+    hands to the game; the game inherits the lock and holds it until it ends. Raises OSError when it is held. On a file
+    system that has no locks the launcher goes on without one: a log that two games could share is better than none."""
     if not WINDOWS:
+        import errno
         import fcntl
-        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as e:
+            if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                raise
 
 
 def play(P, C, disc_path, log):
@@ -996,11 +1002,16 @@ def play(P, C, disc_path, log):
         cur, old = os.path.join(P.game, RUN_LOG), os.path.join(P.game, RUN_LOG_BEFORE)
         try:
             if os.path.isfile(cur):
-                with open(cur, "rb") as held:
-                    _log_lock(held)    # not Windows: fails when a game still writes it (the lock goes when held closes)
-                os.replace(cur, old)   # Windows: fails when a game still writes it
-            out = open(cur, "wb")
+                if WINDOWS:
+                    os.replace(cur, old)       # fails when a game still writes it
+                else:
+                    with open(cur, "rb") as held:
+                        _log_lock(held)        # fails when a game still writes it
+                        os.replace(cur, old)   # moved while the lock is held, so no other launcher moves it too
+            # opened without emptying it: when another launcher made this file a moment ago, its game's lines must stay
+            out = os.fdopen(os.open(cur, os.O_WRONLY | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o644), "wb")
             _log_lock(out)
+            out.truncate(0)
             out.write(("[launcher] version %s started the game at %s\n" % (LAUNCHER_VERSION, time.strftime("%Y-%m-%d %H:%M:%S"))).encode())
             out.flush()
         except OSError as e:           # a game still running keeps its log: this run goes without one
@@ -1594,9 +1605,9 @@ def gui(root_dir, pinned=False, notice=None):
         dflags[flag] = v
         ttk.Checkbutton(dbg, text="%s   %s" % (flag, text), variable=v).pack(anchor="w", pady=2)
     ttk.Label(dbg, style="Muted.TLabel", wraplength=560,
-              text="These are launcher options, not part of dmrecomp.ini. The console window shows the stall "
-                   "watchdog report if the game ever stops responding. Without the console window the game's "
-                   "messages are kept in last-run.log in the game folder, and the run before in "
+              text="These are launcher options, not part of dmrecomp.ini. On Windows, the console window shows the "
+                   "game's messages, including the [watchdog] and [exit] reports. Otherwise, and always on Linux, "
+                   "they are kept in last-run.log in the game folder, and the run before in "
                    "previous-run.log.").pack(anchor="w", pady=8)
 
     allinner = scrolled(stabs["All settings"])

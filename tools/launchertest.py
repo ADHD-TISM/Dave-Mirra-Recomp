@@ -1,4 +1,4 @@
-"""Checks that the launcher saves settings as they are chosen. It opens the launcher's real window on a scratch folder (two
+"""Checks that the launcher saves settings as they are chosen, and then that it keeps the run log. It opens the launcher's real window on a scratch folder (two
 made-up games, no disc, no files downloaded), makes choices in it and reads the settings files back. The window shows for
 about 20 seconds; do not click in it meanwhile. The launcher asks GitHub for the latest version, as it always does.
 
@@ -124,7 +124,52 @@ def driver(win, n=0):
         closed = True
     check("the window is closed", closed)
 
+def run_log():
+    """The run log, through the launcher's own play(): a small script stands in for the game (python runs it where the
+    game's exe would run the disc). It says one line, waits for a file named stop, says another and ends."""
+    g = os.path.join(T, "game", "dmbmx")
+    game = os.path.join(T, "standin.py")
+    open(game, "w").write("import os, sys, time\nprint('[game] started %d' % os.getpid(), flush=True)\n"
+                          "for i in range(300):\n    if os.path.exists('stop'): break\n    time.sleep(0.1)\n"
+                          "print('[game] ended', flush=True)\nopen('done.%d' % os.getpid(), 'w').close()\n")
+    P = dml.Paths(T); P.use("dmbmx"); P.exe = sys.executable
+    C = {"debug_console": False, "debug_flags": []}
+    cur, old, stop = (os.path.join(g, n) for n in (dml.RUN_LOG, dml.RUN_LOG_BEFORE, "stop"))
+    said = []
+    def rd(p):
+        return open(p, "rb").read().decode() if os.path.isfile(p) else None
+    def wait(cond, secs=15):
+        end = time.time() + secs
+        while time.time() < end and not cond(): time.sleep(0.05)
+        return cond()
+    def done():
+        return len([n for n in os.listdir(g) if n.startswith("done.")])
+    dml.play(P, C, game, said.append)
+    wait(lambda: "[game] started" in (rd(cur) or ""))
+    a = rd(cur) or ""
+    check("run log: it has the launcher's line, then the game's", a.startswith("[launcher] version") and "[game] started" in a, repr(a[:70]))
+    check("run log: the launcher says where it is", any(dml.RUN_LOG in s for s in said), repr(said[-1:]))
+    check("run log: no log of a run before yet", rd(old) is None)
+    n = len(said)
+    dml.play(P, C, game, said.append)                        # a second game while the first still writes its log
+    check("run log: a start while a game runs gets no log, and says so", any("no run log this time" in s for s in said[n:]), repr(said[n:]))
+    time.sleep(0.5)
+    check("run log: the running game's log is left alone", rd(cur) == a and rd(old) is None, repr(rd(cur)))
+    open(stop, "w").close()
+    check("run log: both stand-in games ended", wait(lambda: done() == 2), "%d of 2" % done())
+    os.remove(stop)
+    a = rd(cur) or ""
+    check("run log: the game's last line is in it", a.rstrip().endswith("[game] ended"), repr(a[-40:]))
+    dml.play(P, C, game, said.append)
+    wait(lambda: "[game] started" in (rd(cur) or ""))
+    b = rd(cur) or ""
+    check("run log: the next start moves it to the log of the run before", rd(old) == a)
+    check("run log: and starts a new one", b.startswith("[launcher] version") and "[game] started" in b and "[game] ended" not in b, repr(b[:70]))
+    open(stop, "w").close()
+    wait(lambda: done() == 3)
+
 tk.Tk.mainloop = driver
 dml.gui(T)
+run_log()
 print("%d of %d checks passed" % (sum(res), len(res)))
 sys.exit(0 if all(res) else 1)
