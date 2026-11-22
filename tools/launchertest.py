@@ -1,16 +1,23 @@
 """Checks that the launcher saves settings as they are chosen. It opens the launcher's real window on a scratch folder (two
-made-up games, no disc, nothing downloaded), makes choices in it and reads the settings files back. The window shows for
-about 20 seconds; do not click in it meanwhile.
+made-up games, no disc, no files downloaded), makes choices in it and reads the settings files back. The window shows for
+about 20 seconds; do not click in it meanwhile. The launcher asks GitHub for the latest version, as it always does.
 
     python tools/launchertest.py launcher/dmlauncher.py <an empty scratch folder> [window position such as +100+100]
 
-The scratch folder is deleted and made again. Prints one line per check and "N of N checks passed"; exit code 0 when all pass."""
+The scratch folder must not exist, be empty, or be one this test made before (it leaves a file named .launchertest in it);
+then it is deleted and made again. Any other folder is refused. Prints one line per check and "N of N checks passed"; exit
+code 0 when all pass."""
 import sys, os, json, shutil, time, importlib.util
 import tkinter as tk
 from tkinter import ttk
 
-SRC, T = sys.argv[1], sys.argv[2]
+SRC, T = sys.argv[1], os.path.abspath(sys.argv[2])
+MARK = os.path.join(T, ".launchertest")
+if os.path.exists(T) and (not os.path.isdir(T) or (os.listdir(T) and not os.path.isfile(MARK))):
+    sys.exit("%s is not empty and was not made by this test: not touched. Name an empty or new folder." % T)
 shutil.rmtree(T, ignore_errors=True)
+os.makedirs(T)
+open(MARK, "w").close()
 A_INI = "# my note\nscale = 1\nrenderer = gl\nwindow_size = auto\nkey_cross = Z, K\nfoo = bar\n"
 for g in ("dmbmx", "maxremix"):
     os.makedirs(os.path.join(T, "game", g))

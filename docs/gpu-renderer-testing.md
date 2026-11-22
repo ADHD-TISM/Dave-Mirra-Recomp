@@ -49,13 +49,13 @@ for whoever tries it next.
    ```
    --turbo --auto-start 90 --shot-every 300 --set renderer=gl --set scale=2 --set scale_auto=0 --script-file lvl.txt "<your image>.cue"
    ```
-   Set the environment variable `DMRECOMP_GFX_TEST=nopad` for both runs, or unplug your gamepad: the game reads a gamepad
-   whether or not its window has the focus, and a touched pad sends the two runs down different paths.
    (`lvl.txt` is one line of comma-separated `frame:button` events such as `90:st,300:x`; the button names are in
    `host_set_script`, `runtime/host_common.c`), and compare the `shot_*.png` files
    pixel by pixel. On the Radeon the worst frame had 0.6 to 0.9 % of its pixels differing by more than 16 of 255 (measured locally on
    Freestyle BMX at scale 2 with a 261-frame button script: worst frame 0.86 %, average 0.23 %; the script is not in the repo); most
    frames match exactly. A card that is far above that, or whose differences form patterns, is worth a look.
+   Set the environment variable `DMRECOMP_GFX_TEST=nopad` for both runs, or unplug your gamepad: the game reads a gamepad
+   whether or not its window has the focus, and a touched pad sends the two runs down different paths.
 
 ## Where problems are most likely
 
