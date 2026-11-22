@@ -159,15 +159,22 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    coordinates a little differently would give: a value next to a rounding threshold lands on the other side. The reading of
    these groups (a colour step, a colour step halved by a half-and-half blend, the blend's own rounding, and for the rest a
    neighbouring texel) fits the numbers but was not traced pixel by pixel to the primitives, and `vktest`, which would say
-   exactly, is a Win32 program and has not run on lavapipe. A fault found on the way, not a renderer one: after some minutes
-   of `--turbo` the game did not end when told to (SIGTERM), under OpenGL and Vulkan alike; it stopped inside SDL's closing
-   of the PulseAudio device, and with `SDL_AUDIODRIVER=dummy` it ended. It is a fault of `--turbo` runs as far as seen: with
-   the old code a run of 200 seconds at normal speed ended as it should, and the turbo run beside it did not (one run each).
-   `plat_exit` in `runtime/plat_sdl.c` no longer closes the sound device (it stops rumble, closes the pads, gives back the
-   window and the display mode and leaves); three turbo runs of 170 seconds then ended with code 0. The new exit path was not
-   tried with a gamepad, in fullscreen, or on a machine other than this one. Not done: Vulkan on Linux on a graphics card
-   (lavapipe is a CPU driver), NVIDIA and Intel on Windows, Linux on real hardware with Mesa's own drivers or NVIDIA's,
-   Maximum Remix on Linux, and a Steam Deck.
+   exactly, is a Win32 program and has not run on lavapipe. Maximum Remix on the same system, built the same way, with the
+   same script and `gpu_gl = 1` at 2x: on the D3D12 OpenGL driver 83 of 83 shots are identical to the Windows Radeon OpenGL
+   baseline. On lavapipe 6 of 86 are identical, at most 0.14 % of a shot's pixels differ (0.05 % on average), and of the
+   20910 differing pixels 48 % differ by 8, 45 % by 4, 6 % by 1 or 2 and 2 % by other amounts (largest 88): the same kind of
+   difference as in Freestyle BMX; these pixels were not located. Three runs under the validation layer gave no message. A
+   second plain lavapipe run and two of the validated runs give the first plain run's shots (74 of 74, 69 of 69, 69 of 69).
+   The other validated run, the first one, left the script's path at frame 1500 and showed other screens from there on, so
+   its shots compare with nothing; the cause was not found, and it did not happen again in the two runs after it. A fault
+   found on the way, not a renderer one: after some minutes of `--turbo` the game did not end when told to (SIGTERM), under
+   OpenGL and Vulkan alike; it stopped inside SDL's closing of the PulseAudio device, and with `SDL_AUDIODRIVER=dummy` it
+   ended. It is a fault of `--turbo` runs as far as seen: with the old code a run of 200 seconds at normal speed ended as it
+   should, and the turbo run beside it did not (one run each). `plat_exit` in `runtime/plat_sdl.c` no longer closes the sound
+   device (it stops rumble, closes the pads, gives back the window and the display mode and leaves); three turbo runs of 170
+   seconds then ended with code 0. The new exit path was not tried with a gamepad, in fullscreen, or on a machine other than
+   this one. Not done: Vulkan on Linux on a graphics card (lavapipe is a CPU driver), NVIDIA and Intel on Windows, Linux on
+   real hardware with Mesa's own drivers or NVIDIA's, and a Steam Deck.
 7. **Make Vulkan the default presentation where it works** (not estimated). A new setting, `renderer = auto | vulkan | gl`,
    picks the presentation and GPU-renderer backend: `auto` uses Vulkan when the device supports what is needed and falls back
    otherwise; the other two force one. It does not change what `gpu_gl` means: the CPU renderer stays the default picture, and
