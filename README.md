@@ -149,9 +149,13 @@ ship with Windows. It contains code translated from your disc, so keep it for
 your own use.
 
 If the game stops making progress (no display flips, movie frames, disc reads or drawing
-for 10 seconds), the console window prints a `[watchdog]` report: the guest's
-return addresses and the last BIOS calls. Leave the window open and send it along
-with a bug report.
+for 10 seconds, or no display flip and no movie frame for a minute while something
+is still drawn), the game prints a `[watchdog]` report: the guest's return addresses
+and the last BIOS calls. Started from the launcher, the game's messages are kept in
+`last-run.log` in the game folder (`game/dmbmx` or `game/maxremix`), and the run
+before in `previous-run.log`, so the report is still there after the game is closed
+and started again once. With the launcher's console window option, or from a command
+line, they go to the console instead. Send the report along with a bug report.
 
 Test options: `--shot-window` (screenshots show the window contents instead of
 the internal picture), `--stats`, `--log-bios`, `--log-sio`, `--turbo`, `--auto-start N`

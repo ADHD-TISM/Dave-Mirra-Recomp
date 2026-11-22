@@ -493,6 +493,18 @@ void host_frame(void) {
             fprintf(stderr, "\n");
             bios_report_stall();
         }
+        /* the other way to be stuck: something is still drawn, but the picture has not been flipped and no movie picture
+           has come for a minute (a save draws its bar without flipping for 20 s; a load is shorter) */
+        static unsigned last_shown, unshown;
+        unsigned shown = g_flip_total + g_mdec_frames;
+        if (shown != last_shown) { last_shown = shown; unshown = 0; }
+        else if (++unshown % 3600 == 0) {
+            fprintf(stderr, "[watchdog] no picture flip for %u s (drawing may go on): ra=%08x sp=%08x sr=%08x istat=%03x imask=%03x\n", unshown / 60, cpu.r[31], cpu.r[29], cpu.sr, i_stat, i_mask);
+            fprintf(stderr, "[watchdog] guest return addresses on the stack:");
+            int k = 0; for (u32 sp = cpu.r[29]; sp < 0x80200000u && k < 24; sp += 4) { u32 w = mr32(sp); if (w >= 0x80010000u && w < 0x80200000u && !(w & 3)) { fprintf(stderr, " %08x", w); k++; } }
+            fprintf(stderr, "\n");
+            bios_report_stall();
+        }
     }
     if (g_stats && frame_no % 60 == 0) { fprintf(stderr, "[time] guest=%.0fms host=%.0fms per 60 frames\n", t_guest, t_host); t_guest = t_host = 0; }
     if (g_stats && frame_no % 60 == 0) {

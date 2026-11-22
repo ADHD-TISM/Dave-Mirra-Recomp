@@ -43,7 +43,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 REPO = "ADHD-TISM/Dave-Mirra-Recomp"
-LAUNCHER_VERSION = "8"
+LAUNCHER_VERSION = "9"
 
 # Build tools: llvm-mingw (clang + a MinGW-w64 UCRT sysroot), pinned and checked.
 LLVM_NAME = "llvm-mingw-20261104-ucrt-x86_64"
@@ -67,6 +67,7 @@ PY_SHA256 = "8d3f33be9eb810f23c102f08475af2854e50484b8e4e06275e937be61ce3d2fb"
 
 FROZEN = bool(getattr(sys, "frozen", False))
 WINDOWS = sys.platform == "win32"
+RUN_LOG, RUN_LOG_BEFORE = "last-run.log", "previous-run.log"   # in the game folder: see play
 NO_WINDOW = 0x08000000 if WINDOWS else 0
 NEW_CONSOLE = 0x00000010 if WINDOWS else 0
 EXE_FILE = "dmrecomp.exe" if WINDOWS else "dmrecomp"
@@ -979,8 +980,31 @@ def play(P, C, disc_path, log):
     resolve_bin(disc_path)
     args = [P.exe, os.path.abspath(disc_path)] + [f for f, _ in DEBUG_FLAGS if f in C.get("debug_flags", [])]
     flags = NEW_CONSOLE if C.get("debug_console", False) else NO_WINDOW
-    subprocess.Popen(args, cwd=P.game, creationflags=flags)
-    log("started the game")
+    # Without the console window, what the game says goes to a file in its folder: if the game ever stops, the stall
+    # watchdog's report is in there. The run before is kept too, because the first thing done after a freeze is to start again.
+    out = None
+    if not C.get("debug_console", False):
+        cur, old = os.path.join(P.game, RUN_LOG), os.path.join(P.game, RUN_LOG_BEFORE)
+        try:
+            if os.path.isfile(cur):
+                os.replace(cur, old)
+            out = open(cur, "wb")
+            out.write(("[launcher] version %s started the game at %s\n" % (LAUNCHER_VERSION, time.strftime("%Y-%m-%d %H:%M:%S"))).encode())
+            out.flush()
+        except OSError as e:           # a game still running holds the file: this run goes without a log
+            log("no run log this time: %s" % e)
+            if out:
+                out.close()
+            out = None
+    try:
+        if out:
+            subprocess.Popen(args, cwd=P.game, creationflags=flags, stdin=subprocess.DEVNULL, stdout=out, stderr=out)
+        else:
+            subprocess.Popen(args, cwd=P.game, creationflags=flags)
+    finally:
+        if out:
+            out.close()                # the game has its own handle now
+    log("started the game" + (" (its messages go to %s)" % os.path.join(P.game, RUN_LOG) if out else ""))
 
 
 def desktop_entry_text(P, disc_path, name):
@@ -1559,7 +1583,9 @@ def gui(root_dir, pinned=False, notice=None):
         ttk.Checkbutton(dbg, text="%s   %s" % (flag, text), variable=v).pack(anchor="w", pady=2)
     ttk.Label(dbg, style="Muted.TLabel", wraplength=560,
               text="These are launcher options, not part of dmrecomp.ini. The console window shows the stall "
-                   "watchdog report if the game ever stops responding.").pack(anchor="w", pady=8)
+                   "watchdog report if the game ever stops responding. Without the console window the game's "
+                   "messages are kept in last-run.log in the game folder, and the run before in "
+                   "previous-run.log.").pack(anchor="w", pady=8)
 
     allinner = scrolled(stabs["All settings"])
     allrow = [0]
