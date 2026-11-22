@@ -36,14 +36,21 @@ for whoever tries it next.
    graphics chips, check that it is the NVIDIA one). The game and this test both ask the driver for the dedicated chip
    (the exported `NvOptimusEnablement` and `AmdPowerXpressRequestHighPerformance` variables, `runtime/host_common.c`); if the
    integrated chip still shows, the driver or a per-program graphics preference overrode the request.
-3. Play with it: `build/dmrecomp.exe --set gpu_gl=1 --set scale=4 --set scale_auto=0 "<your image>.cue"` (F6 switches the
-   scale, F7 the filter). Look for dark or missing frames, flickering, wrong textures, shadows and transparent effects,
-   and the Run Finished screen.
+3. Play with it:
+   ```
+   build/dmrecomp.exe --set renderer=gl --set gpu_gl=1 --set scale=4 --set scale_auto=0 "<your image>.cue"
+   ```
+   (F6 switches the scale, F7 the filter). `--set renderer=gl` is needed: this guide is about the OpenGL renderer, and the
+   default, `renderer = auto`, would use Vulkan and its own renderer where it can. The game says which one it uses; look
+   for `[video] renderer = gl: using OpenGL` and a `[gpu_gl]` line on stderr. Look for dark or missing frames, flickering,
+   wrong textures, shadows and transparent effects, and the Run Finished screen.
 4. A scripted comparison, if you want numbers: run the same script once with `--set gpu_gl=0` and once with `gpu_gl=1`,
-   for example
+   both with `--set renderer=gl`, for example
    ```
-   --turbo --auto-start 90 --shot-every 300 --set scale=2 --set scale_auto=0 --script-file lvl.txt "<your image>.cue"
+   --turbo --auto-start 90 --shot-every 300 --set renderer=gl --set scale=2 --set scale_auto=0 --script-file lvl.txt "<your image>.cue"
    ```
+   Set the environment variable `DMRECOMP_GFX_TEST=nopad` for both runs, or unplug your gamepad: the game reads a gamepad
+   whether or not its window has the focus, and a touched pad sends the two runs down different paths.
    (`lvl.txt` is one line of comma-separated `frame:button` events such as `90:st,300:x`; the button names are in
    `host_set_script`, `runtime/host_common.c`), and compare the `shot_*.png` files
    pixel by pixel. On the Radeon the worst frame had 0.6 to 0.9 % of its pixels differing by more than 16 of 255 (measured locally on

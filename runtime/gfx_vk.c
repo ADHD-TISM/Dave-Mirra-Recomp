@@ -258,14 +258,19 @@ static void teardown(void) {
     memset(&vkc, 0, sizeof vkc);   /* what other Vulkan files read: all zero while the backend is not running */
 }
 
+int gfx_vk_no_software;   /* set before init (renderer = auto): a Vulkan device that draws on the CPU (Mesa's lavapipe, for one) is
+                             passed over, so OpenGL on the graphics card gets its turn; renderer = vulkan still takes it */
+static int test_software; /* DMRECOMP_GFX_TEST has "software": every device counts as one that draws on the CPU */
 static int pick_device(void) {
-    uint32_t n = 0; VkPhysicalDevice pd[16];
+    uint32_t n = 0; VkPhysicalDevice pd[16]; char passed[256] = "";
     vkEnumeratePhysicalDevices(vkc.inst, &n, NULL);
     if (n > 16) n = 16;
     if (!n || vkEnumeratePhysicalDevices(vkc.inst, &n, pd) < 0) { fprintf(stderr, "[video] Vulkan: no graphics device\n"); return 0; }
     int best = -1; uint32_t best_q = 0; VkFormat best_fmt = VK_FORMAT_UNDEFINED; VkPresentModeKHR best_pm = VK_PRESENT_MODE_FIFO_KHR;
     for (uint32_t d = 0; d < n; d++) {
         VkPhysicalDeviceProperties pr; vkGetPhysicalDeviceProperties(pd[d], &pr);
+        if (test_software) pr.deviceType = VK_PHYSICAL_DEVICE_TYPE_CPU;
+        if (gfx_vk_no_software && pr.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) { if (!passed[0]) snprintf(passed, sizeof passed, "%s", pr.deviceName); continue; }
         uint32_t ne = 0; VkExtensionProperties ex[256]; int has_swap = 0;
         vkEnumerateDeviceExtensionProperties(pd[d], NULL, &ne, NULL);
         if (ne > 256) ne = 256;
@@ -314,6 +319,7 @@ static int pick_device(void) {
             fprintf(stderr, "[video] Vulkan: %s\n", pr.deviceName);
         }
     }
+    if (best < 0 && passed[0]) { fprintf(stderr, "[video] Vulkan: only a device that draws on the CPU (%s); renderer = auto passes it over, renderer = vulkan uses it\n", passed); return 0; }
     if (best < 0) { fprintf(stderr, "[video] Vulkan: no device can show the picture (it needs a swapchain and 8-bit blits)\n"); return 0; }
     vkc.qfam = best_q; sfmt = best_fmt; pmode = best_pm;
     return 1;
@@ -415,6 +421,7 @@ static int validation_available(int *has_messenger) {
 
 static int setup(void) {
     const char *tst = getenv("DMRECOMP_GFX_TEST");   /* a test hook (a list): "noloader" behaves like a machine without Vulkan */
+    test_software = tst && strstr(tst, "software");   /* another value of the hook: see pick_device */
     gipa = (tst && strstr(tst, "noloader")) ? NULL : (PFN_vkGetInstanceProcAddr)plat_vk_loader();
     if (!gipa) { fprintf(stderr, "[video] no Vulkan loader\n"); return 0; }
     PFN_vkCreateInstance create = (PFN_vkCreateInstance)gipa(NULL, "vkCreateInstance");

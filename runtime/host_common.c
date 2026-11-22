@@ -326,11 +326,13 @@ void host_init(void) {
     fb = calloc((size_t)1024 * 4 * 512 * 4, 4);   /* room for the largest internal resolution */
     /* the graphics backend is chosen once, here. renderer = gl: OpenGL, else the software stretch. renderer = vulkan: Vulkan
        first, whatever it can do there (without its GPU renderer the CPU draws the picture). renderer = auto: Vulkan when it can
-       do all that is asked, which with gpu_gl = 1 includes the GPU renderer; otherwise OpenGL gets its turn. Each step down is said. */
+       do all that is asked, which with gpu_gl = 1 includes the GPU renderer, and when its device is not one that draws on the CPU;
+       otherwise OpenGL gets its turn. Each step down is said. */
     static const char *const rname[3] = { "gl", "vulkan", "auto" };
     const GfxBackend *order[4] = { &gfx_gl_backend, &gfx_soft_backend, NULL, NULL };
     if (g_renderer) { order[0] = &gfx_vk_backend; order[1] = &gfx_gl_backend; order[2] = &gfx_soft_backend; }
     gfx_vk_need_renderer = g_renderer == 2 && g_gpu_gl;
+    gfx_vk_no_software = g_renderer == 2;   /* auto: OpenGL on the graphics card is better than Vulkan on the CPU */
     for (int i = 0; order[i]; i++) {
         if (order[i]->init(win_w, win_h, GAME_NAME " (static recomp)")) { gfx = order[i]; break; }
         if (!order[i + 1]) { plat_message("Cannot open a window."); plat_exit(1); }

@@ -109,7 +109,8 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    the picture's final size and RCAS into the swapchain image, from SPIR-V in `runtime/gfx_vk_spv.c`. It also does the
    `--shot-window` read-back.
    `PLAT_SURF_VK`, `plat_vk_loader`, `plat_vk_extensions` and `plat_vk_surface` are the platform side (Win32, and SDL with
-   `SDL_WINDOW_VULKAN`). The setting `renderer = gl | vulkan` (default `gl`) puts Vulkan first in the fallback chain; `auto` is
+   `SDL_WINDOW_VULKAN`). The setting `renderer = gl | vulkan` (default `gl` then, `auto` since phase 7) puts Vulkan first in
+   the fallback chain; `auto` is
    phase 7. Window grabs against OpenGL, same runs: smooth filter 64 of 64 identical, sharp filter at a whole-multiple window
    size 64 of 64 identical; at 512 into 1280 the same x mod 5 = 2 texel-edge ties as in phase 3 (blit and shader round the
    tie differently). FSR: 57 of 63 grabs identical and the other 6 differ by at most 1 of 255 in under 0.01 % of the pixels;
@@ -200,17 +201,26 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    warnings). `vktest decline` checks that the Vulkan backend says no and leaves no device behind when its renderer cannot be
    set up and that it starts again without the fault; `vktest keep` that under `renderer = vulkan` it starts with the fault.
    The default is now `auto`, set before phase 6's NVIDIA and Intel runs were made: `g_renderer` starts at 2, a new
-   `dmrecomp.ini` says `renderer = auto`, and the launcher's setting starts at `auto` (launcher version 8). A `dmrecomp.ini`
-   written earlier keeps its `renderer = gl` line and so keeps OpenGL. Checked on the Radeon with no ini file and no renderer
-   setting: both games print `[video] renderer = auto: using Vulkan`; Freestyle BMX gives the shots of a `renderer = gl` run
-   (92 of 92), and with `noloader` it goes to OpenGL and gives them too (92 of 92); with `gpu_gl = 1` at 2x both games give
-   the OpenGL renderer's baseline shots (87 of 87 and 102 of 102). The test hook has a fourth value for this, `nopad`: the
-   game does not read gamepads. The Win32 front end reads a gamepad whether or not its window has the focus, and two rounds
-   of these six runs came out disturbed (in the first the last six or seven shots of each comparison differed, in the second
-   nearly all); one gamepad was connected, nobody watched it, and the round with `nopad` was clean. Not done: the picture the
-   software stretch shows after a step down was not compared; `auto` as the default was not run on NVIDIA or Intel graphics,
-   so a Vulkan driver there that starts but draws wrongly is what a new user would now get, with `renderer = gl` as the way
-   back; `renderer = auto` on Linux is recorded under phase 6.
+   `dmrecomp.ini` says `renderer = auto`, and the launcher's setting starts at `auto` (launcher version 8). Who this reaches:
+   no release up to v1.1.5 wrote a `renderer` line, so a `dmrecomp.ini` from a release has none and gets `auto` on the next
+   start; only a file written by a development build since the setting was added says `renderer = gl` and keeps OpenGL. Under
+   `auto` a Vulkan device of the CPU type is passed over (`gfx_vk_no_software`, `pick_device` in `runtime/gfx_vk.c`), so
+   OpenGL on the graphics card comes before Vulkan drawn by the processor; `renderer = vulkan` still takes such a device.
+   This changes what phase 6 recorded for Linux under WSL 2, where `auto` had used lavapipe: after the change, with lavapipe
+   the only Vulkan device, `auto` says so and uses OpenGL in both games (Freestyle BMX: 57 of 57 shots identical to its
+   `renderer = gl` run and to the Windows one), and `vulkan` uses lavapipe. The test hook has two more values: `software`
+   makes every Vulkan device count as the CPU type, and `nopad` makes the game not read gamepads. Checked on the Radeon with
+   no ini file and no renderer setting, ten runs side by side: both games print `[video] renderer = auto: using Vulkan` and
+   give the shots of their `renderer = gl` runs (Freestyle BMX 83 of 83, Maximum Remix 95 of 95); with `noloader` Freestyle
+   BMX goes to OpenGL and gives them too (82 of 82); with `software` it prints that the device is passed over, uses OpenGL
+   (83 of 83), and under `renderer = vulkan` keeps Vulkan (83 of 83); with `gpu_gl = 1` at 2x both games give the OpenGL
+   renderer's baseline shots (67 of 67 and 77 of 77), and with `software` added Freestyle BMX draws them with OpenGL's
+   renderer (68 of 68). `vktest` passes in its four modes with this code. About `nopad`: the Win32 front end reads a gamepad
+   whether or not its window has the focus, and two earlier rounds of such runs came out disturbed (in the first the last six
+   or seven shots of each comparison differed, in the second nearly all); one gamepad was connected, nobody watched it, and
+   every round with `nopad` was clean. Not done: the picture the software stretch shows after a step down was not compared;
+   `auto` as the default was not run on NVIDIA or Intel graphics, so a Vulkan driver there that starts but draws wrongly is
+   what a new user, or one coming from a release, would now get, with `renderer = gl` as the way back.
 
 Rough total: 5 to 8 weeks of focused work for phases 1 to 6 if the hardware is at hand, phase 3 being the optional one.
 

@@ -1493,6 +1493,8 @@ def gui(root_dir, pinned=False, notice=None):
     # ---- Settings tab
     s = tabs["Settings"]
     svars = {}
+    typed = set()          # settings edited by typing (keys, sizes, anything unknown): saved when the typing is finished
+    committed = {}         # their last finished values; a save writes these, not what is in the field at that moment
     cur = read_ini(P.ini)
     for k, v in cur.items():
         svars[k] = tk.StringVar(value=v)
@@ -1529,6 +1531,10 @@ def gui(root_dir, pinned=False, notice=None):
         else:
             w = ttk.Entry(parent, textvariable=var, width=24)
         w.grid(row=r, column=1, sticky="w", pady=2)
+        if not (sc and sc[3] in ("bool", "choice")):
+            typed.add(key)
+            for ev in ("<FocusOut>", "<Return>", "<<ComboboxSelected>>"):
+                w.bind(ev, lambda _e, k=key: typed_done(k))
 
     for name in ("Gameplay", "Video", "Input", "Audio"):
         inner = scrolled(stabs[name]) if name == "Input" else stabs[name]
@@ -1576,7 +1582,11 @@ def gui(root_dir, pinned=False, notice=None):
     def save_settings():
         """Write the settings. A value that is not valid (a size or a key half typed) is left as the file has it."""
         autosave["job"] = None
-        vals = {k: v.get().strip() for k, v in svars.items() if v.get().strip() != ""}
+        vals = {}
+        for k, var in svars.items():
+            v = committed.get(k, "") if k in typed else var.get().strip()
+            if v != "":
+                vals[k] = v
         bad = sorted(k for k, v in vals.items() if not valid_setting(k, v))
         for k in bad:
             del vals[k]
@@ -1601,15 +1611,33 @@ def gui(root_dir, pinned=False, notice=None):
             win.after_cancel(autosave["job"])
         autosave["job"] = win.after(400, save_settings)
 
+    def typed_done(key):
+        """A typed field was left, or Return was pressed in it: its value counts from now on."""
+        v = svars[key].get().strip() if key in svars else ""
+        if committed.get(key) != v:
+            committed[key] = v
+            settings_changed()
+
+    def sync_typed():
+        for k in typed:
+            if k in svars:
+                committed[k] = svars[k].get().strip()
+
     def flush_settings():
-        """Save now if a save is waiting: before the game starts, another game is shown or the window closes."""
+        """Save now if a save is waiting: before the game starts, another game is shown or the window closes. A typed
+        field that still has the cursor counts too, if what it holds is a valid value."""
+        for k in sorted(typed):
+            v = svars[k].get().strip() if k in svars else ""
+            if committed.get(k) != v and v != "" and valid_setting(k, v):
+                committed[k] = v
+                settings_changed()
         if autosave["job"] is not None:
             win.after_cancel(autosave["job"])
             save_settings()
 
     def watch_settings():
         for k, v in svars.items():
-            if k not in watched:
+            if k not in watched and k not in typed:
                 watched.add(k)
                 v.trace_add("write", settings_changed)
 
@@ -1619,6 +1647,7 @@ def gui(root_dir, pinned=False, notice=None):
         for k, sc in SCHEMA.items():
             svars.setdefault(k, tk.StringVar()).set(sc[5])
         watch_settings()
+        sync_typed()
         settings_changed()
 
     def reload_settings():
@@ -1629,10 +1658,17 @@ def gui(root_dir, pinned=False, notice=None):
         autosave["quiet"] = True
         try:
             settings_ini[0] = P.ini
-            for k, v in read_ini(P.ini).items():
+            new = read_ini(P.ini)
+            for k in [k for k in svars if k not in SCHEMA and k not in new]:   # a line only the other game's file has
+                del svars[k]
+                watched.discard(k)
+                typed.discard(k)
+                committed.pop(k, None)
+            for k, v in new.items():
                 svars.setdefault(k, tk.StringVar()).set(v)
             fill_all()
             watch_settings()
+            sync_typed()
         finally:
             autosave["quiet"] = False
         saved_lbl.configure(text="")
@@ -1647,6 +1683,7 @@ def gui(root_dir, pinned=False, notice=None):
     edits_lbl = ttk.Label(sbtn, text="", style="Muted.TLabel")
     edits_lbl.pack(side="left", padx=8)
     watch_settings()
+    sync_typed()
     dc.trace_add("write", settings_changed)
     for _v in dflags.values():
         _v.trace_add("write", settings_changed)
@@ -1797,7 +1834,13 @@ def gui(root_dir, pinned=False, notice=None):
     if notice:
         log("ERROR: " + notice)
         win.after(300, lambda: messagebox.showerror("Dave Mirra launcher", notice))
-    win.protocol("WM_DELETE_WINDOW", lambda: (flush_settings(), win.destroy()))
+    def on_close():
+        try:
+            flush_settings()
+        finally:
+            win.destroy()          # whatever the save did, the window closes
+
+    win.protocol("WM_DELETE_WINDOW", on_close)
     win.mainloop()
     return 0
 
