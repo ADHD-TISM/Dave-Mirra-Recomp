@@ -166,17 +166,18 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    pixels 48 % differ by 8, 45 % by 4, 6 % by 1 or 2 and 2 % by other amounts (largest 88): the same kind of difference as in
    Freestyle BMX; these pixels were not located. Three runs under the validation layer gave no message. A second plain
    lavapipe run and two of the validated runs give the first plain run's shots (74 of 74, 69 of 69, 69 of 69). The other
-   validated run, the first one, gave the plain run's shots up to frame 1200 and other menu screens from the shot at frame
-   1500 on (some later ones at another picture size), with the same lines in its game log, so the rest of it cannot be
-   compared; the cause was not found, and it did not happen again in the two runs after it. A fault found on the way, not a
-   renderer one: after some minutes of `--turbo` the game did not end when told to (SIGTERM), under OpenGL and Vulkan alike;
-   it stopped inside SDL's closing of the PulseAudio device, and with `SDL_AUDIODRIVER=dummy` it ended. It is a fault of
-   `--turbo` runs as far as seen: with the old code a run of 200 seconds at normal speed ended as it should, and the turbo
-   run beside it did not (one run each). `plat_exit` in `runtime/plat_sdl.c` no longer closes the sound device (it stops
-   rumble, closes the pads, gives back the window and the display mode and leaves); three turbo runs of 170 seconds then
-   ended with code 0. The new exit path was not tried with a gamepad, in fullscreen, or on a machine other than this one. Not
-   done: Vulkan on Linux on a graphics card (lavapipe is a CPU driver), NVIDIA and Intel on Windows, Linux on real hardware
-   with Mesa's own drivers or NVIDIA's, and a Steam Deck.
+   validated run, the first one, gave the plain run's shots up to frame 1200 and other pictures from the shot at frame 1500
+   on: at frame 1500 another item of the same menu, at frame 6000 another level (only these two were looked at; some shots
+   between them have another picture size). Its game log has the same lines, apart from the timing and statistics lines,
+   which were not compared. The rest of that run cannot be compared; the cause was not found, and it did not happen again in
+   the two runs after it. A fault found on the way, not a renderer one: after some minutes of `--turbo` the game did not end
+   when told to (SIGTERM), under OpenGL and Vulkan alike; it stopped inside SDL's closing of the PulseAudio device, and with
+   `SDL_AUDIODRIVER=dummy` it ended. It is a fault of `--turbo` runs as far as seen: with the old code a run of 200 seconds
+   at normal speed ended as it should, and the turbo run beside it did not (one run each). `plat_exit` in
+   `runtime/plat_sdl.c` no longer closes the sound device (it stops rumble, closes the pads, gives back the window and the
+   display mode and leaves); three turbo runs of 170 seconds then ended with code 0. The new exit path was not tried with a
+   gamepad, in fullscreen, or on a machine other than this one. Not done: Vulkan on Linux on a graphics card (lavapipe is a
+   CPU driver), NVIDIA and Intel on Windows, Linux on real hardware with Mesa's own drivers or NVIDIA's, and a Steam Deck.
 7. **Make Vulkan the default presentation where it works** (not estimated). A new setting, `renderer = auto | vulkan | gl`,
    picks the presentation and GPU-renderer backend: `auto` uses Vulkan when the device supports what is needed and falls back
    otherwise; the other two force one. It does not change what `gpu_gl` means: the CPU renderer stays the default picture, and
