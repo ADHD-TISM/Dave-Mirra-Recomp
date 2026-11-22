@@ -1566,37 +1566,90 @@ def gui(root_dir, pinned=False, notice=None):
 
     fill_all()
 
+    # Settings are saved by themselves: any choice starts a short timer, and when it runs out the values go to the game's
+    # file. settings_ini is the file the values on screen came from (the shown game's), so a save that was still waiting
+    # when another game is chosen goes to the right file.
+    settings_ini = [P.ini]
+    autosave = {"job": None, "quiet": False}
+    watched = set()
+
     def save_settings():
+        """Write the settings. A value that is not valid (a size or a key half typed) is left as the file has it."""
+        autosave["job"] = None
         vals = {k: v.get().strip() for k, v in svars.items() if v.get().strip() != ""}
-        for k, v in vals.items():
-            if not valid_setting(k, v):
-                messagebox.showerror("Settings", "%s: \"%s\" is not a valid value." % (k, v))
-                return
-        write_ini(P.ini, vals)
-        with C.lock:
-            C.d["debug_console"] = bool(dc.get())
-            C.d["debug_flags"] = [f for f, v in dflags.items() if v.get()]
-            C.save()
-        log("settings saved to %s" % P.ini)
+        bad = sorted(k for k, v in vals.items() if not valid_setting(k, v))
+        for k in bad:
+            del vals[k]
+        try:
+            write_ini(settings_ini[0], vals)
+            with C.lock:
+                C.d["debug_console"] = bool(dc.get())
+                C.d["debug_flags"] = [f for f, v in dflags.items() if v.get()]
+                C.save()
+        except OSError as e:
+            saved_lbl.configure(text="Could not save: %s" % e, foreground=pal["bad"])
+            return
+        if bad:
+            saved_lbl.configure(text="Saved, except %s: not a valid value" % ", ".join(bad), foreground=pal["bad"])
+        else:
+            saved_lbl.configure(text="Saved", foreground=pal["ok"])
+
+    def settings_changed(*_a):
+        if autosave["quiet"]:
+            return
+        if autosave["job"] is not None:
+            win.after_cancel(autosave["job"])
+        autosave["job"] = win.after(400, save_settings)
+
+    def flush_settings():
+        """Save now if a save is waiting: before the game starts, another game is shown or the window closes."""
+        if autosave["job"] is not None:
+            win.after_cancel(autosave["job"])
+            save_settings()
+
+    def watch_settings():
+        for k, v in svars.items():
+            if k not in watched:
+                watched.add(k)
+                v.trace_add("write", settings_changed)
 
     def reset_settings():
         if not messagebox.askyesno("Settings", "Put every setting back to its default?"):
             return
         for k, sc in SCHEMA.items():
             svars.setdefault(k, tk.StringVar()).set(sc[5])
+        watch_settings()
+        settings_changed()
 
     def reload_settings():
-        for k, v in read_ini(P.ini).items():
-            svars.setdefault(k, tk.StringVar()).set(v)
-        fill_all()
+        """Show what the shown game's file says; a save that was still waiting is dropped."""
+        if autosave["job"] is not None:
+            win.after_cancel(autosave["job"])
+            autosave["job"] = None
+        autosave["quiet"] = True
+        try:
+            settings_ini[0] = P.ini
+            for k, v in read_ini(P.ini).items():
+                svars.setdefault(k, tk.StringVar()).set(v)
+            fill_all()
+            watch_settings()
+        finally:
+            autosave["quiet"] = False
+        saved_lbl.configure(text="")
 
     sbtn = ttk.Frame(s)
     sbtn.pack(fill="x", pady=(8, 0))
-    ttk.Button(sbtn, text="Save", command=save_settings).pack(side="left")
-    ttk.Button(sbtn, text="Reset to defaults", command=reset_settings).pack(side="left", padx=6)
-    ttk.Button(sbtn, text="Reload", command=reload_settings).pack(side="left")
+    ttk.Button(sbtn, text="Reset to defaults", command=reset_settings).pack(side="left")
+    ttk.Button(sbtn, text="Reload", command=reload_settings).pack(side="left", padx=6)
+    ttk.Label(sbtn, text="Changes are saved as you make them.", style="Muted.TLabel").pack(side="left", padx=(2, 0))
+    saved_lbl = ttk.Label(sbtn, text="")
+    saved_lbl.pack(side="left", padx=8)
     edits_lbl = ttk.Label(sbtn, text="", style="Muted.TLabel")
     edits_lbl.pack(side="left", padx=8)
+    watch_settings()
+    dc.trace_add("write", settings_changed)
+    for _v in dflags.values():
+        _v.trace_add("write", settings_changed)
 
     # ---- plumbing
     def refresh():
@@ -1605,6 +1658,7 @@ def gui(root_dir, pinned=False, notice=None):
             log("found your disc image: %s" % C.get("disc"))
         sync_game_box()
         if shown_gid[0] != P.gid:      # a different game: its settings file, its disc image
+            flush_settings()           # a waiting save belongs to the game shown until now
             shown_gid[0] = P.gid
             disc_var.set(C.get("disc", ""))
             reload_settings()
@@ -1681,6 +1735,7 @@ def gui(root_dir, pinned=False, notice=None):
         work(lambda: build_all(P, C, C.get("disc"), log, progress), "Build finished.")
 
     def do_play():
+        flush_settings()
         try:
             play(P, C, C.get("disc"), log)
         except Fail as e:
@@ -1742,6 +1797,7 @@ def gui(root_dir, pinned=False, notice=None):
     if notice:
         log("ERROR: " + notice)
         win.after(300, lambda: messagebox.showerror("Dave Mirra launcher", notice))
+    win.protocol("WM_DELETE_WINDOW", lambda: (flush_settings(), win.destroy()))
     win.mainloop()
     return 0
 
