@@ -5,8 +5,8 @@ done. Phase 2 (the backend seam) is done: the window, its surface, the window pi
 `runtime/gfx.h`. Phase 3 (core-profile OpenGL) is done on the Radeon. Phase 4 is done on the Radeon: Vulkan shows the CPU
 picture, FSR included. Phase 5 is done on the Radeon: `gpu_gl = 1` under `renderer = vulkan` draws the 2x and 4x picture on
 the card (`docs/vulkan-gpu-renderer-plan.md`). Phase 6 is started (the Radeon under the validation layer, and Linux under WSL
-2 with Mesa's OpenGL and software Vulkan drivers). Phase 7 is started: the setting `renderer = auto` exists, the default is
-still `gl`. Estimates are rough and are not promises.
+2 with Mesa's OpenGL and software Vulkan drivers). Phase 7: the setting `renderer = auto` exists and is the default, set
+before phase 6's NVIDIA and Intel runs were made. Estimates are rough and are not promises.
 
 ## Goal
 
@@ -199,8 +199,18 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    with `-fsyntax-only -Wall`: `host_common.c`, `gfx_vk.c`, `gpu_vk.c`, `gfx_gl.c`, `gfx.c`, `plat_sdl.c` and `gpu.c`; no
    warnings). `vktest decline` checks that the Vulkan backend says no and leaves no device behind when its renderer cannot be
    set up and that it starts again without the fault; `vktest keep` that under `renderer = vulkan` it starts with the fault.
-   Not done: the default is still `gl` (changing it waits for phase 6); the picture the software stretch shows after a step
-   down was not compared; nothing was run on other hardware or on Linux.
+   The default is now `auto`, set before phase 6's NVIDIA and Intel runs were made: `g_renderer` starts at 2, a new
+   `dmrecomp.ini` says `renderer = auto`, and the launcher's setting starts at `auto` (launcher version 8). A `dmrecomp.ini`
+   written earlier keeps its `renderer = gl` line and so keeps OpenGL. Checked on the Radeon with no ini file and no renderer
+   setting: both games print `[video] renderer = auto: using Vulkan`; Freestyle BMX gives the shots of a `renderer = gl` run
+   (92 of 92), and with `noloader` it goes to OpenGL and gives them too (92 of 92); with `gpu_gl = 1` at 2x both games give
+   the OpenGL renderer's baseline shots (87 of 87 and 102 of 102). The test hook has a fourth value for this, `nopad`: the
+   game does not read gamepads. The Win32 front end reads a gamepad whether or not its window has the focus, and two rounds
+   of these six runs came out disturbed (in the first the last six or seven shots of each comparison differed, in the second
+   nearly all); one gamepad was connected, nobody watched it, and the round with `nopad` was clean. Not done: the picture the
+   software stretch shows after a step down was not compared; `auto` as the default was not run on NVIDIA or Intel graphics,
+   so a Vulkan driver there that starts but draws wrongly is what a new user would now get, with `renderer = gl` as the way
+   back; `renderer = auto` on Linux is recorded under phase 6.
 
 Rough total: 5 to 8 weeks of focused work for phases 1 to 6 if the hardware is at hand, phase 3 being the optional one.
 

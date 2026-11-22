@@ -29,6 +29,7 @@ static unsigned input_frame;
 static u16 pad_state[2] = { 0xffff, 0xffff };
 static u8 pad_axes[2][4] = { { 128, 128, 128, 128 }, { 128, 128, 128, 128 } };
 static int pad_found[2];      /* a gamepad is plugged in for this player */
+static int test_nopad;        /* DMRECOMP_GFX_TEST has "nopad": gamepads are not read, so a scripted run cannot be disturbed by one */
 int g_rumble = 1, g_player2 = 1;
 extern int g_pad_analog[2], g_dualshock;
 
@@ -40,7 +41,7 @@ static int key(int k) { return k && plat_key(k); }
    the console picture; F6/F7/F8/F11 change the display while playing. */
 int g_fullscreen, g_integer_scale, g_filter, g_aspect;   /* filter: 0 nearest, 1 smooth; aspect: 0 = 4:3, 1 = stretch */
 int g_scale_auto = 1;   /* step the internal resolution down when the machine cannot keep up */
-int g_renderer;                                           /* 0 = gl (default), 1 = vulkan, 2 = auto: see host_init; a backend that cannot start falls back */
+int g_renderer = 2;                                       /* 0 = gl, 1 = vulkan, 2 = auto (default): see host_init; a backend that cannot start falls back */
 int g_upscale, g_fsr_sharp = 80;                          /* upscale: 0 = plain, 1 = FSR 1; sharpness 0..100 */
 static int win_w = 960, win_h = 720;                      /* window_size */
 extern int g_ws_kq; extern unsigned g_gte_rtp;
@@ -148,9 +149,9 @@ static void config_write_default(const char *path) {
                "scale = 1\n"
                "# 1 = drop to a lower scale by itself when the game cannot hold full speed at 2 or 4\n"
                "scale_auto = 1\n"
-               "# Graphics API that shows the picture: gl = OpenGL, vulkan = Vulkan first (early prototype; falls back to OpenGL),\n"
+               "# Graphics API that shows the picture: gl = OpenGL, vulkan = Vulkan first (falls back to OpenGL),\n"
                "# auto = Vulkan when it can do everything asked (with gpu_gl = 1 that includes drawing on the graphics card), else OpenGL\n"
-               "renderer = gl\n"
+               "renderer = auto\n"
                "# 1 = at scale 2 or 4, draw the picture on the graphics card instead of the processor (early prototype)\n"
                "gpu_gl = 0\n"
                "# How the picture is enlarged to the window: nearest = sharp pixels, smooth = blended (F7)\n"
@@ -233,7 +234,7 @@ static void poll_input(void) {
     for (int n = 0; n < 2; n++) {
         HostPad s;
         memset(pad_axes[n], 128, 4);
-        if (n == 1 && !g_player2) { pad_found[n] = 0; continue; }
+        if (test_nopad || (n == 1 && !g_player2)) { pad_found[n] = 0; continue; }
         if (!pad_found[n] && !look) continue;
         pad_found[n] = plat_pad(n, &s);
         if (!pad_found[n]) continue;
@@ -302,6 +303,7 @@ void host_quit(void) { g_rumble = 0; host_pad_rumble(0, 0, 0); host_pad_rumble(1
 
 void host_init(void) {
     plat_init();
+    { const char *tst = getenv("DMRECOMP_GFX_TEST"); test_nopad = tst && strstr(tst, "nopad"); }   /* read once, here */
     last_frame = plat_now_ms();
     fb = calloc((size_t)1024 * 4 * 512 * 4, 4);   /* room for the largest internal resolution */
     /* the graphics backend is chosen once, here. renderer = gl: OpenGL, else the software stretch. renderer = vulkan: Vulkan
