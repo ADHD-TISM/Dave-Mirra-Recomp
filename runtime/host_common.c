@@ -22,6 +22,8 @@ static u32 *fb; static int fb_w = 640, fb_h = 480;
 static double last_frame;   /* ms */
 static int turbo;
 int g_turbo, g_auto_start;   /* test aids: --turbo, --auto-start N */
+int g_skip_intro = 1;        /* skip_intro = 1 (default): Start is pressed for the player while the movies shown at start-up play */
+unsigned g_mdec_frames;      /* movie pictures decoded since start (mdec.c); never reset, unlike g_stat_mdec */
 static unsigned input_frame;
 #include "script_parse.h"   /* host_set_script: the --script / --script-file button script */
 
@@ -121,6 +123,7 @@ int host_set_option(const char *name, const char *val) {
     if (!_stricmp(name, "integer_scale")) { g_integer_scale = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "fullscreen")) { g_fullscreen = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "cpu_assist")) { g_cpu_assist = atoi(val) != 0; return 1; }
+    if (!_stricmp(name, "skip_intro")) { g_skip_intro = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "rumble")) { g_rumble = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "dualshock")) { g_dualshock = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "player2")) { g_player2 = atoi(val); return 1; }   /* 2 = always present (tests) */
@@ -173,6 +176,8 @@ static void config_write_default(const char *path) {
                "fsr_sharpness = 80\n"
                "# 1 = hold 30 fps in busy scenes, 0 = console CPU timing with its slowdowns\n"
                "cpu_assist = 1\n"
+               "# 1 = skip the movies shown when the game starts (the publisher, the developer and the intro), 0 = show them\n"
+               "skip_intro = 1\n"
                "# 1 = echo effect the console adds in levels, 0 = dry sound\n"
                "reverb = 1\n\n"
                "# Controllers. dualshock = 0 makes the game see a plain digital pad (no sticks, no rumble).\n"
@@ -250,6 +255,19 @@ static void poll_input(void) {
         }
     }
     input_frame++;
+    /* skip_intro: the game's movie player ends a movie when Start is pressed, and the movies shown at start-up follow each
+       other without a pause. So Start is pressed in short pulses while movie pictures keep coming, and the aid switches itself
+       off for the rest of the session once no picture has come for 5 seconds (the menu is up), or when no movie has started in
+       the first minute. A movie watched later, from the menus, is left alone. It stays out of a run that uses --auto-start
+       or a button script: those press Start themselves, and their frame numbers were chosen without it. */
+    if (g_skip_intro && !g_auto_start && !script_n) {
+        static unsigned seen, last_at; static int state;   /* 0 = waiting for the first movie, 1 = in the movies, 2 = done */
+        if (state < 2 && g_mdec_frames != seen) { seen = g_mdec_frames; last_at = input_frame; state = 1; }
+        if (state == 1) {
+            if (input_frame - last_at > 300) state = 2;
+            else if (input_frame - last_at < 12 && input_frame % 16 < 4) b[0] |= 1 << 3;
+        } else if (state == 0 && input_frame > 3600) state = 2;
+    }
     if (g_auto_start && (!script_n || input_frame < script[0].frame) &&
         input_frame % (unsigned)g_auto_start < 4) b[0] |= 1 << 3;
     for (int i = 0; i < script_n; i++)

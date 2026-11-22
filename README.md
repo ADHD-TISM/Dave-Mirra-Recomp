@@ -82,6 +82,7 @@ the original console picture; delete the file to get them back.
 | `upscale` | `off`, `fsr` AMD FidelityFX Super Resolution 1 | F9 |
 | `fsr_sharpness` | `0`-`100`, how much sharpening FSR adds | |
 | `cpu_assist` | `1` hold 30 fps, `0` console timing | |
+| `skip_intro` | `1` (default) skips the three movies shown when the game starts (about 2 minutes 20 seconds) by pressing Start for you while they play; `0` shows them. Movies watched later from the menus are not skipped, and a run with `--auto-start` or a button script is left alone | |
 | `reverb` | `1` console echo effect, `0` dry | |
 | `dualshock` | `1` DualShock (sticks, rumble), `0` plain digital pad | |
 | `rumble` | `1`, `0` | |

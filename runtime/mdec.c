@@ -113,7 +113,7 @@ static void decode(void) {
 void dma_mdec_out_kick(void);
 
 static void finish_command(void) {
-    if (expecting == 1) { extern unsigned g_stat_mdec; g_stat_mdec++; out_w = out_r = 0; decode(); dma_mdec_out_kick(); }
+    if (expecting == 1) { extern unsigned g_stat_mdec, g_mdec_frames; g_stat_mdec++; g_mdec_frames++; out_w = out_r = 0; decode(); dma_mdec_out_kick(); }
     else if (expecting == 2) {
         memcpy(qt_y, inbuf, 64);
         if (cmd & 1) memcpy(qt_c, (u8 *)inbuf + 64, 64);

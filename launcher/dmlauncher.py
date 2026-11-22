@@ -864,6 +864,8 @@ SETTINGS = [
     ("upscale", "Video", "Upscaler", "choice", ["off", "fsr"], "off",
      "off = plain, fsr = AMD FidelityFX Super Resolution 1 (F9 toggles); fsr_sharpness 0..100"),
     ("fsr_sharpness", "Video", "FSR sharpness (0-100)", "combo", ["0", "25", "50", "80", "100"], "80", None),
+    ("skip_intro", "Gameplay", "Skip the intro movies", "bool", B01, "1",
+     "1 = skip the movies shown when the game starts (the publisher, the developer and the intro), 0 = show them"),
     ("cpu_assist", "Gameplay", "Hold 30 fps in busy scenes", "bool", B01, "1",
      "1 = hold 30 fps in busy scenes, 0 = console CPU timing with its slowdowns"),
     ("reverb", "Audio", "Console echo effect (reverb)", "bool", B01, "1",
