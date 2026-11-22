@@ -79,7 +79,7 @@ void bios_call_b(void);
 void bios_call_c(void);
 void bios_syscall(void);
 void bios_vblank(void);
-void bios_report_stall(const char *tag);   /* watchdog and host_quit: recent BIOS calls and pending card events */
+void bios_report_stall(const char *tag, int all);   /* watchdog and host_quit: recent BIOS calls and pending card events */
 int  bios_take_interrupt(void);     /* returns 1 if handled */
 extern int bios_in_exception;
 

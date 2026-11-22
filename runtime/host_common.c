@@ -348,7 +348,7 @@ void host_quit(void) {
     fprintf(stderr, "[exit] guest return addresses on the stack:");
     print_stack(0x80200000u, 24);
     fprintf(stderr, "\n");
-    bios_report_stall("exit");
+    bios_report_stall("exit", 1);
     g_rumble = 0; host_pad_rumble(0, 0, 0); host_pad_rumble(1, 0, 0); plat_exit(0);
 }
 
@@ -526,7 +526,7 @@ void host_frame(void) {
             fprintf(stderr, "[watchdog] guest return addresses on the stack:");
             print_stack(0x80200000u, 24);
             fprintf(stderr, "\n");
-            bios_report_stall("watchdog");
+            bios_report_stall("watchdog", 0);
         }
         /* Once a minute, one line that says where the game is. A second alarm for "still drawing, but stuck" is not possible
            from the outside: the menus are drawn without a display flip, and a save draws its bar for 20 s without one, so a

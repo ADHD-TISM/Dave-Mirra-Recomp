@@ -225,10 +225,12 @@ static struct { char pat[24]; int idx, slot; } mc_dir;
    as it is delivered (and to how many of the game's events), and each event that was dropped. Kept in memory and printed
    only in a report: a menu asks the card for its state all the time, so a line per record would fill the log. */
 static struct { char kind; unsigned vbl; u32 a, b, c, ra; } mc_ring[256]; static unsigned mc_ring_n;   /* a write is 4 records: seek, write, event queued, event delivered */
+static unsigned mc_ring_shown;   /* records up to here are in a report already */
 static unsigned mc_vbl, mc_n_queued, mc_n_delivered, mc_n_dropped, mc_n_unheard; static int mc_most;
-static void mc_note(char kind, u32 a, u32 b, u32 c) {
+static unsigned mc_note(char kind, u32 a, u32 b, u32 c) {   /* returns the record's place, for a result that comes later */
     unsigned i = mc_ring_n++ & 255;
     mc_ring[i].kind = kind; mc_ring[i].vbl = mc_vbl; mc_ring[i].a = a; mc_ring[i].b = b; mc_ring[i].c = c; mc_ring[i].ra = RA;
+    return i;
 }
 static void mc_queue(u32 cls, u32 spec) {
     if (mc_ev_n < 8) {
@@ -484,18 +486,23 @@ static void bios_note(char tbl, u32 fn) {
     unsigned i = bios_ring_n++ & 15;
     bios_ring[i].tbl = tbl; bios_ring[i].fn = fn; bios_ring[i].a0 = A0; bios_ring[i].a1 = A1; bios_ring[i].a2 = A2; bios_ring[i].ra = RA;
 }
-void bios_report_stall(const char *tag) {   /* tag: who asks, "watchdog" or "exit" */
+/* tag: who asks, "watchdog" or "exit". all = 0: only the card records that no report has shown yet (the watchdog repeats
+   its report every 10 s of a stall, and the same 256 lines each time would bury the rest of the log) */
+void bios_report_stall(const char *tag, int all) {
     fprintf(stderr, "[%s] card events waiting now=%d, last BIOS calls (oldest first):\n", tag, mc_ev_n);
     for (unsigned k = 0; k < 16; k++) {
         unsigned i = (bios_ring_n + k) & 15;
         if (!bios_ring[i].tbl) continue;
         fprintf(stderr, "[%s]   %c(%02x) a0=%08x a1=%08x a2=%08x ra=%08x\n", tag, bios_ring[i].tbl, bios_ring[i].fn, bios_ring[i].a0, bios_ring[i].a1, bios_ring[i].a2, bios_ring[i].ra);
     }
-    fprintf(stderr, "[%s] card events: %u queued, %u delivered (%u of them to no waiting event), %u dropped, at most %d waiting; now vblank %u. Last card records (oldest first):\n",
-            tag, mc_n_queued, mc_n_delivered, mc_n_unheard, mc_n_dropped, mc_most, mc_vbl);
+    fprintf(stderr, "[%s] card events: %u queued, %u delivered (%u of them to no waiting event), %u dropped, at most %d waiting; now vblank %u. %s (oldest first):\n",
+            tag, mc_n_queued, mc_n_delivered, mc_n_unheard, mc_n_dropped, mc_most, mc_vbl, all ? "Last card records" : "Card records since the last report");
+    unsigned lines = 0;
     for (unsigned k = 0; k < 256; k++) {
-        unsigned i = (mc_ring_n + k) & 255; u32 a = mc_ring[i].a, b = mc_ring[i].b, c = mc_ring[i].c;
+        unsigned seq = mc_ring_n - 256 + k, i = seq & 255; u32 a = mc_ring[i].a, b = mc_ring[i].b, c = mc_ring[i].c;
         if (!mc_ring[i].kind) continue;   /* a slot not used yet */
+        if (!all && (int)(seq - mc_ring_shown) < 0) continue;   /* in an earlier report */
+        lines++;
         fprintf(stderr, "[%s]   vblank %u", tag, mc_ring[i].vbl);
         /* a delivery happens in the vblank, not in a call of the game's: it has no caller to name */
         if (mc_ring[i].kind == 'd') fprintf(stderr, ": "); else fprintf(stderr, " ra=%08x: ", mc_ring[i].ra);
@@ -509,6 +516,8 @@ void bios_report_stall(const char *tag) {   /* tag: who asks, "watchdog" or "exi
         case 'd': fprintf(stderr, "event %08x:%04x delivered: %u set ready, %u callbacks, %u were ready already, %u not enabled\n", a, b, c & 255, c >> 8 & 255, c >> 16 & 255, c >> 24); break;
         }
     }
+    if (!lines) fprintf(stderr, "[%s]   (none)\n", tag);
+    mc_ring_shown = mc_ring_n;
 }
 
 void bios_call_a(void) {
@@ -657,11 +666,14 @@ void bios_call_b(void) {
             if (n) fwrite(b, 1, n, stdout);
             fflush(stdout); V0 = A2;
         }
-        else { u32 fd = A0, n = A2; V0 = mc_frw(fd, A1, n, 1); mc_note('w', fd, n, V0); }   /* noted with its result: a refused call must show too */
+        else {   /* noted before the call, so that the record stands before the event the call queues; the result is filled
+                    in after it, so a refused call shows too */
+            u32 fd = A0, n = A2; unsigned at = mc_note('w', fd, n, 0); V0 = mc_frw(fd, A1, n, 1); mc_ring[at].c = V0;
+        }
         break;
     case 0x32: { char n[64]; gstr(A0, n, sizeof n); u32 mode = A1; V0 = mc_fopen(n, mode); mc_note('o', mode, V0, 0); break; }
     case 0x33: { u32 fd = A0, off = A1, wh = A2; V0 = mc_fseek(fd, off, wh); mc_note('s', (fd & 0xffffffu) | wh << 24, off, V0); break; }
-    case 0x34: { u32 fd = A0, n = A2; V0 = mc_frw(fd, A1, n, 0); mc_note('r', fd, n, V0); break; }
+    case 0x34: { u32 fd = A0, n = A2; unsigned at = mc_note('r', fd, n, 0); V0 = mc_frw(fd, A1, n, 0); mc_ring[at].c = V0; break; }
     case 0x36: { u32 fd = A0; V0 = mc_fclose(fd); mc_note('c', fd, V0, 0); break; }
     case 0x41: { char n[64]; gstr(A0, n, sizeof n); if (mc_name(n)) { mc_open_image(); mc_format(); V0 = 1; } else V0 = 0; break; }
     case 0x42: { char n[64]; gstr(A0, n, sizeof n); V0 = mc_firstfile(n, A1); if (mc_name(n)) mc_queue(0xf0000011u, 0x0004); break; }
