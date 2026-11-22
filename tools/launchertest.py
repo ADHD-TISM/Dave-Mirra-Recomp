@@ -165,8 +165,33 @@ def run_log():
     b = rd(cur) or ""
     check("run log: the next start moves it to the log of the run before", rd(old) == a)
     check("run log: and starts a new one", b.startswith("[launcher] version") and "[game] started" in b and "[game] ended" not in b, repr(b[:70]))
-    open(stop, "w").close()
+    open(stop, "w").close()                                 # stays: the games started below end at once
     wait(lambda: done() == 3)
+    # Two launchers at the same moment, without timing: the other launcher's step is put inside this one's.
+    def put(text):
+        open(cur, "w", newline="\n").write(text)
+    if os.name != "nt":
+        # the other launcher moves the log and makes its own between this launcher's open and its lock
+        real_lock, calls = dml._log_lock, []
+        def lock(f):
+            if not calls:
+                os.rename(cur, old); put("the other launcher's log 1\n")
+            calls.append(1); real_lock(f)
+        dml._log_lock = lock; n = len(said)
+        try: dml.play(P, C, game, said.append)
+        finally: dml._log_lock = real_lock
+        check("run log: a log moved away under this launcher: the new one at its name is not moved",
+              rd(cur) == "the other launcher's log 1\n" and any("no run log this time" in s for s in said[n:]), repr((rd(cur), said[n:])))
+    # the other launcher makes its log between this launcher's move and its own new log
+    real_replace = os.replace
+    def replace(a, b):
+        real_replace(a, b); put("the other launcher's log 2\n")
+    os.replace = replace; n = len(said)
+    try: dml.play(P, C, game, said.append)
+    finally: os.replace = real_replace
+    check("run log: a log made by another launcher in the same moment is not opened or emptied",
+          rd(cur) == "the other launcher's log 2\n" and any("no run log this time" in s for s in said[n:]), repr((rd(cur), said[n:])))
+    wait(lambda: done() == (4 if os.name == "nt" else 5))
 
 tk.Tk.mainloop = driver
 dml.gui(T)
