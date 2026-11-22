@@ -157,6 +157,9 @@ when its window is closed, an `[exit]` report of the same kind as the watchdog's
 After a freeze, close the game by its window, not from Task Manager, so that the
 `[exit]` report is written. A window that no longer responds to its close button
 gives no `[exit]` report; the `[state]` lines before it are what is left then. The
+`[watchdog]` and `[exit]` reports end with the memory card's last 64 records (file
+calls, and each completion event as it was queued and delivered); a completion event
+that is dropped is reported at once on a `[card]` line. The
 `[exit]` report was checked on Windows only, not yet on Linux with the game.
 
 Started from the launcher (its window, or `dmlauncher.py play`), the game's messages

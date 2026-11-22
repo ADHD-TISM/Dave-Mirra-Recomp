@@ -221,9 +221,43 @@ static struct { u32 cls, spec; } mc_ev[8]; static int mc_ev_n;
 static struct { int used, slot, pos, size, mode, chain[15], nchain; } mc_fd[4];
 static struct { char pat[24]; int idx, slot; } mc_dir;
 
-static void mc_queue(u32 cls, u32 spec) { if (mc_ev_n < 8) { mc_ev[mc_ev_n].cls = cls; mc_ev[mc_ev_n].spec = spec; mc_ev_n++; } }
+/* What the card did last, for the [watchdog] and [exit] reports: the file calls, each completion event as it is queued and
+   as it is delivered (and to how many of the game's events), and each event that was dropped. Kept in memory and printed
+   only in a report: a menu asks the card for its state all the time, so a line per record would fill the log. */
+static struct { char kind; unsigned vbl; u32 a, b, c, ra; } mc_ring[64]; static unsigned mc_ring_n;
+static unsigned mc_vbl, mc_n_queued, mc_n_delivered, mc_n_dropped, mc_n_unheard; static int mc_most;
+static void mc_note(char kind, u32 a, u32 b, u32 c) {
+    unsigned i = mc_ring_n++ & 63;
+    mc_ring[i].kind = kind; mc_ring[i].vbl = mc_vbl; mc_ring[i].a = a; mc_ring[i].b = b; mc_ring[i].c = c; mc_ring[i].ra = RA;
+}
+static void mc_queue(u32 cls, u32 spec) {
+    if (mc_ev_n < 8) {
+        mc_ev[mc_ev_n].cls = cls; mc_ev[mc_ev_n].spec = spec; mc_ev_n++; mc_n_queued++;
+        if (mc_ev_n > mc_most) mc_most = mc_ev_n;
+        mc_note('q', cls, spec, 0);
+    } else {   /* the game would wait for this one for ever: say so at once, the first few times */
+        mc_note('x', cls, spec, 0);
+        if (mc_n_dropped++ < 5) fprintf(stderr, "[card] a completion event was dropped, 8 were waiting already: class %08x spec %04x, asked from %08x\n", cls, spec, RA);
+    }
+}
 static void mc_flush_events(void) {
-    for (int i = 0; i < mc_ev_n; i++) deliver_event(mc_ev[i].cls, mc_ev[i].spec);
+    mc_vbl++;
+    for (int i = 0; i < mc_ev_n; i++) {
+        /* who hears it: events the game opened for this class and spec. ready = now set for TestEvent, calls = callbacks
+           run, was = set already and so not counted twice, off = opened but not enabled */
+        u32 ready = 0, calls = 0, was = 0, off = 0;
+        for (int k = 0; k < NEV; k++) {
+            Event *e = &ev[k];
+            if (e->status == EV_FREE || e->cls != mc_ev[i].cls || e->spec != mc_ev[i].spec) continue;
+            if (e->status == EV_READY) was++;
+            else if (e->status != EV_ENABLED) off++;
+            else if (e->mode == 0x2000) ready++;
+            else if (e->mode == 0x1000 && e->func) calls++;
+        }
+        mc_note('d', mc_ev[i].cls, mc_ev[i].spec, ready | calls << 8 | was << 16 | off << 24);
+        mc_n_delivered++; if (!ready && !calls) mc_n_unheard++;
+        deliver_event(mc_ev[i].cls, mc_ev[i].spec);
+    }
     mc_ev_n = 0;
 }
 static void mc_sum(u8 *f) { u8 x = 0; for (int i = 0; i < 127; i++) x ^= f[i]; f[127] = x; }
@@ -365,6 +399,7 @@ static u32 mc_frw(u32 fd, u32 buf, u32 n, int wr) {
         if (wr) *b = mr8(buf + i); else mw8(buf + i, *b);
     }
     mc_fd[k].pos += (int)n;
+    mc_note(wr ? 'w' : 'r', fd, n, (u32)mc_fd[k].mode);
     if (wr) mc_save();
     if (mc_fd[k].mode & 0x8000) { mc_queue(0xf4000001u, 0x0004); return 0; }   /* O_NOWAIT */
     return n;
@@ -456,6 +491,20 @@ void bios_report_stall(const char *tag) {   /* tag: who asks, "watchdog" or "exi
         unsigned i = (bios_ring_n + k) & 15;
         if (!bios_ring[i].tbl) continue;
         fprintf(stderr, "[%s]   %c(%02x) a0=%08x a1=%08x a2=%08x ra=%08x\n", tag, bios_ring[i].tbl, bios_ring[i].fn, bios_ring[i].a0, bios_ring[i].a1, bios_ring[i].a2, bios_ring[i].ra);
+    }
+    fprintf(stderr, "[%s] card events: %u queued, %u delivered (%u of them to no waiting event), %u dropped, at most %d waiting; now vblank %u. Last card records (oldest first):\n",
+            tag, mc_n_queued, mc_n_delivered, mc_n_unheard, mc_n_dropped, mc_most, mc_vbl);
+    for (unsigned k = 0; k < 64; k++) {
+        unsigned i = (mc_ring_n + k) & 63; u32 a = mc_ring[i].a, b = mc_ring[i].b, c = mc_ring[i].c;
+        fprintf(stderr, mc_ring[i].kind ? "[%s]   vblank %u ra=%08x: " : "", tag, mc_ring[i].vbl, mc_ring[i].ra);
+        switch (mc_ring[i].kind) {
+        case 'o': fprintf(stderr, "open mode %04x gave %d\n", a, (int)b); break;
+        case 'c': fprintf(stderr, "close file %u gave %d\n", a, (int)b); break;
+        case 'r': case 'w': fprintf(stderr, "%s file %u, %u bytes, mode %04x\n", mc_ring[i].kind == 'w' ? "write" : "read", a, b, c); break;
+        case 'q': fprintf(stderr, "event %08x:%04x queued\n", a, b); break;
+        case 'x': fprintf(stderr, "event %08x:%04x DROPPED\n", a, b); break;
+        case 'd': fprintf(stderr, "event %08x:%04x delivered: %u set ready, %u callbacks, %u were ready already, %u not enabled\n", a, b, c & 255, c >> 8 & 255, c >> 16 & 255, c >> 24); break;
+        }
     }
 }
 
@@ -607,10 +656,10 @@ void bios_call_b(void) {
         }
         else V0 = mc_frw(A0, A1, A2, 1);
         break;
-    case 0x32: { char n[64]; gstr(A0, n, sizeof n); V0 = mc_fopen(n, A1); break; }
+    case 0x32: { char n[64]; gstr(A0, n, sizeof n); u32 mode = A1; V0 = mc_fopen(n, mode); mc_note('o', mode, V0, 0); break; }
     case 0x33: V0 = mc_fseek(A0, A1, A2); break;
     case 0x34: V0 = mc_frw(A0, A1, A2, 0); break;
-    case 0x36: V0 = mc_fclose(A0); break;
+    case 0x36: { u32 fd = A0; V0 = mc_fclose(fd); mc_note('c', fd, V0, 0); break; }
     case 0x41: { char n[64]; gstr(A0, n, sizeof n); if (mc_name(n)) { mc_open_image(); mc_format(); V0 = 1; } else V0 = 0; break; }
     case 0x42: { char n[64]; gstr(A0, n, sizeof n); V0 = mc_firstfile(n, A1); if (mc_name(n)) mc_queue(0xf0000011u, 0x0004); break; }
     case 0x43: mc_select(mc_dir.slot); V0 = mc_dirent(A0, mc_find(mc_dir.pat, mc_dir.idx)); mc_queue(0xf0000011u, 0x0004); break;

@@ -1014,6 +1014,8 @@ def play(P, C, disc_path, log):
                         os.replace(cur, old)   # moved while the lock is held, so no other launcher moves it too
             # The name is free now: never there, or just moved away. So the log is made new, and only if the name is still
             # free (O_EXCL). When another launcher made its log there in this moment, that log is not opened or emptied.
+            # Known gap, not Windows: between this open and the lock below the new log has no lock, and a launcher that
+            # starts in those microseconds moves it to the name of the log before, whose own content is then lost.
             out = os.fdopen(os.open(cur, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o644), "wb")
             _log_lock(out)
             out.write(("[launcher] version %s started the game at %s\n" % (LAUNCHER_VERSION, time.strftime("%Y-%m-%d %H:%M:%S"))).encode())
