@@ -149,13 +149,22 @@ ship with Windows. It contains code translated from your disc, so keep it for
 your own use.
 
 If the game stops making progress (no display flips, movie frames, disc reads or drawing
-for 10 seconds, or no display flip and no movie frame for a minute while something
-is still drawn), the game prints a `[watchdog]` report: the guest's return addresses
-and the last BIOS calls. Started from the launcher, the game's messages are kept in
-`last-run.log` in the game folder (`game/dmbmx` or `game/maxremix`), and the run
-before in `previous-run.log`, so the report is still there after the game is closed
-and started again once. With the launcher's console window option, or from a command
-line, they go to the console instead. Send the report along with a bug report.
+for 10 seconds), the game prints a `[watchdog]` report: the guest's return addresses
+and the last BIOS calls. A game that hangs while it still draws is not caught by
+that, so the game also prints one `[state]` line a minute (where it is, and how many
+display flips and movie frames the minute had) and, when its window is closed, an
+`[exit]` report of the same kind as the watchdog's. After a freeze, close the game
+by its window, not from Task Manager, so that the `[exit]` report is written.
+
+Started from the launcher (its window, or `dmlauncher.py play`), the game's messages
+are kept in `last-run.log` in the game folder (`game/dmbmx` or `game/maxremix`), and
+the run before in `previous-run.log`, so a report is still there after the game is
+started again once. A start while another copy of the game still runs gets no log
+and leaves the running copy's log alone. On Windows the launcher's console window
+option sends the messages to that window instead. Started by itself from a command
+line, the game prints them there. The log was checked on Windows with the game, and
+on Linux with a stand-in for the game (the files' handling only). Send the log along
+with a bug report.
 
 Test options: `--shot-window` (screenshots show the window contents instead of
 the internal picture), `--stats`, `--log-bios`, `--log-sio`, `--turbo`, `--auto-start N`

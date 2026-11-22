@@ -450,12 +450,12 @@ static void bios_note(char tbl, u32 fn) {
     unsigned i = bios_ring_n++ & 15;
     bios_ring[i].tbl = tbl; bios_ring[i].fn = fn; bios_ring[i].a0 = A0; bios_ring[i].a1 = A1; bios_ring[i].a2 = A2; bios_ring[i].ra = RA;
 }
-void bios_report_stall(void) {
-    fprintf(stderr, "[watchdog] card events queued=%d, last BIOS calls (oldest first):\n", mc_ev_n);
+void bios_report_stall(const char *tag) {   /* tag: who asks, "watchdog" or "exit" */
+    fprintf(stderr, "[%s] card events queued=%d, last BIOS calls (oldest first):\n", tag, mc_ev_n);
     for (unsigned k = 0; k < 16; k++) {
         unsigned i = (bios_ring_n + k) & 15;
         if (!bios_ring[i].tbl) continue;
-        fprintf(stderr, "[watchdog]   %c(%02x) a0=%08x a1=%08x a2=%08x ra=%08x\n", bios_ring[i].tbl, bios_ring[i].fn, bios_ring[i].a0, bios_ring[i].a1, bios_ring[i].a2, bios_ring[i].ra);
+        fprintf(stderr, "[%s]   %c(%02x) a0=%08x a1=%08x a2=%08x ra=%08x\n", tag, bios_ring[i].tbl, bios_ring[i].fn, bios_ring[i].a0, bios_ring[i].a1, bios_ring[i].a2, bios_ring[i].ra);
     }
 }
 

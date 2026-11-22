@@ -317,10 +317,21 @@ void host_hotkey(int which) {
     }
     show_settings();
 }
-void host_quit(void) { g_rumble = 0; host_pad_rumble(0, 0, 0); host_pad_rumble(1, 0, 0); plat_exit(0); }
+static unsigned run_frames;   /* frames since start, for host_quit's report */
+void host_quit(void) {
+    /* where the game stood when it was closed: after a freeze this is the trace that is left (the game's messages go to a
+       log file when it is started from the launcher) */
+    fprintf(stderr, "[exit] closed after %u s of game time: ra=%08x sp=%08x sr=%08x istat=%03x imask=%03x\n", run_frames / 60, cpu.r[31], cpu.r[29], cpu.sr, i_stat, i_mask);
+    fprintf(stderr, "[exit] guest return addresses on the stack:");
+    int k = 0; for (u32 sp = cpu.r[29]; sp < 0x80200000u && k < 24; sp += 4) { u32 w = mr32(sp); if (w >= 0x80010000u && w < 0x80200000u && !(w & 3)) { fprintf(stderr, " %08x", w); k++; } }
+    fprintf(stderr, "\n");
+    bios_report_stall("exit");
+    g_rumble = 0; host_pad_rumble(0, 0, 0); host_pad_rumble(1, 0, 0); plat_exit(0);
+}
 
 void host_init(void) {
     plat_init();
+    setvbuf(stdout, NULL, _IONBF, 0);   /* the game's own text (BIOS putchar, puts) must be in a log file even when the game is killed */
     { const char *tst = getenv("DMRECOMP_GFX_TEST"); test_nopad = tst && strstr(tst, "nopad"); }   /* read once, here */
     last_frame = plat_now_ms();
     fb = calloc((size_t)1024 * 4 * 512 * 4, 4);   /* room for the largest internal resolution */
@@ -480,6 +491,7 @@ void host_frame(void) {
     double t_enter = plat_now_ms();
     if (t_last_exit != 0) t_guest += t_enter - t_last_exit;
     frame_no++;
+    run_frames = frame_no;
     debug_frame(frame_no);
     {   /* stall watchdog: no flips, movie frames, disc reads or drawing for 10 s means the game is stuck (a long load or movie still flips or finishes sooner) */
         extern unsigned g_flip_total;
@@ -491,19 +503,18 @@ void host_frame(void) {
             fprintf(stderr, "[watchdog] guest return addresses on the stack:");
             int k = 0; for (u32 sp = cpu.r[29]; sp < 0x80200000u && k < 24; sp += 4) { u32 w = mr32(sp); if (w >= 0x80010000u && w < 0x80200000u && !(w & 3)) { fprintf(stderr, " %08x", w); k++; } }
             fprintf(stderr, "\n");
-            bios_report_stall();
+            bios_report_stall("watchdog");
         }
-        /* the other way to be stuck: something is still drawn, but the picture has not been flipped and no movie picture
-           has come for a minute (a save draws its bar without flipping for 20 s; a load is shorter) */
-        static unsigned last_shown, unshown;
-        unsigned shown = g_flip_total + g_mdec_frames;
-        if (shown != last_shown) { last_shown = shown; unshown = 0; }
-        else if (++unshown % 3600 == 0) {
-            fprintf(stderr, "[watchdog] no picture flip for %u s (drawing may go on): ra=%08x sp=%08x sr=%08x istat=%03x imask=%03x\n", unshown / 60, cpu.r[31], cpu.r[29], cpu.sr, i_stat, i_mask);
-            fprintf(stderr, "[watchdog] guest return addresses on the stack:");
-            int k = 0; for (u32 sp = cpu.r[29]; sp < 0x80200000u && k < 24; sp += 4) { u32 w = mr32(sp); if (w >= 0x80010000u && w < 0x80200000u && !(w & 3)) { fprintf(stderr, " %08x", w); k++; } }
+        /* Once a minute, one line that says where the game is. A second alarm for "still drawing, but stuck" is not possible
+           from the outside: the menus are drawn without a display flip, and a save draws its bar for 20 s without one, so a
+           missing flip proves nothing. With these lines a log shows what the last minutes were like, also when the game
+           was killed; host_quit adds the full report when the game is closed. */
+        if (frame_no % 3600 == 0) {
+            static unsigned f0, m0;
+            fprintf(stderr, "[state] minute %u: %u flips, %u movie pictures; ra=%08x sp=%08x; stack:", frame_no / 3600, g_flip_total - f0, g_mdec_frames - m0, cpu.r[31], cpu.r[29]);
+            int k = 0; for (u32 sp = cpu.r[29]; sp < 0x80200000u && k < 8; sp += 4) { u32 w = mr32(sp); if (w >= 0x80010000u && w < 0x80200000u && !(w & 3)) { fprintf(stderr, " %08x", w); k++; } }
             fprintf(stderr, "\n");
-            bios_report_stall();
+            f0 = g_flip_total; m0 = g_mdec_frames;
         }
     }
     if (g_stats && frame_no % 60 == 0) { fprintf(stderr, "[time] guest=%.0fms host=%.0fms per 60 frames\n", t_guest, t_host); t_guest = t_host = 0; }

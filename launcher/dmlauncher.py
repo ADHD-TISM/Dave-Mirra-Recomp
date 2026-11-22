@@ -972,6 +972,15 @@ DEBUG_FLAGS = [("--stats", "Print speed statistics (flips = frames per second)")
                ("--turbo", "Run without frame limiting (testing)")]
 
 
+def _log_lock(f):
+    """Take the lock that says "a game is writing this log". Windows needs none: it refuses to move or replace a file
+    that a running game has open. Elsewhere an open file can be moved and deleted, so the launcher locks the log it
+    hands to the game; the game inherits the lock and holds it until it ends. Raises OSError when it is held."""
+    if not WINDOWS:
+        import fcntl
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
 def play(P, C, disc_path, log):
     if not os.path.isfile(P.exe):
         raise Fail("the game is not built yet (Build tab)")
@@ -983,15 +992,18 @@ def play(P, C, disc_path, log):
     # Without the console window, what the game says goes to a file in its folder: if the game ever stops, the stall
     # watchdog's report is in there. The run before is kept too, because the first thing done after a freeze is to start again.
     out = None
-    if not C.get("debug_console", False):
+    if not (WINDOWS and C.get("debug_console", False)):   # the console window exists on Windows only
         cur, old = os.path.join(P.game, RUN_LOG), os.path.join(P.game, RUN_LOG_BEFORE)
         try:
             if os.path.isfile(cur):
-                os.replace(cur, old)
+                with open(cur, "rb") as held:
+                    _log_lock(held)    # not Windows: fails when a game still writes it (the lock goes when held closes)
+                os.replace(cur, old)   # Windows: fails when a game still writes it
             out = open(cur, "wb")
+            _log_lock(out)
             out.write(("[launcher] version %s started the game at %s\n" % (LAUNCHER_VERSION, time.strftime("%Y-%m-%d %H:%M:%S"))).encode())
             out.flush()
-        except OSError as e:           # a game still running holds the file: this run goes without a log
+        except OSError as e:           # a game still running keeps its log: this run goes without one
             log("no run log this time: %s" % e)
             if out:
                 out.close()
