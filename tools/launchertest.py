@@ -192,7 +192,8 @@ def run_log():
     finally: os.replace = real_replace
     check("run log: a log made by another launcher in the same moment is not opened or emptied",
           rd(cur) == "the other launcher's log 2\n" and any("no run log this time" in s and "exists" in s for s in said[n:]), repr((rd(cur), said[n:])))
-    wait(lambda: done() == (4 if os.name == "nt" else 5))
+    last = 4 if os.name == "nt" else 5
+    check("run log: the last stand-in games ended", wait(lambda: done() == last), "%d of %d" % (done(), last))
 
 tk.Tk.mainloop = driver
 dml.gui(T)
