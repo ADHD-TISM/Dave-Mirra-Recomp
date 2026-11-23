@@ -259,7 +259,7 @@ static void config_write_default(const char *path) {
     fprintf(f, "# Opens the menu while playing: display settings, volume and Exit\n"
                "key_menu = %s\n", key_label(key_menu));
     fprintf(f, "# The same on player 1's gamepad: one control, or two held together joined by + (back+start,\n"
-               "# ls+rs = both sticks pressed, lb+rb ...), or none. The game gets these presses too.\n"
+               "# ls+rs = both sticks pressed, lb+rb ...), or none. Of two, the game can get the one pressed first.\n"
                "pad_menu = %s%s%s\n", xnames[pad_menu[0]], pad_menu[1] ? "+" : "", pad_menu[1] ? xnames[pad_menu[1]] : "");
     fprintf(f, "\n# Keys for the display actions (one key each, or none)\n");
     for (int i = 0; i < 6; i++) fprintf(f, "%s = %s\n", hotkey_opts[i], key_label(hotkeys[i]));
@@ -725,8 +725,8 @@ void host_frame(void) {
     if (menu_want || (menu_test_keys && frame_no == menu_test_frame)) {   /* the game stands still until the menu is closed */
         int asked = menu_want; menu_want = 0;
         menu_run(frame_no, asked ? NULL : menu_test_keys);
-        menu_want = 0; wheel_waiting[0] = wheel_waiting[1] = 0; last_frame = t_enter = plat_now_ms();
-        pad_state[0] = pad_state[1] = 0xffff;   /* what was held when the menu opened was let go long ago: the game must not get it now */   /* the pause is neither game time nor host time */
+        menu_want = 0; wheel_waiting[0] = wheel_waiting[1] = 0; last_frame = t_enter = plat_now_ms();   /* the pause is neither game time nor host time */
+        pad_state[0] = pad_state[1] = 0xffff;   /* what was held when the menu opened was let go long ago: the game must not get it now */
     }
     t_last_exit = plat_now_ms(); t_host += t_last_exit - t_enter;
     if (turbo) { last_frame = plat_now_ms(); return; }

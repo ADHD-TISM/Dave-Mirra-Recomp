@@ -97,7 +97,7 @@ the original console picture; delete the file to get them back.
 | `key_fast_forward` | one key | hold to fast-forward |
 | `key_fullscreen`, `key_scale`, `key_filter`, `key_aspect`, `key_fsr`, `key_widescreen` | one key each | defaults F11, F6, F7, F8, F9, F10; Alt+Enter also toggles fullscreen |
 | `key_menu` | one key | opens the menu while playing; default `escape` |
-| `pad_menu` | one gamepad control, or two joined by `+` that are held together, or `none` | opens the menu from player 1's gamepad; default `back+start`. Examples: `ls+rs` (both sticks pressed), `lb+rb`, `back`. The game gets these presses too |
+| `pad_menu` | one gamepad control, or two joined by `+` that are held together, or `none` | opens the menu from player 1's gamepad; default `back+start`. Examples: `ls+rs` (both sticks pressed), `lb+rb`, `back`. The press that opens the menu does not reach the game; of two controls, the game can get the one that is pressed a moment before the other |
 | `mouse_left`, `mouse_right`, `mouse_middle`, `mouse_x1`, `mouse_x2`, `wheel_up`, `wheel_down` | the pad button each presses: `up right down left start select cross circle square triangle l1 r1 l2 r2 l3 r3 none` | defaults cross, triangle, start, none, none, up, down |
 | `pad_up` ... `pad_r3` | a gamepad control: `a b x y lb rb lt rt start back ls rs up down left right none` | |
 

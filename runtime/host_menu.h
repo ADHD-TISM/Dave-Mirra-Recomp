@@ -159,7 +159,8 @@ static void menu_show(void) {
 
 /* ---- input: the pad buttons as the game would get them, plus keys that always work here ---- */
 enum { MB_UP = 1 << 4, MB_RIGHT = 1 << 5, MB_DOWN = 1 << 6, MB_LEFT = 1 << 7, MB_START = 1 << 3, MB_SELECT = 1 << 0,
-       MB_CROSS = 1 << 14, MB_TRIANGLE = 1 << 12, MB_MENU = 1 << 16 };
+       MB_CROSS = 1 << 14, MB_TRIANGLE = 1 << 12, MB_MENU = 1 << 16,
+       MB_HELD = 1 << 17 };   /* one of pad_menu's controls is down: no action, but the wait after the menu must see it */
 static int menu_pad_combo;   /* pad_menu is held on player 1's gamepad */
 static u32 menu_buttons(void) {
     static unsigned probe;
@@ -167,7 +168,7 @@ static u32 menu_buttons(void) {
     for (int i = 0; i < 16; i++) for (int j = 0; j < MAXKEYS && keymap[i][j]; j++) if (key(keymap[i][j])) { b |= (u16)(1 << i); break; }
     mouse_input(&b);
     HostPad s;
-    menu_pad_combo = 0;
+    menu_pad_combo = 0; int menu_pad_one = 0;
     if (!test_nopad && (pad_found[0] || probe++ % 60 == 0) && (pad_found[0] = plat_pad(0, &s)) != 0) {
         /* The controls that open the menu (pad_menu) mean only that in here, alone or together: with back+start, Start
            would otherwise select the highlighted entry on the way to closing the menu, and that entry may be Exit. */
@@ -178,6 +179,9 @@ static u32 menu_buttons(void) {
         if (s.lx < -16000) b |= MB_LEFT;
         if (s.lx > 16000) b |= MB_RIGHT;
         menu_pad_combo = pad_menu_held(&s) && plat_focused();
+        /* those controls are not in b (above), so one of a pair held alone would be invisible: after a close with
+           back+start, Back let go first, the wait for "nothing held" would end with Start down, and the game would get it */
+        menu_pad_one = (pad_menu[0] && xsrc(&s, pad_menu[0])) || (pad_menu[1] && xsrc(&s, pad_menu[1]));
     }
     r = b;
     if (key(HK_UP)) r |= MB_UP;
@@ -186,6 +190,7 @@ static u32 menu_buttons(void) {
     if (key(HK_RIGHT)) r |= MB_RIGHT;
     if (key(HK_ENTER)) r |= MB_CROSS;
     if (key(key_menu) || key(HK_ESCAPE) || menu_pad_combo) r |= MB_MENU;
+    if (menu_pad_one) r |= MB_HELD;
     return r;
 }
 
