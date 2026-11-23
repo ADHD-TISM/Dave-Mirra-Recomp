@@ -8,9 +8,13 @@
 /* Key codes: letters and digits are their upper-case ASCII value, the rest are these. */
 enum { HK_UP = 256, HK_DOWN, HK_LEFT, HK_RIGHT, HK_ENTER, HK_BACKSPACE, HK_TAB, HK_SPACE, HK_LSHIFT, HK_RSHIFT,
        HK_LCTRL, HK_RCTRL, HK_LALT, HK_RALT, HK_COMMA, HK_PERIOD, HK_SLASH, HK_SEMICOLON,
-       HK_NUM0, HK_NUM1, HK_NUM2, HK_NUM3, HK_NUM4, HK_NUM5, HK_NUM6, HK_NUM7, HK_NUM8, HK_NUM9, HK_COUNT };
+       HK_NUM0, HK_NUM1, HK_NUM2, HK_NUM3, HK_NUM4, HK_NUM5, HK_NUM6, HK_NUM7, HK_NUM8, HK_NUM9,
+       HK_ESCAPE, HK_INSERT, HK_DELETE, HK_HOME, HK_END, HK_PAGEUP, HK_PAGEDOWN, HK_CAPSLOCK,
+       HK_MINUS, HK_EQUALS, HK_LBRACKET, HK_RBRACKET, HK_BACKSLASH, HK_QUOTE, HK_GRAVE,
+       HK_NUMADD, HK_NUMSUB, HK_NUMMUL, HK_NUMDIV, HK_NUMDOT, HK_NUMENTER,
+       HK_F1, HK_F2, HK_F3, HK_F4, HK_F5, HK_F6, HK_F7, HK_F8, HK_F9, HK_F10, HK_F11, HK_F12, HK_COUNT };
 
-/* Keys that change the display while playing: F11 / Alt+Enter, F6, F7, F8, F9, F10. */
+/* Display actions on keys the player can choose (defaults F11, F6, F7, F8, F9, F10); Alt+Enter also does HOT_FULLSCREEN. */
 enum { HOT_FULLSCREEN, HOT_SCALE, HOT_FILTER, HOT_ASPECT, HOT_FSR, HOT_WIDE };
 
 /* A gamepad in the XInput layout. Sticks: +x is right, +y is up. */
@@ -45,6 +49,9 @@ void *plat_gl_proc(const char *name);                    /* OpenGL entry point b
 /* without OpenGL: draw the picture (0x00RRGGBB) as a w x h rectangle centred in the cw x ch window */
 void plat_soft_present(const uint32_t *fb, int fb_w, int fb_h, int cw, int ch, int w, int h, int smooth);
 void plat_pump(void);               /* handle window events; may call host_hotkey / host_quit */
+/* The mouse over the window: buttons held (bit 0 left, 1 right, 2 middle, 3 and 4 the side buttons) and wheel notches
+   since the last call (+ is away from the player). Both zero without focus. */
+void plat_mouse(int *buttons, int *wheel);
 int  plat_key(int code);            /* key held, and the window has the keyboard */
 int  plat_pad(int n, HostPad *p);   /* gamepad n (0 or 1): fills p and returns 1 when it is connected */
 void plat_pad_rumble(int n, uint16_t large, uint16_t small);

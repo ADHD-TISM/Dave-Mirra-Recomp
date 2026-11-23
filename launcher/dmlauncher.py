@@ -43,7 +43,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 REPO = "ADHD-TISM/Dave-Mirra-Recomp"
-LAUNCHER_VERSION = "9"
+LAUNCHER_VERSION = "10"
 
 # Build tools: llvm-mingw (clang + a MinGW-w64 UCRT sysroot), pinned and checked.
 LLVM_NAME = "llvm-mingw-20261104-ucrt-x86_64"
@@ -831,7 +831,40 @@ def build_all(P, C, disc_path, log, progress=None):
 # ---------------------------------------------------------------- settings (dmrecomp.ini)
 
 KEYNAMES = ("up down left right enter backspace tab space lshift rshift lctrl rctrl lalt ralt "
-            "comma period slash semicolon num0 num1 num2 num3 num4 num5 num6 num7 num8 num9 none").split()
+            "comma period slash semicolon minus equals lbracket rbracket backslash quote grave "
+            "escape insert delete home end pageup pagedown capslock "
+            "num0 num1 num2 num3 num4 num5 num6 num7 num8 num9 numadd numsub nummul numdiv numdot numenter "
+            "f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 none").split()
+MAXKEYS = 4                                   # keys per pad button, as in the game
+HOTKEYS = [("fullscreen", "f11", "Key: fullscreen"), ("scale", "f6", "Key: internal resolution"),
+           ("filter", "f7", "Key: picture filter"), ("aspect", "f8", "Key: aspect ratio"),
+           ("fsr", "f9", "Key: FSR upscaler"), ("widescreen", "f10", "Key: widescreen"),
+           ("menu", "escape", "Key: in-game menu")]   # the menu while playing: display settings and Exit
+PSNAMES = "up right down left start select cross circle square triangle l1 r1 l2 r2 l3 r3 none".split()
+MOUSE_BUTTONS = [("mouse_left", "Mouse: left button", "cross"), ("mouse_right", "Mouse: right button", "triangle"),
+                 ("mouse_middle", "Mouse: middle button", "start"), ("mouse_x1", "Mouse: side button 1", "none"),
+                 ("mouse_x2", "Mouse: side button 2", "none"), ("wheel_up", "Mouse: wheel up", "up"),
+                 ("wheel_down", "Mouse: wheel down", "down")]
+# Tk key names (event.keysym) -> the game's key names, for the "press a key" button
+TK_KEYS = {"Up": "up", "Down": "down", "Left": "left", "Right": "right", "Return": "enter", "BackSpace": "backspace",
+           "Tab": "tab", "space": "space", "Shift_L": "lshift", "Shift_R": "rshift", "Control_L": "lctrl",
+           "Control_R": "rctrl", "Alt_L": "lalt", "Alt_R": "ralt", "comma": "comma", "period": "period",
+           "slash": "slash", "semicolon": "semicolon", "minus": "minus", "equal": "equals", "bracketleft": "lbracket",
+           "bracketright": "rbracket", "backslash": "backslash", "apostrophe": "quote", "grave": "grave",
+           "Escape": "escape", "Insert": "insert", "Delete": "delete", "Home": "home", "End": "end", "Prior": "pageup",
+           "Next": "pagedown", "Caps_Lock": "capslock", "KP_Add": "numadd", "KP_Subtract": "numsub",
+           "KP_Multiply": "nummul", "KP_Divide": "numdiv", "KP_Decimal": "numdot", "KP_Enter": "numenter"}
+for _i in range(10):
+    TK_KEYS["KP_%d" % _i] = "num%d" % _i
+for _i in range(1, 13):
+    TK_KEYS["F%d" % _i] = "f%d" % _i
+
+
+def key_name_from_tk(keysym):
+    """The game's name for a Tk key press, or None if the game has no such key."""
+    if len(keysym) == 1 and keysym.isascii() and keysym.isalnum():
+        return keysym.upper()
+    return TK_KEYS.get(keysym)
 PADNAMES = "a b x y lb rb lt rt start back ls rs up down left right none".split()
 B01 = ["0", "1"]
 
@@ -888,6 +921,10 @@ for _n, _d in PADS:
 for _n, _d in KEYS:
     SETTINGS.append(("key_" + _n, "Input", "Key: " + _n.upper(), "key", None, _d, None))
 SETTINGS.append(("key_fast_forward", "Input", "Key: fast-forward", "key", None, "tab", None))
+for _n, _d, _lab in HOTKEYS:
+    SETTINGS.append(("key_" + _n, "Input", _lab, "key", None, _d, None))
+for _k, _lab, _d in MOUSE_BUTTONS:
+    SETTINGS.append((_k, "Input", _lab, "choice", PSNAMES, _d, None))
 SCHEMA = {s[0]: s for s in SETTINGS}
 SETTING_TABS = ["Gameplay", "Video", "Input", "Audio", "Debug", "All settings"]
 
@@ -934,7 +971,7 @@ def valid_setting(key, val):
         m = re.fullmatch(r"(\d{3,5})x(\d{3,5})", val)   # the game wants a lower-case x and at most 16384
         return val.lower() == s[5] or bool(m and 320 <= int(m.group(1)) <= 16384 and 240 <= int(m.group(2)) <= 16384)
     parts = [p.strip() for p in val.split(",")]
-    if not 1 <= len(parts) <= 2:
+    if not 1 <= len(parts) <= (1 if key == "key_fast_forward" or key[4:] in [h[0] for h in HOTKEYS] else MAXKEYS):
         return False
     return all((len(p) == 1 and p.isalnum() and p.isascii()) or p.lower() in KEYNAMES for p in parts)
 
@@ -1571,23 +1608,66 @@ def gui(root_dir, pinned=False, notice=None):
         sb.pack(side="right", fill="y")
         return inner
 
+    def capture_key(var, single, label, done):
+        """A small window that waits for one key press and adds it to the setting; done() then saves it."""
+        top = tk.Toplevel(win)
+        top.title("Press a key")
+        top.transient(win)
+        ttk.Label(top, text="%s\n\nPress the key to use. Escape cancels (to use Escape itself, type escape in the box)." % label,
+                  wraplength=320, padding=16).pack()
+        msg = ttk.Label(top, text="", padding=(16, 0, 16, 12), style="Muted.TLabel")
+        msg.pack()
+
+        def on_key(e):
+            if e.keysym == "Escape":
+                top.destroy()
+                return "break"
+            name = key_name_from_tk(e.keysym)
+            if not name:
+                msg.configure(text="The game has no key for \"%s\"." % e.keysym)
+                return "break"
+            cur = [k.strip() for k in var.get().split(",") if k.strip() and k.strip().lower() != "none"]
+            if single or not cur:
+                cur = [name]
+            elif name.lower() not in [c.lower() for c in cur]:
+                if len(cur) >= MAXKEYS:
+                    msg.configure(text="At most %d keys per button: clear one first." % MAXKEYS)
+                    return "break"
+                cur.append(name)
+            var.set(", ".join(cur))
+            top.destroy()
+            done()
+            return "break"
+        top.bind("<KeyPress>", on_key)
+        top.grab_set()
+        top.focus_force()
+
     def widget_for(parent, key, label, r):
         sc = SCHEMA.get(key)
         ttk.Label(parent, text=label).grid(row=r, column=0, sticky="w", padx=(0, 12), pady=2)
         var = svars.setdefault(key, tk.StringVar(value=""))
+        field = None                    # the part that is typed in, when the widget is more than that
         if sc and sc[3] == "bool":
             w = ttk.Checkbutton(parent, variable=var, onvalue="1", offvalue="0")
         elif sc and sc[3] == "choice":
             w = ttk.Combobox(parent, textvariable=var, values=sc[4], state="readonly", width=14)
         elif sc and sc[3] == "combo":
             w = ttk.Combobox(parent, textvariable=var, values=sc[4], width=14)   # editable: pick one or type WxH
+        elif sc and sc[3] == "key":
+            w = ttk.Frame(parent)
+            single = key == "key_fast_forward" or key[4:] in [h[0] for h in HOTKEYS]
+            field = ttk.Entry(w, textvariable=var, width=24)
+            field.pack(side="left")
+            ttk.Button(w, text="Press a key...",
+                       command=lambda v=var, sg=single, lb=label, k=key: capture_key(v, sg, lb, lambda: typed_done(k))).pack(side="left", padx=(6, 0))
+            ttk.Button(w, text="Clear", width=6, command=lambda v=var, k=key: (v.set("none"), typed_done(k))).pack(side="left", padx=(4, 0))
         else:
             w = ttk.Entry(parent, textvariable=var, width=24)
         w.grid(row=r, column=1, sticky="w", pady=2)
         if not (sc and sc[3] in ("bool", "choice")):
             typed.add(key)
             for ev in ("<FocusOut>", "<Return>", "<<ComboboxSelected>>"):
-                w.bind(ev, lambda _e, k=key: typed_done(k))
+                (field or w).bind(ev, lambda _e, k=key: typed_done(k))
 
     for name in ("Gameplay", "Video", "Input", "Audio"):
         inner = scrolled(stabs[name]) if name == "Input" else stabs[name]
@@ -1598,8 +1678,8 @@ def gui(root_dir, pinned=False, notice=None):
                 r += 1
         if name == "Input":
             ttk.Label(inner, style="Muted.TLabel", wraplength=520,
-                      text="Keys: a letter or digit, or up down left right enter backspace tab space lshift rshift "
-                           "lctrl rctrl lalt ralt comma period slash semicolon num0..num9 none. Two keys separated by a comma.").grid(
+                      text="Keys: use \"Press a key...\" to add one (up to four per button), or type names separated by "
+                           "commas: a letter or digit, or " + " ".join(k for k in KEYNAMES if k != "none") + ". Clear sets none.").grid(
                 row=r, column=0, columnspan=2, sticky="w", pady=6)
 
     dbg = stabs["Debug"]

@@ -59,7 +59,12 @@ build/dmrecomp.exe "<your image>.cue"
 
 Keys: arrows = d-pad, Z = Cross, X = Circle, A = Square, S = Triangle,
 Q/W = L1/R1, 1/3 = L2/R2, Enter = Start, Backspace = Select, Tab = fast-forward.
-An XInput gamepad also works.
+An XInput gamepad also works. The mouse works too: the wheel steps up and down (hold left Shift to step left and right), left click is Cross (accept), right click is Triangle (back) and middle click is Start.
+Every key and mouse button can be changed (see Settings; the launcher has a "Press a key..." button for each).
+
+Escape opens a menu while playing (on a gamepad: press both sticks). The game stands still while it is open. It changes the
+internal resolution, picture filter, aspect ratio, FSR, widescreen, fullscreen and rumble, and it has Exit game. What is
+changed there is written to `dmrecomp.ini`.
 
 ## Settings
 
@@ -87,7 +92,11 @@ the original console picture; delete the file to get them back.
 | `dualshock` | `1` DualShock (sticks, rumble), `0` plain digital pad | |
 | `rumble` | `1`, `0` | |
 | `player2` | `1` a second gamepad is player 2, `0` off | |
-| `key_up` ... `key_r2`, `key_fast_forward` | one or two key names | |
+| `key_up` ... `key_r2` | up to four keys each, separated by commas: letters, digits, `up down left right enter backspace tab space lshift rshift lctrl rctrl lalt ralt comma period slash semicolon minus equals lbracket rbracket backslash quote grave escape insert delete home end pageup pagedown capslock f1`..`f12 num0`..`num9 numadd numsub nummul numdiv numdot numenter none` | |
+| `key_fast_forward` | one key | hold to fast-forward |
+| `key_fullscreen`, `key_scale`, `key_filter`, `key_aspect`, `key_fsr`, `key_widescreen` | one key each | defaults F11, F6, F7, F8, F9, F10; Alt+Enter also toggles fullscreen |
+| `key_menu` | one key | opens the menu while playing; default `escape`. Both gamepad sticks pressed together open it too |
+| `mouse_left`, `mouse_right`, `mouse_middle`, `mouse_x1`, `mouse_x2`, `wheel_up`, `wheel_down` | the pad button each presses: `up right down left start select cross circle square triangle l1 r1 l2 r2 l3 r3 none` | defaults cross, triangle, start, none, none, up, down |
 | `pad_up` ... `pad_r3` | a gamepad control: `a b x y lb rb lt rt start back ls rs up down left right none` | |
 
 Command line: `--scale N`, `--fullscreen`, `--console-cpu`, and

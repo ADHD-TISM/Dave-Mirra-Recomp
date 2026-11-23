@@ -52,7 +52,7 @@ def driver(win, n=0):
             if isinstance(w, ttk.Label) and str(w.cget("text")) == label:
                 gi = w.grid_info()
                 if not gi: continue
-                for sib in w.master.grid_slaves(row=int(gi["row"]), column=1):
+                for sib in [x for top in w.master.grid_slaves(row=int(gi["row"]), column=1) for x in walk(top)]:   # a key field is inside a frame
                     for opt in ("variable", "textvariable"):
                         try:
                             name = str(sib.cget(opt))
@@ -88,6 +88,37 @@ def driver(win, n=0):
     type_in("Key: CROSS", "lshift", True)
     pump(1.0)
     check("the finished key is written", val("dmbmx", "key_cross") == "lshift", repr(val("dmbmx", "key_cross")))
+    # a key field's two buttons save by themselves
+    def key_button(label, text):
+        return [b for b in field(label)[0].master.winfo_children() if isinstance(b, ttk.Button) and str(b.cget("text")) == text][0]
+    def press_in_dialog(label, keysym):   # "Press a key...", then the key in the small window it opens
+        key_button(label, "Press a key...").invoke()
+        pump(0.3)
+        tops = [w for w in win.winfo_children() if isinstance(w, tk.Toplevel)]
+        if tops: tops[-1].event_generate("<KeyPress>", keysym=keysym)
+        pump(1.0)
+        return len(tops)
+    key_button("Key: SQUARE", "Clear").invoke()
+    pump(1.0)
+    check("Clear writes none", val("dmbmx", "key_square") == "none", repr(val("dmbmx", "key_square")))
+    n_tops = press_in_dialog("Key: SQUARE", "F5")
+    check("Press a key: the key is written", n_tops == 1 and val("dmbmx", "key_square") == "f5", "%d windows, %r" % (n_tops, val("dmbmx", "key_square")))
+    press_in_dialog("Key: SQUARE", "g")
+    check("Press a key: a second key is added", val("dmbmx", "key_square") == "f5, G", repr(val("dmbmx", "key_square")))
+    press_in_dialog("Key: fullscreen", "F12"); press_in_dialog("Key: fullscreen", "F4")
+    check("Press a key: a display key holds one key", val("dmbmx", "key_fullscreen") == "f4", repr(val("dmbmx", "key_fullscreen")))
+    type_in("Key: in-game menu", "f1", True)
+    pump(1.0)
+    check("the menu key is saved", val("dmbmx", "key_menu") == "f1", repr(val("dmbmx", "key_menu")))
+    type_in("Key: in-game menu", "f1, f2", True)
+    pump(1.0)
+    check("the menu key holds one key", val("dmbmx", "key_menu") == "f1", repr(val("dmbmx", "key_menu")))
+    type_in("Key: in-game menu", "f1", True)                # a valid value again, so that the checks below see only their own field
+    pump(1.0)
+    check("Press a key: its window is gone", not [w for w in win.winfo_children() if isinstance(w, tk.Toplevel)])
+    pick("Mouse: left button", "circle")
+    pump(1.0)
+    check("a mouse button is saved", val("dmbmx", "mouse_left") == "circle", repr(val("dmbmx", "mouse_left")))
     type_in("Window size", "12", True)
     pump(1.0)
     check("a value that is not valid is not written", val("dmbmx", "window_size") == "auto", repr(val("dmbmx", "window_size")))

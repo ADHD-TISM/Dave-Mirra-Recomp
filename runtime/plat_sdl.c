@@ -140,6 +140,12 @@ static void pad_removed(SDL_JoystickID id) {
     for (int i = 0; i < 2; i++)
         if (pads[i] && SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pads[i])) == id) { SDL_GameControllerClose(pads[i]); pads[i] = NULL; }
 }
+static int mouse_buttons, mouse_wheel_acc;
+void plat_mouse(int *buttons, int *wheel) {
+    if (SDL_GetMouseFocus() != win) { *buttons = *wheel = 0; mouse_wheel_acc = 0; return; }
+    *buttons = mouse_buttons; *wheel = mouse_wheel_acc;
+    mouse_wheel_acc = 0;
+}
 void plat_pump(void) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
@@ -149,15 +155,17 @@ void plat_pump(void) {
         case SDL_CONTROLLERDEVICEREMOVED: pad_removed(e.cdevice.which); break;
         case SDL_KEYDOWN:
             if (e.key.repeat) break;
-            switch (e.key.keysym.sym) {
-            case SDLK_RETURN: if (e.key.keysym.mod & KMOD_ALT) host_hotkey(HOT_FULLSCREEN); break;
-            case SDLK_F11: host_hotkey(HOT_FULLSCREEN); break;
-            case SDLK_F6: host_hotkey(HOT_SCALE); break;
-            case SDLK_F7: host_hotkey(HOT_FILTER); break;
-            case SDLK_F8: host_hotkey(HOT_ASPECT); break;
-            case SDLK_F9: host_hotkey(HOT_FSR); break;
-            case SDLK_F10: host_hotkey(HOT_WIDE); break;
-            }
+            if (e.key.keysym.sym == SDLK_RETURN && (e.key.keysym.mod & KMOD_ALT)) host_hotkey(HOT_FULLSCREEN);
+            break;
+        case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: {
+            int bit = e.button.button == SDL_BUTTON_LEFT ? 1 : e.button.button == SDL_BUTTON_RIGHT ? 2 : e.button.button == SDL_BUTTON_MIDDLE ? 4
+                    : e.button.button == SDL_BUTTON_X1 ? 8 : e.button.button == SDL_BUTTON_X2 ? 16 : 0;
+            if (e.type == SDL_MOUSEBUTTONDOWN) mouse_buttons |= bit; else mouse_buttons &= ~bit;
+            break;
+        }
+        case SDL_MOUSEWHEEL: mouse_wheel_acc += e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.y : e.wheel.y; break;
+        case SDL_WINDOWEVENT:
+            if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST || e.window.event == SDL_WINDOWEVENT_LEAVE) mouse_buttons = 0;
             break;
         }
     }
@@ -171,7 +179,18 @@ static const SDL_Scancode sc_of[HK_COUNT - 256] = {
     [HK_SEMICOLON - 256] = SDL_SCANCODE_SEMICOLON,
     [HK_NUM0 - 256] = SDL_SCANCODE_KP_0, [HK_NUM1 - 256] = SDL_SCANCODE_KP_1, [HK_NUM2 - 256] = SDL_SCANCODE_KP_2, [HK_NUM3 - 256] = SDL_SCANCODE_KP_3,
     [HK_NUM4 - 256] = SDL_SCANCODE_KP_4, [HK_NUM5 - 256] = SDL_SCANCODE_KP_5, [HK_NUM6 - 256] = SDL_SCANCODE_KP_6, [HK_NUM7 - 256] = SDL_SCANCODE_KP_7,
-    [HK_NUM8 - 256] = SDL_SCANCODE_KP_8, [HK_NUM9 - 256] = SDL_SCANCODE_KP_9 };
+    [HK_NUM8 - 256] = SDL_SCANCODE_KP_8, [HK_NUM9 - 256] = SDL_SCANCODE_KP_9,
+    [HK_ESCAPE - 256] = SDL_SCANCODE_ESCAPE, [HK_INSERT - 256] = SDL_SCANCODE_INSERT, [HK_DELETE - 256] = SDL_SCANCODE_DELETE,
+    [HK_HOME - 256] = SDL_SCANCODE_HOME, [HK_END - 256] = SDL_SCANCODE_END, [HK_PAGEUP - 256] = SDL_SCANCODE_PAGEUP,
+    [HK_PAGEDOWN - 256] = SDL_SCANCODE_PAGEDOWN, [HK_CAPSLOCK - 256] = SDL_SCANCODE_CAPSLOCK,
+    [HK_MINUS - 256] = SDL_SCANCODE_MINUS, [HK_EQUALS - 256] = SDL_SCANCODE_EQUALS, [HK_LBRACKET - 256] = SDL_SCANCODE_LEFTBRACKET,
+    [HK_RBRACKET - 256] = SDL_SCANCODE_RIGHTBRACKET, [HK_BACKSLASH - 256] = SDL_SCANCODE_BACKSLASH,
+    [HK_QUOTE - 256] = SDL_SCANCODE_APOSTROPHE, [HK_GRAVE - 256] = SDL_SCANCODE_GRAVE,
+    [HK_NUMADD - 256] = SDL_SCANCODE_KP_PLUS, [HK_NUMSUB - 256] = SDL_SCANCODE_KP_MINUS, [HK_NUMMUL - 256] = SDL_SCANCODE_KP_MULTIPLY,
+    [HK_NUMDIV - 256] = SDL_SCANCODE_KP_DIVIDE, [HK_NUMDOT - 256] = SDL_SCANCODE_KP_PERIOD, [HK_NUMENTER - 256] = SDL_SCANCODE_KP_ENTER,
+    [HK_F1 - 256] = SDL_SCANCODE_F1, [HK_F2 - 256] = SDL_SCANCODE_F2, [HK_F3 - 256] = SDL_SCANCODE_F3, [HK_F4 - 256] = SDL_SCANCODE_F4,
+    [HK_F5 - 256] = SDL_SCANCODE_F5, [HK_F6 - 256] = SDL_SCANCODE_F6, [HK_F7 - 256] = SDL_SCANCODE_F7, [HK_F8 - 256] = SDL_SCANCODE_F8,
+    [HK_F9 - 256] = SDL_SCANCODE_F9, [HK_F10 - 256] = SDL_SCANCODE_F10, [HK_F11 - 256] = SDL_SCANCODE_F11, [HK_F12 - 256] = SDL_SCANCODE_F12 };
 int plat_key(int code) {
     if (SDL_GetKeyboardFocus() != win) return 0;
     SDL_Scancode sc = code < 256 ? SDL_GetScancodeFromKey((SDL_Keycode)tolower(code))   /* the key that types this letter or digit */

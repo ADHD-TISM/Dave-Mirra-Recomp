@@ -31,6 +31,7 @@ static unsigned input_frame;
 static u16 pad_state[2] = { 0xffff, 0xffff };
 static u8 pad_axes[2][4] = { { 128, 128, 128, 128 }, { 128, 128, 128, 128 } };
 static int pad_found[2];      /* a gamepad is plugged in for this player */
+static int log_input;         /* DM_LOG_INPUT is set (a test aid): every change of player 1's buttons is printed */
 static int test_nopad;        /* DMRECOMP_GFX_TEST has "nopad": gamepads are not read, so a scripted run cannot be disturbed by one */
 int g_rumble = 1, g_player2 = 1;
 extern int g_pad_analog[2], g_dualshock;
@@ -51,13 +52,30 @@ static double ws_ratio;   /* widescreen: 0 = off, else the width/height of the p
 static int ws_on;        /* the current frames are 3D, so the wide shape applies */
 static int fs_w, fs_h;                                    /* fullscreen_size; 0 = the desktop's own resolution */
 extern int g_cpu_assist;
-/* two keys per pad button, indexed by the pad's button bit */
-static int keymap[16][2] = {
+/* up to MAXKEYS keys per pad button, indexed by the pad's button bit; a 0 ends the list */
+#define MAXKEYS 4
+static int keymap[16][MAXKEYS] = {
     [4] = { HK_UP }, [5] = { HK_RIGHT }, [6] = { HK_DOWN }, [7] = { HK_LEFT },
     [3] = { HK_ENTER }, [0] = { HK_BACKSPACE, HK_RSHIFT },
     [14] = { 'Z', 'K' }, [13] = { 'X', 'L' }, [15] = { 'A', 'J' }, [12] = { 'S', 'I' },
     [10] = { 'Q' }, [11] = { 'W' }, [8] = { '1' }, [9] = { '3' } };
 static int key_turbo = HK_TAB;
+/* keys for the display actions, indexed by the HOT_ numbers in host.h */
+static int hotkeys[6] = { HK_F11, HK_F6, HK_F7, HK_F8, HK_F9, HK_F10 };
+static const char *const hotkey_opts[6] = { "key_fullscreen", "key_scale", "key_filter", "key_aspect", "key_fsr", "key_widescreen" };
+static int key_menu = HK_ESCAPE;   /* opens the in-game menu (host_menu.h); both gamepad sticks pressed together do too */
+static int menu_want;               /* the menu was asked for: host_frame opens it */
+static int menu_capture;            /* present() must leave the game's picture in fb, also when the graphics card holds it */
+static char config_path[512];       /* the settings file host_load_config read: where the menu writes a changed setting */
+/* The mouse. Each button and wheel direction presses a pad button (its bit, or -1 for none). Pointer movement does nothing. */
+enum { MS_LEFT, MS_RIGHT, MS_MIDDLE, MS_X1, MS_X2, MS_WHEEL_UP, MS_WHEEL_DOWN, MS_COUNT };
+static int mousemap[MS_COUNT] = { 14, 12, 3, -1, -1, 4, 6 };   /* left = cross, right = triangle (back), middle = start, wheel = up/down */
+static const char *const mouse_opts[MS_COUNT] = { "mouse_left", "mouse_right", "mouse_middle", "mouse_x1", "mouse_x2", "wheel_up", "wheel_down" };
+static const struct { const char *name; int bit; } ps_names[] = {
+    { "up", 4 }, { "right", 5 }, { "down", 6 }, { "left", 7 }, { "start", 3 }, { "select", 0 },
+    { "cross", 14 }, { "circle", 13 }, { "square", 15 }, { "triangle", 12 },
+    { "l1", 10 }, { "r1", 11 }, { "l2", 8 }, { "r2", 9 }, { "l3", 1 }, { "r3", 2 }, { "none", -1 }, { NULL, 0 } };
+static int mouse_held;   /* the buttons down at the last poll (for the input log) */
 /* which gamepad control presses each pad button, indexed by the pad's button bit */
 enum { X_NONE, X_A, X_B, X_X, X_Y, X_LB, X_RB, X_LT, X_RT, X_START, X_BACK, X_LS, X_RS, X_UP, X_DOWN, X_LEFT, X_RIGHT };
 static const char *const xnames[] = { "none", "a", "b", "x", "y", "lb", "rb", "lt", "rt", "start", "back", "ls", "rs", "up", "down", "left", "right" };
@@ -79,6 +97,14 @@ static const struct { const char *name; int vk; } key_names[] = {
     { "comma", HK_COMMA }, { "period", HK_PERIOD }, { "slash", HK_SLASH }, { "semicolon", HK_SEMICOLON },
     { "num0", HK_NUM0 }, { "num1", HK_NUM1 }, { "num2", HK_NUM2 }, { "num3", HK_NUM3 }, { "num4", HK_NUM4 },
     { "num5", HK_NUM5 }, { "num6", HK_NUM6 }, { "num7", HK_NUM7 }, { "num8", HK_NUM8 }, { "num9", HK_NUM9 },
+    { "escape", HK_ESCAPE }, { "insert", HK_INSERT }, { "delete", HK_DELETE }, { "home", HK_HOME }, { "end", HK_END },
+    { "pageup", HK_PAGEUP }, { "pagedown", HK_PAGEDOWN }, { "capslock", HK_CAPSLOCK },
+    { "minus", HK_MINUS }, { "equals", HK_EQUALS }, { "lbracket", HK_LBRACKET }, { "rbracket", HK_RBRACKET },
+    { "backslash", HK_BACKSLASH }, { "quote", HK_QUOTE }, { "grave", HK_GRAVE },
+    { "numadd", HK_NUMADD }, { "numsub", HK_NUMSUB }, { "nummul", HK_NUMMUL }, { "numdiv", HK_NUMDIV },
+    { "numdot", HK_NUMDOT }, { "numenter", HK_NUMENTER },
+    { "f1", HK_F1 }, { "f2", HK_F2 }, { "f3", HK_F3 }, { "f4", HK_F4 }, { "f5", HK_F5 }, { "f6", HK_F6 },
+    { "f7", HK_F7 }, { "f8", HK_F8 }, { "f9", HK_F9 }, { "f10", HK_F10 }, { "f11", HK_F11 }, { "f12", HK_F12 },
     { "none", 0 }, { NULL, 0 } };
 static int key_parse(const char *s) {
     if (s[0] && !s[1]) { int c = toupper((unsigned char)s[0]); if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return c; }
@@ -134,13 +160,23 @@ int host_set_option(const char *name, const char *val) {
         return 0;
     }
     if (!_stricmp(name, "key_fast_forward")) { int vk = key_parse(val); if (vk < 0) return 0; key_turbo = vk; return 1; }
-    for (int i = 0; key_opts[i].name; i++) if (!_stricmp(key_opts[i].name, name)) {
-        char buf[64]; snprintf(buf, sizeof buf, "%s", val);
-        char *second = strchr(buf, ','); if (second) *second++ = 0;
-        int a = key_parse(trim(buf)), b = second ? key_parse(trim(second)) : 0;
-        if (a < 0 || b < 0) return 0;
-        keymap[key_opts[i].bit][0] = a; keymap[key_opts[i].bit][1] = b;
+    if (!_stricmp(name, "key_menu")) { int vk = key_parse(val); if (vk < 0) return 0; key_menu = vk; return 1; }
+    for (int i = 0; i < 6; i++) if (!_stricmp(hotkey_opts[i], name)) { int vk = key_parse(val); if (vk < 0) return 0; hotkeys[i] = vk; return 1; }
+    for (int i = 0; key_opts[i].name; i++) if (!_stricmp(key_opts[i].name, name)) {   /* up to MAXKEYS keys, separated by commas */
+        char buf[128]; snprintf(buf, sizeof buf, "%s", val);
+        int list[MAXKEYS] = { 0 }, n = 0;
+        for (char *tok = buf, *next; tok; tok = next) {
+            next = strchr(tok, ','); if (next) *next++ = 0;
+            int k = key_parse(trim(tok));
+            if (k < 0 || n >= MAXKEYS) return 0;
+            if (k) list[n++] = k;   /* "none" adds nothing */
+        }
+        memcpy(keymap[key_opts[i].bit], list, sizeof list);
         return 1;
+    }
+    for (int i = 0; i < MS_COUNT; i++) if (!_stricmp(mouse_opts[i], name)) {
+        for (int k = 0; ps_names[k].name; k++) if (!_stricmp(ps_names[k].name, val)) { mousemap[i] = ps_names[k].bit; return 1; }
+        return 0;
     }
     return 0;
 }
@@ -188,19 +224,34 @@ static void config_write_default(const char *path) {
                "# Gamepad buttons (both players): a b x y lb rb lt rt start back ls rs up down left right none\n");
     for (int i = 0; pad_opts[i].name; i++) fprintf(f, "%s = %s\n", pad_opts[i].name, xnames[padmap[pad_opts[i].bit]]);
     fprintf(f, "\n"
-               "# Keyboard. One or two keys per button, separated by a comma. Letters, digits, or:\n"
+               "# Keyboard. Up to %d keys per button, separated by commas: letters, digits, or\n"
                "# up down left right enter backspace tab space lshift rshift lctrl rctrl lalt ralt\n"
-               "# comma period slash semicolon num0..num9 none\n");
+               "# comma period slash semicolon minus equals lbracket rbracket backslash quote grave\n"
+               "# escape insert delete home end pageup pagedown capslock f1..f12 num0..num9\n"
+               "# numadd numsub nummul numdiv numdot numenter none\n", MAXKEYS);
     for (int i = 0; key_opts[i].name; i++) {
         const int *k = keymap[key_opts[i].bit];
-        fprintf(f, "%s = %s", key_opts[i].name, key_label(k[0]));
-        if (k[1]) fprintf(f, ", %s", key_label(k[1]));
+        fprintf(f, "%s = ", key_opts[i].name);
+        if (!k[0]) fprintf(f, "none");
+        for (int j = 0; j < MAXKEYS && k[j]; j++) fprintf(f, "%s%s", j ? ", " : "", key_label(k[j]));
         fprintf(f, "\n");
     }
     fprintf(f, "key_fast_forward = %s\n", key_label(key_turbo));
+    fprintf(f, "# Opens the menu while playing: display settings and Exit (on a gamepad: press both sticks)\n"
+               "key_menu = %s\n", key_label(key_menu));
+    fprintf(f, "\n# Keys for the display actions (one key each, or none)\n");
+    for (int i = 0; i < 6; i++) fprintf(f, "%s = %s\n", hotkey_opts[i], key_label(hotkeys[i]));
+    fprintf(f, "\n# Mouse. Each button and wheel direction presses a pad button: up right down left start select\n"
+               "# cross circle square triangle l1 r1 l2 r2 l3 r3 none\n");
+    for (int i = 0; i < MS_COUNT; i++) {
+        const char *nm = "none";
+        for (int k = 0; ps_names[k].name; k++) if (ps_names[k].bit == mousemap[i]) { nm = ps_names[k].name; break; }
+        fprintf(f, "%s = %s\n", mouse_opts[i], nm);
+    }
     fclose(f);
 }
 void host_load_config(const char *path) {
+    snprintf(config_path, sizeof config_path, "%s", path);
     FILE *f = fopen(path, "r");
     if (!f) { config_write_default(path); return; }
     char line[256]; int n = 0;
@@ -229,11 +280,32 @@ static int xsrc(const HostPad *p, int s) {
 }
 static u8 axis(int v, int flip) { v = (flip ? -v : v) / 256 + 128; return (u8)(v < 0 ? 0 : v > 255 ? 255 : v); }
 
+/* mouse -> pad buttons for player 1 (added to b, active-high) */
+static void mouse_input(u16 *b) {
+    static int wheel_hold[2];   /* frames left in the press a notch makes */
+    int mb, wheel;
+    plat_mouse(&mb, &wheel);
+    if (test_nopad) mb = wheel = 0;   /* a scripted run: a pointer over the window must not disturb it */
+    mouse_held = mb;
+    for (int i = 0; i < 5; i++) if ((mb & (1 << i)) && mousemap[i] >= 0) *b |= (u16)(1 << mousemap[i]);
+    static int side[2];   /* this notch was turned with left Shift held: it goes left/right instead */
+    if (wheel > 0) { wheel_hold[0] = 6; side[0] = key(HK_LSHIFT); } else if (wheel < 0) { wheel_hold[1] = 6; side[1] = key(HK_LSHIFT); }   /* a notch is a short press */
+    for (int i = 0; i < 2; i++) {
+        int bit = side[i] ? (i ? 5 : 7) : mousemap[MS_WHEEL_UP + i];   /* Shift + wheel: up = left, down = right */
+        if (wheel_hold[i] > 0 && bit >= 0) *b |= (u16)(1 << bit);
+        if (wheel_hold[i] > 0) wheel_hold[i]--;
+    }
+}
+
 static void poll_input(void) {
     static unsigned probe;
     u16 b[2] = { 0, 0 };   /* active-high while building */
-    for (int i = 0; i < 16; i++) if (key(keymap[i][0]) || key(keymap[i][1])) b[0] |= (u16)(1 << i);
+    for (int i = 0; i < 16; i++) for (int j = 0; j < MAXKEYS && keymap[i][j]; j++) if (key(keymap[i][j])) { b[0] |= (u16)(1 << i); break; }
     turbo = key(key_turbo);
+    static int hot_down[6];   /* a display key acts once when it goes down */
+    for (int i = 0; i < 6; i++) { int d = key(hotkeys[i]); if (d && !hot_down[i]) host_hotkey(i); hot_down[i] = d; }
+    int menu_held = key(key_menu);   /* the menu key, or both sticks of player 1's gamepad (below) */
+    mouse_input(&b[0]);
     /* looking for a controller that is not there is slow, so only retry once a second */
     int look = (probe++ % 60) == 0;
     for (int n = 0; n < 2; n++) {
@@ -244,6 +316,7 @@ static void poll_input(void) {
         pad_found[n] = plat_pad(n, &s);
         if (!pad_found[n]) continue;
         for (int i = 0; i < 16; i++) if (xsrc(&s, padmap[i])) b[n] |= (u16)(1 << i);
+        if (n == 0 && (s.buttons & HP_LS) && (s.buttons & HP_RS)) menu_held = 1;
         if (g_pad_analog[n]) {
             pad_axes[n][0] = axis(s.rx, 0); pad_axes[n][1] = axis(s.ry, 1);
             pad_axes[n][2] = axis(s.lx, 0); pad_axes[n][3] = axis(s.ly, 1);
@@ -254,6 +327,7 @@ static void poll_input(void) {
             if (s.lx > 16000) b[n] |= 1 << 5;
         }
     }
+    { static int menu_down; if (menu_held && !menu_down) menu_want = 1; menu_down = menu_held; }   /* once per press */
     input_frame++;
     /* skip_intro: the game's movie player ends a movie when Start is pressed, and the movies shown at start-up follow each
        other without a pause. So Start is pressed in short pulses while movie pictures keep coming, and the aid switches itself
@@ -277,6 +351,8 @@ static void poll_input(void) {
         }
     if (g_turbo) turbo = 1;
     pad_state[0] = (u16)~b[0]; pad_state[1] = (u16)~b[1];
+    static u16 logged;
+    if (log_input && b[0] != logged) { logged = b[0]; fprintf(stderr, "[input] frame %u buttons %04x mouse %x\n", input_frame, b[0], mouse_held); }
 }
 u16 host_pad_buttons(int port) { return port >= 0 && port < 2 ? pad_state[port] : 0xffff; }
 int host_pad_connected(int port) { return port == 0 || (port == 1 && (pad_found[1] || g_player2 == 2)); }   /* player 1 always has the keyboard */
@@ -356,6 +432,7 @@ void host_init(void) {
     plat_init();
     setvbuf(stdout, NULL, _IONBF, 0);   /* the game's own text (BIOS putchar, puts) must be in a log file even when the game is killed */
     { const char *tst = getenv("DMRECOMP_GFX_TEST"); test_nopad = tst && strstr(tst, "nopad"); }   /* read once, here */
+    log_input = getenv("DM_LOG_INPUT") != NULL;
     last_frame = plat_now_ms();
     fb = calloc((size_t)1024 * 4 * 512 * 4, 4);   /* room for the largest internal resolution */
     /* the graphics backend is chosen once, here. renderer = gl: OpenGL, else the software stretch. renderer = vulkan: Vulkan
@@ -391,7 +468,7 @@ static void present(void) {
     else if (gls) {
         fb_w = d.w * gls; fb_h = d.h * gls; fb_on_gpu = 1;
         gpu_box[0] = d.x; gpu_box[1] = d.y; gpu_box[2] = d.w; gpu_box[3] = d.h;
-        if (g_shot_every) gfx->r_read(d.x, d.y, d.w, d.h, fb);   /* screenshots are saved from fb */
+        if (g_shot_every || menu_capture) gfx->r_read(d.x, d.y, d.w, d.h, fb);   /* screenshots are saved from fb; the menu darkens it */
     }
     else if (!d.depth24 && hv) {
         fb_w = d.w * hs; fb_h = d.h * hs;
@@ -484,6 +561,8 @@ static void save_png(const char *path) {
     fclose(f); free(z); free(img);
 }
 
+#include "host_menu.h"   /* the in-game menu: menu_run */
+
 /* --ramdump f1,f2,..  : write ram_<frame>.bin at those frames
    --poke frame:addr:val[:size] : write guest memory at a frame (size 1/2/4, default 1) */
 static unsigned dump_at[32]; static int dump_n;
@@ -569,6 +648,11 @@ void host_frame(void) {
     }
     plat_pump();
     poll_input();
+    if (menu_want || (menu_test_keys && frame_no == menu_test_frame)) {   /* the game stands still until the menu is closed */
+        int asked = menu_want; menu_want = 0;
+        menu_run(frame_no, asked ? NULL : menu_test_keys);
+        menu_want = 0; last_frame = plat_now_ms();
+    }
     t_last_exit = plat_now_ms(); t_host += t_last_exit - t_enter;
     if (turbo) { last_frame = plat_now_ms(); return; }
     /* pace to 59.94 Hz */

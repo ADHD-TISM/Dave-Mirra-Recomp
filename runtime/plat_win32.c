@@ -32,7 +32,16 @@ static const int vk_of[HK_COUNT - 256] = {
     [HK_SLASH - 256] = VK_OEM_2, [HK_SEMICOLON - 256] = VK_OEM_1,
     [HK_NUM0 - 256] = VK_NUMPAD0, [HK_NUM1 - 256] = VK_NUMPAD1, [HK_NUM2 - 256] = VK_NUMPAD2, [HK_NUM3 - 256] = VK_NUMPAD3,
     [HK_NUM4 - 256] = VK_NUMPAD4, [HK_NUM5 - 256] = VK_NUMPAD5, [HK_NUM6 - 256] = VK_NUMPAD6, [HK_NUM7 - 256] = VK_NUMPAD7,
-    [HK_NUM8 - 256] = VK_NUMPAD8, [HK_NUM9 - 256] = VK_NUMPAD9 };
+    [HK_NUM8 - 256] = VK_NUMPAD8, [HK_NUM9 - 256] = VK_NUMPAD9,
+    [HK_ESCAPE - 256] = VK_ESCAPE, [HK_INSERT - 256] = VK_INSERT, [HK_DELETE - 256] = VK_DELETE, [HK_HOME - 256] = VK_HOME,
+    [HK_END - 256] = VK_END, [HK_PAGEUP - 256] = VK_PRIOR, [HK_PAGEDOWN - 256] = VK_NEXT, [HK_CAPSLOCK - 256] = VK_CAPITAL,
+    [HK_MINUS - 256] = VK_OEM_MINUS, [HK_EQUALS - 256] = VK_OEM_PLUS, [HK_LBRACKET - 256] = VK_OEM_4, [HK_RBRACKET - 256] = VK_OEM_6,
+    [HK_BACKSLASH - 256] = VK_OEM_5, [HK_QUOTE - 256] = VK_OEM_7, [HK_GRAVE - 256] = VK_OEM_3,
+    [HK_NUMADD - 256] = VK_ADD, [HK_NUMSUB - 256] = VK_SUBTRACT, [HK_NUMMUL - 256] = VK_MULTIPLY, [HK_NUMDIV - 256] = VK_DIVIDE,
+    [HK_NUMDOT - 256] = VK_DECIMAL,   /* no HK_NUMENTER: Win32 reports it as the main Enter key */
+    [HK_F1 - 256] = VK_F1, [HK_F2 - 256] = VK_F2, [HK_F3 - 256] = VK_F3, [HK_F4 - 256] = VK_F4, [HK_F5 - 256] = VK_F5,
+    [HK_F6 - 256] = VK_F6, [HK_F7 - 256] = VK_F7, [HK_F8 - 256] = VK_F8, [HK_F9 - 256] = VK_F9, [HK_F10 - 256] = VK_F10,
+    [HK_F11 - 256] = VK_F11, [HK_F12 - 256] = VK_F12 };
 int plat_key(int code) {
     int vk = code < 256 ? code : code < HK_COUNT ? vk_of[code - 256] : 0;   /* letters and digits are their own virtual-key codes */
     return vk && GetForegroundWindow() == wnd && (GetAsyncKeyState(vk) & 0x8000) != 0;
@@ -115,20 +124,29 @@ void plat_set_fullscreen(int on, int fs_w, int fs_h) {
 }
 void plat_set_title(const char *title) { SetWindowTextA(wnd, title); }
 int plat_wants_fullscreen(void) { return 0; }
+static int mouse_buttons, mouse_wheel_acc;
 static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_SYSKEYDOWN:
         if (w == VK_RETURN && !(l & (1 << 30))) { host_hotkey(HOT_FULLSCREEN); return 0; }
         break;
-    case WM_KEYDOWN:
-        if (l & (1 << 30)) break;   /* auto-repeat */
-        if (w == VK_F11) { host_hotkey(HOT_FULLSCREEN); return 0; }
-        if (w == VK_F6) { host_hotkey(HOT_SCALE); return 0; }
-        if (w == VK_F7) { host_hotkey(HOT_FILTER); return 0; }
-        if (w == VK_F8) { host_hotkey(HOT_ASPECT); return 0; }
-        if (w == VK_F10) { host_hotkey(HOT_WIDE); return 0; }
-        if (w == VK_F9) { host_hotkey(HOT_FSR); return 0; }
-        break;
+    /* the mouse: the host reads these through plat_mouse */
+    case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN: case WM_XBUTTONDOWN: {
+        int bit = m == WM_LBUTTONDOWN ? 1 : m == WM_RBUTTONDOWN ? 2 : m == WM_MBUTTONDOWN ? 4 : (HIWORD(w) == XBUTTON1 ? 8 : 16);
+        if (!mouse_buttons) SetCapture(h);   /* the release arrives even when the pointer has left the window */
+        mouse_buttons |= bit;
+        return m == WM_XBUTTONDOWN ? TRUE : 0;
+    }
+    case WM_LBUTTONUP: case WM_RBUTTONUP: case WM_MBUTTONUP: case WM_XBUTTONUP: {
+        int bit = m == WM_LBUTTONUP ? 1 : m == WM_RBUTTONUP ? 2 : m == WM_MBUTTONUP ? 4 : (HIWORD(w) == XBUTTON1 ? 8 : 16);
+        mouse_buttons &= ~bit;
+        if (!mouse_buttons) ReleaseCapture();
+        return m == WM_XBUTTONUP ? TRUE : 0;
+    }
+    case WM_MOUSEWHEEL:
+        mouse_wheel_acc += GET_WHEEL_DELTA_WPARAM(w);
+        return 0;
+    case WM_KILLFOCUS: mouse_buttons = 0; break;
     case WM_CLOSE: host_quit(); return 0;
     case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h, &ps); EndPaint(h, &ps); return 0; }
     case WM_ERASEBKGND: return 1;
@@ -222,6 +240,11 @@ void plat_soft_present(const uint32_t *fb, int fb_w, int fb_h, int cw, int ch, i
     SetStretchBltMode(dc, smooth ? HALFTONE : COLORONCOLOR);
     if (smooth) SetBrushOrgEx(dc, 0, 0, NULL);
     StretchDIBits(dc, (cw - w) / 2, (ch - h) / 2, w, h, 0, 0, fb_w, fb_h, fb, &bi, DIB_RGB_COLORS, SRCCOPY);
+}
+void plat_mouse(int *buttons, int *wheel) {
+    if (GetForegroundWindow() != wnd) { *buttons = *wheel = 0; mouse_wheel_acc = 0; return; }
+    *buttons = mouse_buttons;
+    *wheel = mouse_wheel_acc / WHEEL_DELTA; mouse_wheel_acc -= *wheel * WHEEL_DELTA;
 }
 void plat_pump(void) {
     MSG m;

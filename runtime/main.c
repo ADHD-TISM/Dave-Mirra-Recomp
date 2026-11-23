@@ -113,6 +113,7 @@ static int run(int argc, char **argv) {
         else if (!strcmp(argv[i], "--wav") && i + 1 < argc) { extern FILE *g_wav; g_wav = fopen(argv[++i], "wb"); }
         else if (!strcmp(argv[i], "--ramdump") && i + 1 < argc) { void host_set_ramdump(const char *); host_set_ramdump(argv[++i]); }
         else if (!strcmp(argv[i], "--poke") && i + 1 < argc) { void host_add_poke(const char *); host_add_poke(argv[++i]); }
+        else if (!strcmp(argv[i], "--menu-at") && i + 1 < argc) { void host_set_menu_test(const char *); host_set_menu_test(argv[++i]); }   /* test aid: FRAME:KEYS, see host_menu.h */
         else if (!strcmp(argv[i], "--script") && i + 1 < argc) host_set_script(argv[++i]);
         else if (!strcmp(argv[i], "--script-file") && i + 1 < argc) {   /* same, read from a file */
             FILE *sf = fopen(argv[++i], "rb"); static char sbuf[65536];

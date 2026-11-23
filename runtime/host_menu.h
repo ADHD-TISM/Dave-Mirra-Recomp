@@ -1,0 +1,216 @@
+/* The in-game menu: part of host_common.c (included once, after present and save_png), kept apart for its size.
+   The menu key (key_menu, Escape unless changed) or both gamepad sticks pressed together opens it. While it is open the
+   game stands still: host_frame does not return, so no guest code runs, no sound is made and no game time passes. The
+   menu is drawn by the CPU into its own 640x480 picture, over a darkened copy of the game's last frame, and shown through
+   the backend's ordinary CPU-picture path, so it looks the same under Vulkan, OpenGL and the software stretch, with the
+   GPU renderer or without. A setting changed here takes effect at once and is written to dmrecomp.ini when the menu
+   closes: only its own line is replaced, the rest of the file is kept. */
+#include "font8x8.h"
+
+#define MENU_W 640
+#define MENU_H 480
+static u32 *menu_bg, *menu_px;      /* the darkened game picture, and the picture shown */
+
+/* replace the line "name = ..." in the settings file, or add it; every other line is kept as it is */
+static void config_store(const char *name, const char *val) {
+    if (!config_path[0]) return;
+    char tmp[530]; snprintf(tmp, sizeof tmp, "%s.new", config_path);
+    FILE *in = fopen(config_path, "r"), *out = fopen(tmp, "w");
+    if (!out) { if (in) fclose(in); return; }
+    char line[512]; int done = 0, line_start = 1, ends_nl = 1;
+    while (in && fgets(line, sizeof line, in)) {
+        size_t len = strlen(line);
+        if (!done && line_start) {
+            char key[64]; const char *s = line; size_t k = 0;
+            while (*s == ' ' || *s == '\t') s++;
+            while (*s && *s != '=' && *s != ' ' && *s != '\t' && *s != '\n' && k < sizeof key - 1) key[k++] = *s++;
+            key[k] = 0;
+            while (*s == ' ' || *s == '\t') s++;
+            if (*s == '=' && !_stricmp(key, name)) {
+                fprintf(out, "%s = %s\n", name, val); done = 1;
+                while (len && line[len - 1] != '\n' && fgets(line, sizeof line, in)) len = strlen(line);   /* the rest of a very long line */
+                line_start = ends_nl = 1;
+                continue;
+            }
+        }
+        fputs(line, out);
+        line_start = ends_nl = len && line[len - 1] == '\n';
+    }
+    if (!done) fprintf(out, "%s%s = %s\n", ends_nl ? "" : "\n", name, val);
+    if (in) fclose(in);
+    if (fclose(out) != 0) { remove(tmp); return; }   /* the disk is full: the old file stays */
+    remove(config_path);
+    if (rename(tmp, config_path) != 0) fprintf(stderr, "[menu] could not write %s\n", config_path);
+}
+
+/* ---- drawing ---- */
+static void menu_fill(int x, int y, int w, int h, u32 col) {
+    for (int yy = y < 0 ? 0 : y; yy < y + h && yy < MENU_H; yy++)
+        for (int xx = x < 0 ? 0 : x; xx < x + w && xx < MENU_W; xx++) menu_px[yy * MENU_W + xx] = col;
+}
+static void menu_text(int x, int y, int sc, const char *s, u32 col) {   /* sc: pixels per font dot */
+    for (; *s; s++, x += 8 * sc) {
+        unsigned c = (unsigned char)*s;
+        if (c < 32 || c > 126) c = '?';
+        const unsigned char *g = font8x8[c - 32];
+        for (int r = 0; r < 8; r++) for (int b = 0; b < 8; b++) if (g[r] >> b & 1) menu_fill(x + b * sc, y + r * sc, sc, sc, col);
+    }
+}
+
+/* ---- the entries ---- */
+enum { MI_RESUME, MI_SCALE, MI_FILTER, MI_ASPECT, MI_FSR, MI_WIDE, MI_FULL, MI_RUMBLE, MI_EXIT, MI_COUNT };
+static const char *const menu_names[MI_COUNT] = { "Resume", "Internal resolution", "Picture filter", "Aspect ratio", "FSR upscaler",
+                                                  "Widescreen", "Fullscreen", "Rumble", "Exit game" };
+static const struct { double ratio; const char *name; } menu_wide[] = { { 0, "off" }, { 16.0 / 9, "16:9" }, { 16.0 / 10, "16:10" }, { 21.0 / 9, "21:9" } };
+static int menu_wide_at(void) {   /* which of the shapes is set; -1 for one typed into the settings file */
+    for (int i = 0; i < 4; i++) if (fabs(ws_ratio - menu_wide[i].ratio) < 0.005) return i;
+    return -1;
+}
+/* the entry's value as shown, and (ini) as the settings file spells it; "" for an entry without a value */
+static const char *menu_value(int item, int ini) {
+    switch (item) {
+    case MI_SCALE: return g_gpu_scale == 1 ? (ini ? "1" : "1x (original)") : g_gpu_scale == 2 ? (ini ? "2" : "2x") : (ini ? "4" : "4x");
+    case MI_FILTER: return g_filter ? "smooth" : ini ? "nearest" : "sharp";
+    case MI_ASPECT: return g_aspect ? "stretch" : "4:3";
+    case MI_FSR: return g_upscale ? (ini ? "fsr" : "on") : "off";
+    case MI_WIDE: { int i = menu_wide_at(); return i < 0 ? "custom" : menu_wide[i].name; }
+    case MI_FULL: return g_fullscreen ? (ini ? "1" : "on") : (ini ? "0" : "off");
+    case MI_RUMBLE: return g_rumble ? (ini ? "1" : "on") : (ini ? "0" : "off");
+    }
+    return "";
+}
+static const char *const menu_ini[MI_COUNT] = { NULL, "scale", "filter", "aspect", "upscale", "widescreen", "fullscreen", "rumble", NULL };
+static void menu_change(int item, int dir) {   /* dir: +1 the next value, -1 the one before */
+    switch (item) {
+    case MI_SCALE: {
+        int at = g_gpu_scale == 1 ? 0 : g_gpu_scale == 2 ? 1 : 2;
+        at = (at + dir + 3) % 3; g_gpu_scale = 1 << at; gpu_set_scale(); break;
+    }
+    case MI_FILTER: g_filter = !g_filter; break;
+    case MI_ASPECT: g_aspect = !g_aspect; break;
+    case MI_FSR: g_upscale = !g_upscale; break;
+    case MI_WIDE: { int i = menu_wide_at(); i = i < 0 ? 0 : (i + dir + 4) % 4; ws_ratio = menu_wide[i].ratio; break; }
+    case MI_FULL: set_fullscreen(!g_fullscreen); break;
+    case MI_RUMBLE: g_rumble = !g_rumble; break;
+    }
+    show_settings();
+}
+
+static void menu_draw(int sel) {
+    memcpy(menu_px, menu_bg, (size_t)MENU_W * MENU_H * 4);
+    const int px = 72, py = 44, pw = MENU_W - 144, ph = MENU_H - 88;
+    menu_fill(px - 2, py - 2, pw + 4, ph + 4, 0x5a7fb8);
+    menu_fill(px, py, pw, ph, 0x10161f);
+    const char *title = "GAME MENU";
+    menu_text((MENU_W - (int)strlen(title) * 16) / 2, py + 14, 2, title, 0xffffff);
+    menu_fill(px + 16, py + 40, pw - 32, 2, 0x5a7fb8);
+    for (int i = 0; i < MI_COUNT; i++) {
+        int y = py + 56 + i * 30;
+        if (i == sel) menu_fill(px + 12, y - 6, pw - 24, 28, 0x2a5db0);
+        u32 col = i == sel ? 0xffffff : 0xc0c8d0;
+        menu_text(px + 24, y, 2, menu_names[i], col);
+        const char *v = menu_value(i, 0);
+        if (*v) {
+            char buf[40]; snprintf(buf, sizeof buf, i == sel ? "< %s >" : "%s", v);
+            menu_text(px + pw - 24 - (int)strlen(buf) * 16, y, 2, buf, i == sel ? 0xffffff : 0x8fd0ff);
+        }
+    }
+    /* at most 56 characters fit in a line of this size */
+    menu_text(px + 24, py + ph - 58, 1, "Up / Down: choose        Left / Right: change", 0x9aa4b0);
+    menu_text(px + 24, py + ph - 44, 1, "Cross or Enter: select   Triangle or the menu key: back", 0x9aa4b0);
+    menu_text(px + 24, py + ph - 24, 1, "Changes are saved. More settings are in the launcher.", 0x6f7a88);
+}
+static void menu_show(void) {
+    int cw, ch; plat_client_size(&cw, &ch);
+    if (cw <= 0 || ch <= 0) return;
+    int w = cw, h = ch;
+    if (!g_aspect) { h = cw * 3 / 4; if (h > ch) { h = ch; w = ch * 4 / 3; } }
+    GfxFrame f; memset(&f, 0, sizeof f);
+    f.fb = menu_px; f.fb_w = MENU_W; f.fb_h = MENU_H;
+    f.cw = cw; f.ch = ch; f.w = w; f.h = h;
+    f.filter = 1; f.fsr_sharp = g_fsr_sharp;   /* blended, never FSR: the text is small */
+    gfx->present(&f);
+}
+
+/* ---- input: the pad buttons as the game would get them, plus keys that always work here ---- */
+enum { MB_UP = 1 << 4, MB_RIGHT = 1 << 5, MB_DOWN = 1 << 6, MB_LEFT = 1 << 7, MB_START = 1 << 3, MB_SELECT = 1 << 0,
+       MB_CROSS = 1 << 14, MB_TRIANGLE = 1 << 12, MB_MENU = 1 << 16 };
+static int menu_pad_combo;   /* both sticks of player 1's gamepad are pressed (set by poll_input and by menu_buttons) */
+static u32 menu_buttons(void) {
+    static unsigned probe;
+    u16 b = 0; u32 r;
+    for (int i = 0; i < 16; i++) for (int j = 0; j < MAXKEYS && keymap[i][j]; j++) if (key(keymap[i][j])) { b |= (u16)(1 << i); break; }
+    mouse_input(&b);
+    HostPad s;
+    menu_pad_combo = 0;
+    if (!test_nopad && (pad_found[0] || probe++ % 60 == 0) && (pad_found[0] = plat_pad(0, &s)) != 0) {
+        for (int i = 0; i < 16; i++) if (xsrc(&s, padmap[i])) b |= (u16)(1 << i);
+        if (s.ly > 16000) b |= MB_UP;
+        if (s.ly < -16000) b |= MB_DOWN;
+        if (s.lx < -16000) b |= MB_LEFT;
+        if (s.lx > 16000) b |= MB_RIGHT;
+        menu_pad_combo = (s.buttons & HP_LS) && (s.buttons & HP_RS);
+    }
+    r = b;
+    if (key(HK_UP)) r |= MB_UP;
+    if (key(HK_DOWN)) r |= MB_DOWN;
+    if (key(HK_LEFT)) r |= MB_LEFT;
+    if (key(HK_RIGHT)) r |= MB_RIGHT;
+    if (key(HK_ENTER)) r |= MB_CROSS;
+    if (key(key_menu) || key(HK_ESCAPE) || menu_pad_combo) r |= MB_MENU;
+    return r;
+}
+
+/* --menu-at FRAME:KEYS (a test aid): the menu opens at that frame and gets these presses, one a turn: u d l r, x (select)
+   and t (back). After the last one menu_<frame>.png is written and the menu closes, unless a press already closed it. */
+static unsigned menu_test_frame; static const char *menu_test_keys;
+void host_set_menu_test(const char *t) {
+    menu_test_frame = (unsigned)strtoul(t, (char **)&t, 10);
+    menu_test_keys = *t == ':' ? t + 1 : "";
+}
+
+static void menu_run(unsigned frame, const char *test) {
+    if (!menu_bg) { menu_bg = malloc((size_t)MENU_W * MENU_H * 4); menu_px = malloc((size_t)MENU_W * MENU_H * 4); }
+    if (!menu_bg || !menu_px) return;
+    host_pad_rumble(0, 0, 0); host_pad_rumble(1, 0, 0);
+    menu_capture = 1; present(); menu_capture = 0;   /* fb now holds the game's picture, also when the graphics card drew it */
+    for (int y = 0; y < MENU_H; y++) for (int x = 0; x < MENU_W; x++)
+        menu_bg[y * MENU_W + x] = (fb[(y * fb_h / MENU_H) * fb_w + x * fb_w / MENU_W] >> 2) & 0x3f3f3fu;
+    int sel = 0, quit = 0; unsigned changed = 0;
+    u32 prev = test ? 0 : menu_buttons();   /* what is held now does not count as a press */
+    for (;;) {
+        u32 hit;
+        if (test) {
+            char c = *test ? *test++ : 0;
+            hit = c == 'u' ? MB_UP : c == 'd' ? MB_DOWN : c == 'l' ? MB_LEFT : c == 'r' ? MB_RIGHT : c == 'x' ? MB_CROSS : c == 't' ? MB_TRIANGLE : 0;
+            if (!c) {
+                menu_draw(sel); menu_show();
+                char name[64]; snprintf(name, sizeof name, "menu_%05u.png", frame);
+                u32 *keep = fb; int kw = fb_w, kh = fb_h, ks = g_shot_window;
+                fb = menu_px; fb_w = MENU_W; fb_h = MENU_H; g_shot_window = 0;
+                save_png(name);
+                fb = keep; fb_w = kw; fb_h = kh; g_shot_window = ks;
+                break;
+            }
+        } else {
+            plat_pump();
+            u32 b = menu_buttons();
+            hit = b & ~prev; prev = b;
+        }
+        if (hit & MB_UP) sel = (sel + MI_COUNT - 1) % MI_COUNT;
+        if (hit & MB_DOWN) sel = (sel + 1) % MI_COUNT;
+        int dir = (hit & MB_RIGHT) ? 1 : (hit & MB_LEFT) ? -1 : 0;
+        if (hit & (MB_CROSS | MB_START)) {
+            if (sel == MI_RESUME) break;
+            if (sel == MI_EXIT) { quit = 1; break; }
+            dir = 1;
+        }
+        if (dir && menu_ini[sel]) { menu_change(sel, dir); changed |= 1u << sel; }
+        if (hit & (MB_TRIANGLE | MB_SELECT | MB_MENU)) break;
+        if (!test) { menu_draw(sel); menu_show(); plat_sleep_ms(16); }
+    }
+    for (int i = 0; i < MI_COUNT; i++) if (changed & (1u << i)) config_store(menu_ini[i], menu_value(i, 1));
+    if (quit) host_quit();
+    /* the button that closed the menu must not reach the game: wait until nothing is held (2 seconds at most) */
+    for (int n = 0; !test && n < 120 && menu_buttons(); n++) { plat_pump(); plat_sleep_ms(16); }
+}
