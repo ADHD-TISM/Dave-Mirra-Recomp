@@ -1,12 +1,14 @@
 # Renderer roadmap: adding Vulkan next to OpenGL
 
-Status: plan. Phase 1 (finishing the OpenGL path): its tests are written, and they pass on AMD, NVIDIA and Intel graphics on
-Windows (the NVIDIA and Intel runs are recorded under phase 6; nobody has played by hand there yet). Phase 2 (the backend seam) is done: the window, its surface, the window picture and the GPU renderer all sit behind
-`runtime/gfx.h`. Phase 3 (core-profile OpenGL) is done on the Radeon. Phase 4 is done on the Radeon: Vulkan shows the CPU
-picture, FSR included. Phase 5 is done on the Radeon: `gpu_gl = 1` under `renderer = vulkan` draws the 2x and 4x picture on
-the card (`docs/vulkan-gpu-renderer-plan.md`). Phase 6 is started (the Radeon under the validation layer, Linux under WSL
-2 with Mesa's OpenGL and software Vulkan drivers, and one laptop's NVIDIA and Intel chips on Windows). Phase 7: the setting
-`renderer = auto` exists and is the default, set before phase 6's NVIDIA and Intel runs were made. Estimates are rough and are not promises.
+Status: plan. Phase 1 (finishing the OpenGL path) is in progress: its tests are written and passed on AMD graphics, and on
+NVIDIA and Intel graphics with the code of commit `2abdd12` (recorded under phase 6; the drawing code has changed since, and
+nobody has played by hand there yet). Phase 2 (the backend seam) is done: the window, its surface, the window picture and the
+GPU renderer all sit behind `runtime/gfx.h`. Phase 3 (core-profile OpenGL) is done on the Radeon. Phase 4 is done on the
+Radeon: Vulkan shows the CPU picture, FSR included. Phase 5 is done on the Radeon: `gpu_gl = 1` under `renderer = vulkan`
+draws the 2x and 4x picture on the card (`docs/vulkan-gpu-renderer-plan.md`). Phase 6 is started (the Radeon under the
+validation layer, Linux under WSL 2 with Mesa's OpenGL and software Vulkan drivers, and one laptop's NVIDIA and Intel chips on
+Windows). Phase 7: the setting `renderer = auto` exists and is the default, set before phase 6's NVIDIA and Intel runs were
+made. Estimates are rough and are not promises.
 
 ## Goal
 
@@ -136,85 +138,88 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
 6. **Hardware validation** (a week or more). AMD, NVIDIA and Intel on Windows, and Linux with Mesa and NVIDIA drivers, a Steam
    Deck if one is available, with the validation layers on. The least predictable phase: it depends on having the hardware.
    *Exit:* no validation errors, no regressions against OpenGL on any of them.
-   *Done so far:* the Radeon on Windows under the validation layer, and Linux under WSL 2 with two Mesa drivers. With the
-   Khronos layer (the unpinned nightly build the plan's step 5 used, through `VK_LAYER_PATH`, nothing installed) and
-   `DMRECOMP_VK_VALIDATE=1`, the code as of phase 7 gives no layer message in `vktest` (normal, `small`, `decline`, `keep`)
-   nor in four scripted game runs: Freestyle BMX with `renderer = vulkan` at 2x and with `auto` at 4x through FSR, Maximum
-   Remix with `auto` at 2x and with `vulkan` at 4x through FSR, all with `gpu_gl = 1`; the two plain 2x runs also match the
-   OpenGL baseline (64 of 64 and 71 of 71 shots). On Linux, the SDL front end built with gcc and CMake under WSL 2 (Ubuntu
-   22.04, SDL 2.0.20, X11 through WSLg) and ran the Freestyle BMX script with `gpu_gl = 1` at 2x on Mesa 23.2.1's D3D12
-   driver (`GL_RENDERER` "D3D12 (AMD Radeon(TM) Graphics)", OpenGL 4.2 core): 75 of 75 shots are identical to the Windows
-   Radeon OpenGL baseline. That system has no Vulkan loader, so it is also the roadmap's machine without one: `renderer =
-   vulkan` and `renderer = auto` both said so (`[video] no Vulkan loader (Failed loading libvulkan.so.1 ...)`), went to
-   OpenGL, and gave the same shots (74 of 74 each). Then, with Ubuntu's `mesa-vulkan-drivers` and `vulkan-validationlayers`
-   installed, Vulkan on Linux through Mesa's software driver (lavapipe: `llvmpipe (LLVM 15.0.7, 256 bits)`, depth-stencil
-   D24S8, the first run on that format): `renderer = vulkan` and `renderer = auto` both use it, give the same shots as each
-   other (68 of 68), and the layer (1.3.204) gives no message with the GPU renderer or with the CPU picture. Against the
-   Windows OpenGL baseline the lavapipe shots are the same scenes but not the same pixels: 6 of 69 identical, at most 0.15 %
-   of a shot's pixels differ (0.03 % on average), nine in ten by 4 or 8 of 255 and most of the rest by 1 or 2 (largest 200).
-   The 11132 differing pixels of the 69 shots were located: 8740 of them (79 %) have no differing pixel among their eight
-   neighbours and 1238 more are in pairs; of the 710 in groups of six or more, 26 are in a group shaped like a line (six or
-   more long, at most two wide) and 684 in patches, so almost none form lines; whether they lie on polygon edges was not
-   checked. Two thirds (66.5 %) are not on a colour edge of the picture; the other third is. By size: 43 % differ by 8, which
-   is one step of the 5-bit colour the shader rounds to (`floor(col * 255 + 0.5)`, then `floor(m / 8)`), 47 % by 4, 8 % by 1
-   or 2, and 1 % by other amounts (7, and 12 to 200). That is what a rasteriser that interpolates vertex colours and texture
-   coordinates a little differently would give: a value next to a rounding threshold lands on the other side. The reading of
-   these groups (a colour step, a colour step halved by a half-and-half blend, the blend's own rounding, and for the rest a
-   neighbouring texel) fits the numbers but was not traced pixel by pixel to the primitives, and `vktest`, which would say
-   exactly, is a Win32 program and has not run on lavapipe. Maximum Remix on the same system, built the same way, with the
-   same input script (one file of timed button presses serves both games, here and in the Windows baselines) and `gpu_gl = 1`
-   at 2x: on the D3D12 OpenGL driver 83 of 83 shots are identical to the Windows Radeon OpenGL baseline. On lavapipe 6 of 86
-   are identical to that baseline, at most 0.14 % of a shot's pixels differ (0.05 % on average), and of the 20910 differing
-   pixels 48 % differ by 8, 45 % by 4, 6 % by 1 or 2 and 2 % by other amounts (largest 88): the same kind of difference as in
-   Freestyle BMX; these pixels were not located. Three runs under the validation layer gave no message. A second plain
-   lavapipe run and two of the validated runs give the first plain run's shots (74 of 74, 69 of 69, 69 of 69). The other
-   validated run, the first one, gave the plain run's shots up to frame 1200 and other pictures from the shot at frame 1500
-   on: at frame 1500 another item of the same menu, at frame 6000 another level (only these two were looked at; some shots
-   between them have another picture size). Its game log has the same lines, apart from the timing and statistics lines,
-   which were not compared. The rest of that run cannot be compared; the cause was not found, and it did not happen again in
-   the two runs after it. A fault found on the way, not a renderer one: after some minutes of `--turbo` the game did not end
-   when told to (SIGTERM), under OpenGL and Vulkan alike; it stopped inside SDL's closing of the PulseAudio device, and with
-   `SDL_AUDIODRIVER=dummy` it ended. It is a fault of `--turbo` runs as far as seen: with the old code a run of 200 seconds
-   at normal speed ended as it should, and the turbo run beside it did not (one run each). `plat_exit` in
-   `runtime/plat_sdl.c` no longer closes the sound device (it stops rumble, closes the pads, gives back the window and the
-   display mode and leaves); three turbo runs of 170 seconds then ended with code 0. The new exit path was not tried with a
-   gamepad, in fullscreen, or on a machine other than this one.
+   *Done so far:* the Radeon on Windows under the validation layer, Linux under WSL 2 with two Mesa drivers, and one laptop's
+   NVIDIA and Intel chips on Windows (its record follows the other two). With the Khronos layer (the unpinned nightly build
+   the plan's step 5 used, through `VK_LAYER_PATH`, nothing installed) and `DMRECOMP_VK_VALIDATE=1`, the code as of phase 7
+   gives no layer message in `vktest` (normal, `small`, `decline`, `keep`) nor in four scripted game runs: Freestyle BMX with
+   `renderer = vulkan` at 2x and with `auto` at 4x through FSR, Maximum Remix with `auto` at 2x and with `vulkan` at 4x
+   through FSR, all with `gpu_gl = 1`; the two plain 2x runs also match the OpenGL baseline (64 of 64 and 71 of 71 shots). On
+   Linux, the SDL front end built with gcc and CMake under WSL 2 (Ubuntu 22.04, SDL 2.0.20, X11 through WSLg) and ran the
+   Freestyle BMX script with `gpu_gl = 1` at 2x on Mesa 23.2.1's D3D12 driver (`GL_RENDERER` "D3D12 (AMD Radeon(TM)
+   Graphics)", OpenGL 4.2 core): 75 of 75 shots are identical to the Windows Radeon OpenGL baseline. That system has no Vulkan
+   loader, so it is also the roadmap's machine without one: `renderer = vulkan` and `renderer = auto` both said so (`[video]
+   no Vulkan loader (Failed loading libvulkan.so.1 ...)`), went to OpenGL, and gave the same shots (74 of 74 each). Then, with
+   Ubuntu's `mesa-vulkan-drivers` and `vulkan-validationlayers` installed, Vulkan on Linux through Mesa's software driver
+   (lavapipe: `llvmpipe (LLVM 15.0.7, 256 bits)`, depth-stencil D24S8, the first run on that format): `renderer = vulkan` and
+   `renderer = auto` both use it, give the same shots as each other (68 of 68), and the layer (1.3.204) gives no message with
+   the GPU renderer or with the CPU picture. Against the Windows OpenGL baseline the lavapipe shots are the same scenes but
+   not the same pixels: 6 of 69 identical, at most 0.15 % of a shot's pixels differ (0.03 % on average), nine in ten by 4 or 8
+   of 255 and most of the rest by 1 or 2 (largest 200). The 11132 differing pixels of the 69 shots were located: 8740 of them
+   (79 %) have no differing pixel among their eight neighbours and 1238 more are in pairs; of the 710 in groups of six or
+   more, 26 are in a group shaped like a line (six or more long, at most two wide) and 684 in patches, so almost none form
+   lines; whether they lie on polygon edges was not checked. Two thirds (66.5 %) are not on a colour edge of the picture; the
+   other third is. By size: 43 % differ by 8, which is one step of the 5-bit colour the shader rounds to (`floor(col * 255 +
+   0.5)`, then `floor(m / 8)`), 47 % by 4, 8 % by 1 or 2, and 1 % by other amounts (7, and 12 to 200). That is what a
+   rasteriser that interpolates vertex colours and texture coordinates a little differently would give: a value next to a
+   rounding threshold lands on the other side. The reading of these groups (a colour step, a colour step halved by a
+   half-and-half blend, the blend's own rounding, and for the rest a neighbouring texel) fits the numbers but was not traced
+   pixel by pixel to the primitives, and `vktest`, which would say exactly, is a Win32 program and has not run on lavapipe.
+   Maximum Remix on the same system, built the same way, with the same input script (one file of timed button presses serves
+   both games, here and in the Windows baselines) and `gpu_gl = 1` at 2x: on the D3D12 OpenGL driver 83 of 83 shots are
+   identical to the Windows Radeon OpenGL baseline. On lavapipe 6 of 86 are identical to that baseline, at most 0.14 % of a
+   shot's pixels differ (0.05 % on average), and of the 20910 differing pixels 48 % differ by 8, 45 % by 4, 6 % by 1 or 2 and
+   2 % by other amounts (largest 88): the same kind of difference as in Freestyle BMX; these pixels were not located. Three
+   runs under the validation layer gave no message. A second plain lavapipe run and two of the validated runs give the first
+   plain run's shots (74 of 74, 69 of 69, 69 of 69). The other validated run, the first one, gave the plain run's shots up to
+   frame 1200 and other pictures from the shot at frame 1500 on: at frame 1500 another item of the same menu, at frame 6000
+   another level (only these two were looked at; some shots between them have another picture size). Its game log has the same
+   lines, apart from the timing and statistics lines, which were not compared. The rest of that run cannot be compared; the
+   cause was not found, and it did not happen again in the two runs after it. A fault found on the way, not a renderer one:
+   after some minutes of `--turbo` the game did not end when told to (SIGTERM), under OpenGL and Vulkan alike; it stopped
+   inside SDL's closing of the PulseAudio device, and with `SDL_AUDIODRIVER=dummy` it ended. It is a fault of `--turbo` runs
+   as far as seen: with the old code a run of 200 seconds at normal speed ended as it should, and the turbo run beside it did
+   not (one run each). `plat_exit` in `runtime/plat_sdl.c` no longer closes the sound device (it stops rumble, closes the
+   pads, gives back the window and the display mode and leaves); three turbo runs of 170 seconds then ended with code 0. The
+   new exit path was not tried with a gamepad, in fullscreen, or on a machine other than this one.
    *NVIDIA and Intel on Windows (22 Nov, a laptop with both chips, the code of commit `2abdd12`, built there with gcc 16.2
    from the laptop's own disc images):* a GeForce GTX 1050 Ti (driver 582.78, OpenGL 3.3.0) and an Intel UHD Graphics 630
    (OpenGL 3.3.0, build 31.0.101.2140). The game and the driver checks landed on the NVIDIA chip with no setting changed, so
    the request for the dedicated chip (`NvOptimusEnablement`) works on this laptop. For the Intel chip a test build was used,
    not committed: the two exported request variables set to 0, and `pick_device` passing over devices of the discrete type;
-   `gltest` and the game then reported the Intel chip under OpenGL and Vulkan. On each chip: `gltest` all ok, and `vktest`
-   all ok in its four modes (normal, `small`, `decline`, `keep`), with 0 pixels differing in every line that counts them.
-   Both chips use the depth-stencil format D24S8 (the Radeon uses D32S8). Scripted runs of both games (`--turbo`, the level
-   script, `nopad`, shots of the game picture every 300 frames, each run stopped by its time limit) ended without a crash
-   or a `[watchdog]` report: 24 on the NVIDIA chip, 12 on the Intel one. OpenGL against Vulkan, shot for shot, is identical
+   `gltest` and the game then reported the Intel chip under OpenGL and Vulkan. On each chip: `gltest` all ok, and `vktest` all
+   ok in its four modes (normal, `small`, `decline`, `keep`), with 0 pixels differing in every line that counts them. Both
+   chips use the depth-stencil format D24S8 (the Radeon uses D32S8). Scripted runs of both games (`--turbo`, the level script,
+   `nopad`, shots of the game picture every 300 frames, each run stopped by its time limit) ended without a crash or a
+   `[watchdog]` report: 24 on the NVIDIA chip, 12 on the Intel one. OpenGL against Vulkan, shot for shot, is identical
    everywhere it was compared: on NVIDIA 391 shots (Freestyle BMX at 2x with the CPU picture 70 and the GPU picture 98,
    Maximum Remix 81 and 113, Freestyle BMX at 4x 29), on Intel 271 (70 and 52, 81 and 58, at 4x 10). The CPU picture against
-   the GPU picture at 2x gives the Radeon's figures on both chips: Freestyle BMX worst shot 0.86 % of pixels differing by
-   more than 16 of 255 (average 0.24 %), Maximum Remix 0.62 % (average 0.26 % on NVIDIA, 0.27 % on Intel). Intel against
-   NVIDIA, the same script: the GPU picture is identical under OpenGL (52 shots) and under Vulkan (88). The picture in the
-   window (`--shot-window`, Freestyle BMX, `gpu_gl = 1` at 2x, NVIDIA only): with the smooth filter OpenGL and Vulkan are
-   identical with and without FSR (22 and 21 shots, a 960x720 window); with the nearest filter they differ in up to 0.84 %
+   the GPU picture at 2x gives the Radeon's figures on both chips: Freestyle BMX worst shot 0.86 % of pixels differing by more
+   than 16 of 255 (average 0.24 %), Maximum Remix 0.62 % (average 0.26 % on NVIDIA, 0.27 % on Intel). Intel against NVIDIA,
+   the same script: Freestyle BMX's GPU picture at 2x is identical under OpenGL (52 shots) and under Vulkan (88). The picture
+   in the window (`--shot-window`, Freestyle BMX, `gpu_gl = 1` at 2x, NVIDIA only): with the smooth filter OpenGL and Vulkan
+   are identical with and without FSR (22 and 21 shots, a 960x720 window); with the nearest filter they differ in up to 0.84 %
    of a shot's pixels, in a 960x720 and in a 1280x960 window. Two shot pairs were taken apart: the differing pixels lie in
-   every fifth column only (the level's picture is 1024 wide, a 1280 window 1.25 times that), and in each of them OpenGL
-   shows the pixel Vulkan shows one column further right. It is the tie at a texel edge already recorded for the Radeon,
-   not a wrong picture. The same on the Intel chip, a 960x720 window, FSR off: the smooth filter identical (13 shots), the
-   nearest filter differing in up to 3.65 % of a shot's pixels. There the tie is between rows: a 720-high window is 1.5
-   times the 480-high picture, so every third window row lies exactly on a texel edge; of the differing pixels in two shot
-   pairs 97 to 98 % are in those rows, and in 95 to 97 % of them OpenGL shows the pixel Vulkan shows one row higher. Intel's
-   Vulkan driver is the one that decides this tie differently: its nearest shots differ from NVIDIA's Vulkan ones by up to
-   4.2 %, while Intel's OpenGL shots differ from NVIDIA's OpenGL ones by 0.78 % at most and the smooth ones not at all.
-   A save test at normal speed on the NVIDIA chip: Maximum Remix with the settings of the desktop's one freeze (`auto`,
-   which took Vulkan, `gpu_gl = 1`, scale 4) and copies of its cards ran 28 minutes of game time through 6 level runs with
-   a save after each; all 6 saves showed their 20 seconds without a flip, there was no `[watchdog]` report, the card
-   changed in 7 bytes as after a completed save on the desktop, and the game held full speed (1800 flips a minute). The run
-   was stopped by its time limit, so it left no `[exit]` report. Speed, from how far each 150-second `--turbo` run got (one run each, nothing else measured): on
-   NVIDIA the GPU picture ran further than the CPU picture under both renderers (about 490 against 352 seconds of game
-   time); on Intel Vulkan's GPU picture did too (441), but OpenGL's fell behind the CPU picture (263 against 350), and at
-   4x OpenGL reached 102 seconds of game time in 90 where Vulkan reached 210. Not done on the laptop: nobody watched the
-   runs or played by hand; one scripted level per game; FSR in the window was not compared on Intel; fullscreen, a gamepad
-   and sound were not checked.
+   every fifth column only (the level's picture is 1024 wide, a 1280 window 1.25 times that), and in each of them OpenGL shows
+   the pixel Vulkan shows one column further right. It is the tie at a texel edge already recorded for the Radeon, not a wrong
+   picture. The same on the Intel chip, a 960x720 window, FSR off: the smooth filter identical (13 shots), the nearest filter
+   differing in up to 3.65 % of a shot's pixels. There the tie is between rows: a 720-high window is 1.5 times the 480-high
+   picture, so every third window row lies exactly on a texel edge; of the differing pixels in two shot pairs 97 to 98 % are
+   in those rows, and in 95 to 97 % of them OpenGL shows the pixel Vulkan shows one row higher. Intel's Vulkan driver is the
+   one that decides this tie differently: its nearest shots differ from NVIDIA's Vulkan ones by up to 4.2 %, while Intel's
+   OpenGL window shots with the nearest filter differ from NVIDIA's OpenGL ones by 0.78 % at most and the smooth ones not at
+   all. A save test at normal speed on the NVIDIA chip: Maximum Remix with the settings of the one freeze seen on the Radeon
+   machine (22 Nov, while saving after a second level run, not seen again since; `auto`, which took Vulkan, `gpu_gl = 1`,
+   scale 4) and copies of that machine's cards ran 28 minutes of game time through 6 level runs with a save after each; all 6
+   saves showed their 20 seconds without a flip, there was no `[watchdog]` report, the card changed in 7 bytes as after a
+   completed save on the Radeon machine, and the game held full speed (1800 flips a minute). The run was stopped by its time
+   limit, so it left no `[exit]` report. Speed, from how far each 150-second `--turbo` run got (one run each, nothing else
+   measured): on NVIDIA the GPU picture ran further than the CPU picture under both renderers (about 490 against 352 seconds
+   of game time); on Intel Vulkan's GPU picture did too (441), but OpenGL's fell behind the CPU picture (263 against 350), and
+   at 4x OpenGL reached 102 seconds of game time in 90 where Vulkan reached 210. The 4x figures are as they were written down
+   on the laptop: how long the 4x runs were, and why 10 shots were compared where 102 seconds of game time give about 20, was
+   not recorded. Not done on the laptop: nobody watched the runs or played by hand; one scripted level per game; FSR in the
+   window was not compared on Intel; fullscreen, a gamepad and sound were not checked; whether the Vulkan validation layer was
+   on is not recorded, so this phase's "no validation errors" is not shown for these two chips.
    Not done: Vulkan on Linux on a graphics card (lavapipe is a CPU driver), Linux on real hardware with Mesa's own drivers
    or NVIDIA's, and a Steam Deck.
 7. **Make Vulkan the default presentation where it works** (not estimated). A new setting, `renderer = auto | vulkan | gl`,
