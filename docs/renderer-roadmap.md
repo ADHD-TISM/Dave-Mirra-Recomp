@@ -215,7 +215,7 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    limit, so it left no `[exit]` report. Speed, from how far each 150-second `--turbo` run got (one run each, nothing else
    measured): on NVIDIA the GPU picture ran further than the CPU picture under both renderers (about 490 against 352 seconds
    of game time); on Intel Vulkan's GPU picture did too (441), but OpenGL's fell behind the CPU picture (263 against 350), and
-   at 4x OpenGL reached 102 seconds of game time in 90 seconds where Vulkan reached 210. The 4x figures are as they were
+   at 4x OpenGL reached 102 seconds of game time in a 90-second run where Vulkan reached 210. The 4x figures are as they were
    written down on the laptop: which runs the 4x shots compared above came from, and why they are 10 where 102 seconds of game
    time give about 20, were not recorded. Not done on the laptop: nobody watched the runs or played by hand; one scripted
    level per game; FSR in the window was not compared on Intel; fullscreen, a gamepad and sound were not checked; whether the
