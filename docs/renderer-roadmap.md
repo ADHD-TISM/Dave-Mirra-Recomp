@@ -1,12 +1,12 @@
 # Renderer roadmap: adding Vulkan next to OpenGL
 
-Status: plan. Phase 1 (finishing the OpenGL path) is in progress: its tests are written, the NVIDIA and Intel runs are not
-done. Phase 2 (the backend seam) is done: the window, its surface, the window picture and the GPU renderer all sit behind
+Status: plan. Phase 1 (finishing the OpenGL path): its tests are written, and they pass on AMD, NVIDIA and Intel graphics on
+Windows (the NVIDIA and Intel runs are recorded under phase 6; nobody has played by hand there yet). Phase 2 (the backend seam) is done: the window, its surface, the window picture and the GPU renderer all sit behind
 `runtime/gfx.h`. Phase 3 (core-profile OpenGL) is done on the Radeon. Phase 4 is done on the Radeon: Vulkan shows the CPU
 picture, FSR included. Phase 5 is done on the Radeon: `gpu_gl = 1` under `renderer = vulkan` draws the 2x and 4x picture on
-the card (`docs/vulkan-gpu-renderer-plan.md`). Phase 6 is started (the Radeon under the validation layer, and Linux under WSL
-2 with Mesa's OpenGL and software Vulkan drivers). Phase 7: the setting `renderer = auto` exists and is the default, set
-before phase 6's NVIDIA and Intel runs were made. Estimates are rough and are not promises.
+the card (`docs/vulkan-gpu-renderer-plan.md`). Phase 6 is started (the Radeon under the validation layer, Linux under WSL
+2 with Mesa's OpenGL and software Vulkan drivers, and one laptop's NVIDIA and Intel chips on Windows). Phase 7: the setting
+`renderer = auto` exists and is the default, set before phase 6's NVIDIA and Intel runs were made. Estimates are rough and are not promises.
 
 ## Goal
 
@@ -178,8 +178,45 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    at normal speed ended as it should, and the turbo run beside it did not (one run each). `plat_exit` in
    `runtime/plat_sdl.c` no longer closes the sound device (it stops rumble, closes the pads, gives back the window and the
    display mode and leaves); three turbo runs of 170 seconds then ended with code 0. The new exit path was not tried with a
-   gamepad, in fullscreen, or on a machine other than this one. Not done: Vulkan on Linux on a graphics card (lavapipe is a
-   CPU driver), NVIDIA and Intel on Windows, Linux on real hardware with Mesa's own drivers or NVIDIA's, and a Steam Deck.
+   gamepad, in fullscreen, or on a machine other than this one.
+   *NVIDIA and Intel on Windows (22 Nov, a laptop with both chips, the code of commit `2abdd12`, built there with gcc 16.2
+   from the laptop's own disc images):* a GeForce GTX 1050 Ti (driver 582.78, OpenGL 3.3.0) and an Intel UHD Graphics 630
+   (OpenGL 3.3.0, build 31.0.101.2140). The game and the driver checks landed on the NVIDIA chip with no setting changed, so
+   the request for the dedicated chip (`NvOptimusEnablement`) works on this laptop. For the Intel chip a test build was used,
+   not committed: the two exported request variables set to 0, and `pick_device` passing over devices of the discrete type;
+   `gltest` and the game then reported the Intel chip under OpenGL and Vulkan. On each chip: `gltest` all ok, and `vktest`
+   all ok in its four modes (normal, `small`, `decline`, `keep`), with 0 pixels differing in every line that counts them.
+   Both chips use the depth-stencil format D24S8 (the Radeon uses D32S8). Scripted runs of both games (`--turbo`, the level
+   script, `nopad`, shots of the game picture every 300 frames, each run stopped by its time limit) ended without a crash
+   or a `[watchdog]` report: 24 on the NVIDIA chip, 12 on the Intel one. OpenGL against Vulkan, shot for shot, is identical
+   everywhere it was compared: on NVIDIA 391 shots (Freestyle BMX at 2x with the CPU picture 70 and the GPU picture 98,
+   Maximum Remix 81 and 113, Freestyle BMX at 4x 29), on Intel 271 (70 and 52, 81 and 58, at 4x 10). The CPU picture against
+   the GPU picture at 2x gives the Radeon's figures on both chips: Freestyle BMX worst shot 0.86 % of pixels differing by
+   more than 16 of 255 (average 0.24 %), Maximum Remix 0.62 % (average 0.26 % on NVIDIA, 0.27 % on Intel). Intel against
+   NVIDIA, the same script: the GPU picture is identical under OpenGL (52 shots) and under Vulkan (88). The picture in the
+   window (`--shot-window`, Freestyle BMX, `gpu_gl = 1` at 2x, NVIDIA only): with the smooth filter OpenGL and Vulkan are
+   identical with and without FSR (22 and 21 shots, a 960x720 window); with the nearest filter they differ in up to 0.84 %
+   of a shot's pixels, in a 960x720 and in a 1280x960 window. Two shot pairs were taken apart: the differing pixels lie in
+   every fifth column only (the level's picture is 1024 wide, a 1280 window 1.25 times that), and in each of them OpenGL
+   shows the pixel Vulkan shows one column further right. It is the tie at a texel edge already recorded for the Radeon,
+   not a wrong picture. The same on the Intel chip, a 960x720 window, FSR off: the smooth filter identical (13 shots), the
+   nearest filter differing in up to 3.65 % of a shot's pixels. There the tie is between rows: a 720-high window is 1.5
+   times the 480-high picture, so every third window row lies exactly on a texel edge; of the differing pixels in two shot
+   pairs 97 to 98 % are in those rows, and in 95 to 97 % of them OpenGL shows the pixel Vulkan shows one row higher. Intel's
+   Vulkan driver is the one that decides this tie differently: its nearest shots differ from NVIDIA's Vulkan ones by up to
+   4.2 %, while Intel's OpenGL shots differ from NVIDIA's OpenGL ones by 0.78 % at most and the smooth ones not at all.
+   A save test at normal speed on the NVIDIA chip: Maximum Remix with the settings of the desktop's one freeze (`auto`,
+   which took Vulkan, `gpu_gl = 1`, scale 4) and copies of its cards ran 28 minutes of game time through 6 level runs with
+   a save after each; all 6 saves showed their 20 seconds without a flip, there was no `[watchdog]` report, the card
+   changed in 7 bytes as after a completed save on the desktop, and the game held full speed (1800 flips a minute). The run
+   was stopped by its time limit, so it left no `[exit]` report. Speed, from how far each 150-second `--turbo` run got (one run each, nothing else measured): on
+   NVIDIA the GPU picture ran further than the CPU picture under both renderers (about 490 against 352 seconds of game
+   time); on Intel Vulkan's GPU picture did too (441), but OpenGL's fell behind the CPU picture (263 against 350), and at
+   4x OpenGL reached 102 seconds of game time in 90 where Vulkan reached 210. Not done on the laptop: nobody watched the
+   runs or played by hand; one scripted level per game; FSR in the window was not compared on Intel; fullscreen, a gamepad
+   and sound were not checked.
+   Not done: Vulkan on Linux on a graphics card (lavapipe is a CPU driver), Linux on real hardware with Mesa's own drivers
+   or NVIDIA's, and a Steam Deck.
 7. **Make Vulkan the default presentation where it works** (not estimated). A new setting, `renderer = auto | vulkan | gl`,
    picks the presentation and GPU-renderer backend: `auto` uses Vulkan when the device supports what is needed and falls back
    otherwise; the other two force one. It does not change what `gpu_gl` means: the CPU renderer stays the default picture, and
@@ -222,9 +259,13 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    renderer (68 of 68). `vktest` passes in its four modes with this code. About `nopad`: the Win32 front end reads a gamepad
    whether or not its window has the focus, and two earlier rounds of such runs came out disturbed (in the first the last six
    or seven shots of each comparison differed, in the second nearly all); one gamepad was connected, nobody watched it, and
-   every round with `nopad` was clean. Not done: the picture the software stretch shows after a step down was not compared;
-   `auto` as the default was not run on NVIDIA or Intel graphics, so a Vulkan driver there that starts but draws wrongly is
-   what a new user, or one coming from a release, would now get, with `renderer = gl` as the way back.
+   every round with `nopad` was clean. On the laptop of phase 6 (22 Nov) `auto` with `gpu_gl = 1` printed `[video]
+   renderer = auto: using Vulkan` and drew the 2x picture on the card on the NVIDIA chip (Freestyle BMX) and, in the Intel
+   test build, on the Intel chip (both games); with `gpu_gl = 0` it used Vulkan on NVIDIA too. Those `auto` runs were short
+   and their shots were not compared; the `renderer = vulkan` runs beside them were (phase 6). Not done: the picture the
+   software stretch shows after a step down was not compared; `auto` was run on one NVIDIA and one Intel chip only, both in
+   one laptop, so on other drivers a Vulkan path that starts but draws wrongly is still what a new user, or one coming from
+   a release, would get, with `renderer = gl` as the way back.
 
 Rough total: 5 to 8 weeks of focused work for phases 1 to 6 if the hardware is at hand, phase 3 being the optional one.
 

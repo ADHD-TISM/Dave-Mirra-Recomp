@@ -495,13 +495,11 @@ void bios_report_stall(const char *tag, int all) {
         if (!bios_ring[i].tbl) continue;
         fprintf(stderr, "[%s]   %c(%02x) a0=%08x a1=%08x a2=%08x ra=%08x\n", tag, bios_ring[i].tbl, bios_ring[i].fn, bios_ring[i].a0, bios_ring[i].a1, bios_ring[i].a2, bios_ring[i].ra);
     }
-    /* how many records the list below has, and how many more there were: the ring keeps the last 256 only */
-    unsigned made = all ? mc_ring_n : mc_ring_n - mc_ring_shown, kept = made > 256 ? 256 : made;
-    char part[40] = "";   /* said only when the list is shorter than the count */
-    if (made > kept) snprintf(part, sizeof part, ", the last %u listed", kept);
+    /* how many records there were; the ring keeps the last 256 only, and the header says so when the list is shorter than the count */
+    unsigned made = all ? mc_ring_n : mc_ring_n - mc_ring_shown;
     fprintf(stderr, "[%s] card events: %u queued, %u delivered (%u of them to no waiting event), %u dropped, at most %d waiting; now vblank %u. Card records %s: %u%s%s\n",
             tag, mc_n_queued, mc_n_delivered, mc_n_unheard, mc_n_dropped, mc_most, mc_vbl,
-            all || !mc_ring_shown ? "since the start" : "since the report before", made, part, made ? " (oldest first):" : "");
+            all || !mc_ring_shown ? "since the start" : "since the report before", made, made > 256 ? ", the last 256 listed" : "", made ? " (oldest first):" : "");
     unsigned lines = 0;
     for (unsigned k = 0; k < 256; k++) {
         unsigned seq = mc_ring_n - 256 + k, i = seq & 255; u32 a = mc_ring[i].a, b = mc_ring[i].b, c = mc_ring[i].c;
