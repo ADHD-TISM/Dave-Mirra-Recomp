@@ -495,8 +495,10 @@ void bios_report_stall(const char *tag, int all) {
         if (!bios_ring[i].tbl) continue;
         fprintf(stderr, "[%s]   %c(%02x) a0=%08x a1=%08x a2=%08x ra=%08x\n", tag, bios_ring[i].tbl, bios_ring[i].fn, bios_ring[i].a0, bios_ring[i].a1, bios_ring[i].a2, bios_ring[i].ra);
     }
-    fprintf(stderr, "[%s] card events: %u queued, %u delivered (%u of them to no waiting event), %u dropped, at most %d waiting; now vblank %u. %s (oldest first):\n",
-            tag, mc_n_queued, mc_n_delivered, mc_n_unheard, mc_n_dropped, mc_most, mc_vbl, all ? "Last card records" : "Card records since the last report");
+    /* how many records the list below has, and how many more there were: the ring keeps the last 256 only */
+    unsigned made = all ? mc_ring_n : mc_ring_n - mc_ring_shown, kept = made > 256 ? 256 : made;
+    fprintf(stderr, "[%s] card events: %u queued, %u delivered (%u of them to no waiting event), %u dropped, at most %d waiting; now vblank %u. Card records %s: %u, the last %u listed (oldest first):\n",
+            tag, mc_n_queued, mc_n_delivered, mc_n_unheard, mc_n_dropped, mc_most, mc_vbl, all ? "since the start" : "since the report before", made, kept);
     unsigned lines = 0;
     for (unsigned k = 0; k < 256; k++) {
         unsigned seq = mc_ring_n - 256 + k, i = seq & 255; u32 a = mc_ring[i].a, b = mc_ring[i].b, c = mc_ring[i].c;
