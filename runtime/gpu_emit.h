@@ -62,7 +62,7 @@ static inline void gv_emit(GpuVerts *g, const GPrim *p, int scale) {
     switch (p->kind) {
     case GK_TRI:
         for (int i = 0; i < 3; i++)   /* the picture is sampled at pixel corners, so corners sit half a pixel in */
-            gv_vert(g, p, fl, p->vx[i] * s + 0.5f, p->vy[i] * s + 0.5f, (float)p->vr[i], (float)p->vg[i], (float)p->vb[i], (float)p->vu[i], (float)p->vv[i]);
+            gv_vert(g, p, fl, (p->vx[i] + p->vfx[i] * 0.25f) * s + 0.5f, p->vy[i] * s + 0.5f, (float)p->vr[i], (float)p->vg[i], (float)p->vb[i], (float)p->vu[i], (float)p->vv[i]);
         break;
     case GK_RECT: {
         float ul = (float)p->u0, vt = (float)p->v0, ur, vb;

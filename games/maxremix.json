@@ -10,5 +10,7 @@
   },
   "movie": "PLAYMOV.EXE",
   "fullcost": ["8005a290"],
+  "view_cone": "8007f9a8",
+  "hud_slot": 1529,
   "extras": "games/maxremix"
 }

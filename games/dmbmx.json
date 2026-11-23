@@ -10,5 +10,7 @@
   },
   "movie": "PLAYMOV.EXE",
   "fullcost": ["80059a9c"],
+  "view_cone": "8007e5bc",
+  "hud_slot": 1529,
   "extras": "games/dmbmx"
 }

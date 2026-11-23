@@ -3,31 +3,38 @@
    game stands still: host_frame does not return, so no guest code runs, no sound is made and no game time passes. The
    menu is drawn by the CPU into its own 640x480 picture, over a darkened copy of the game's last frame, and shown through
    the backend's ordinary CPU-picture path, so it looks the same under Vulkan, OpenGL and the software stretch, with the
-   GPU renderer or without. A setting changed here takes effect at once and is written to dmrecomp.ini when the menu
-   closes: only its own line is replaced, the rest of the file is kept. */
+   GPU renderer or without. A setting changed here takes effect at once and is written to dmrecomp.ini at once too (the
+   window can be closed with the menu open): only its own line is replaced, the rest of the file is kept. */
 #include "font8x8.h"
 
 #define MENU_W 640
 #define MENU_H 480
 static u32 *menu_bg, *menu_px;      /* the darkened game picture, and the picture shown */
 
-/* replace the line "name = ..." in the settings file, or add it; every other line is kept as it is */
+/* Replace the line "name = ..." in the settings file, or add it; every other line is kept as it is. A second line with the
+   same name is dropped: the game reads the file top to bottom, so that one would win at the next start. The new text is
+   written beside the file and then takes its place in one step (plat_replace_file), so there is no moment without a
+   settings file; when the old file cannot be read through, it is left alone. */
 static void config_store(const char *name, const char *val) {
     if (!config_path[0]) return;
     char tmp[530]; snprintf(tmp, sizeof tmp, "%s.new", config_path);
-    FILE *in = fopen(config_path, "r"), *out = fopen(tmp, "w");
+    errno = 0;
+    FILE *in = fopen(config_path, "r");
+    if (!in && errno != ENOENT) { fprintf(stderr, "[menu] could not read %s; %s is not saved\n", config_path, name); return; }
+    FILE *out = fopen(tmp, "w");
     if (!out) { if (in) fclose(in); return; }
     char line[512]; int done = 0, line_start = 1, ends_nl = 1;
     while (in && fgets(line, sizeof line, in)) {
         size_t len = strlen(line);
-        if (!done && line_start) {
-            char key[64]; const char *s = line; size_t k = 0;
-            while (*s == ' ' || *s == '\t') s++;
-            while (*s && *s != '=' && *s != ' ' && *s != '\t' && *s != '\n' && k < sizeof key - 1) key[k++] = *s++;
+        if (line_start) {
+            char key[64]; const char *q = line; size_t k = 0;
+            while (*q == ' ' || *q == '\t') q++;
+            while (*q && *q != '=' && *q != ' ' && *q != '\t' && *q != '\n' && k < sizeof key - 1) key[k++] = *q++;
             key[k] = 0;
-            while (*s == ' ' || *s == '\t') s++;
-            if (*s == '=' && !_stricmp(key, name)) {
-                fprintf(out, "%s = %s\n", name, val); done = 1;
+            while (*q == ' ' || *q == '\t') q++;
+            if (*q == '=' && !_stricmp(key, name)) {
+                if (!done) fprintf(out, "%s = %s\n", name, val);
+                done = 1;
                 while (len && line[len - 1] != '\n' && fgets(line, sizeof line, in)) len = strlen(line);   /* the rest of a very long line */
                 line_start = ends_nl = 1;
                 continue;
@@ -36,11 +43,13 @@ static void config_store(const char *name, const char *val) {
         fputs(line, out);
         line_start = ends_nl = len && line[len - 1] == '\n';
     }
+    int bad = in && ferror(in);
     if (!done) fprintf(out, "%s%s = %s\n", ends_nl ? "" : "\n", name, val);
     if (in) fclose(in);
-    if (fclose(out) != 0) { remove(tmp); return; }   /* the disk is full: the old file stays */
-    remove(config_path);
-    if (rename(tmp, config_path) != 0) fprintf(stderr, "[menu] could not write %s\n", config_path);
+    if (fclose(out) != 0 || bad || !plat_replace_file(tmp, config_path)) {   /* a full disk, a read error: the old file stays */
+        remove(tmp);
+        fprintf(stderr, "[menu] could not write %s; %s is not saved\n", config_path, name);
+    }
 }
 
 /* ---- drawing ---- */
@@ -69,7 +78,7 @@ static int menu_wide_at(void) {   /* which of the shapes is set; -1 for one type
 /* the entry's value as shown, and (ini) as the settings file spells it; "" for an entry without a value */
 static const char *menu_value(int item, int ini) {
     switch (item) {
-    case MI_SCALE: return g_gpu_scale == 1 ? (ini ? "1" : "1x (original)") : g_gpu_scale == 2 ? (ini ? "2" : "2x") : (ini ? "4" : "4x");
+    case MI_SCALE: return g_gpu_scale == 1 ? (ini ? "1" : "1x") : g_gpu_scale == 2 ? (ini ? "2" : "2x") : (ini ? "4" : "4x");   /* short: the label is long */
     case MI_FILTER: return g_filter ? "smooth" : ini ? "nearest" : "sharp";
     case MI_ASPECT: return g_aspect ? "stretch" : "4:3";
     case MI_FSR: return g_upscale ? (ini ? "fsr" : "on") : "off";
@@ -89,7 +98,18 @@ static void menu_change(int item, int dir) {   /* dir: +1 the next value, -1 the
     case MI_FILTER: g_filter = !g_filter; break;
     case MI_ASPECT: g_aspect = !g_aspect; break;
     case MI_FSR: g_upscale = !g_upscale; break;
-    case MI_WIDE: { int i = menu_wide_at(); i = i < 0 ? 0 : (i + dir + 4) % 4; ws_ratio = menu_wide[i].ratio; break; }
+    case MI_WIDE: {
+        int i = menu_wide_at();
+        if (i >= 0) i = (i + dir + 4) % 4;
+        else {   /* a shape typed into the settings file: the nearest of ours on the side asked for, else off */
+            i = 0;
+            for (int k = 1; k < 4; k++) {
+                double d = (menu_wide[k].ratio - ws_ratio) * dir;
+                if (d > 0 && (!i || d < (menu_wide[i].ratio - ws_ratio) * dir)) i = k;
+            }
+        }
+        ws_ratio = menu_wide[i].ratio; break;
+    }
     case MI_FULL: set_fullscreen(!g_fullscreen); break;
     case MI_RUMBLE: g_rumble = !g_rumble; break;
     }
@@ -149,7 +169,7 @@ static u32 menu_buttons(void) {
         if (s.ly < -16000) b |= MB_DOWN;
         if (s.lx < -16000) b |= MB_LEFT;
         if (s.lx > 16000) b |= MB_RIGHT;
-        menu_pad_combo = (s.buttons & HP_LS) && (s.buttons & HP_RS);
+        menu_pad_combo = (s.buttons & HP_LS) && (s.buttons & HP_RS) && plat_focused();
     }
     r = b;
     if (key(HK_UP)) r |= MB_UP;
@@ -176,7 +196,7 @@ static void menu_run(unsigned frame, const char *test) {
     menu_capture = 1; present(); menu_capture = 0;   /* fb now holds the game's picture, also when the graphics card drew it */
     for (int y = 0; y < MENU_H; y++) for (int x = 0; x < MENU_W; x++)
         menu_bg[y * MENU_W + x] = (fb[(y * fb_h / MENU_H) * fb_w + x * fb_w / MENU_W] >> 2) & 0x3f3f3fu;
-    int sel = 0, quit = 0; unsigned changed = 0;
+    int sel = 0, quit = 0;
     u32 prev = test ? 0 : menu_buttons();   /* what is held now does not count as a press */
     for (;;) {
         u32 hit;
@@ -205,11 +225,10 @@ static void menu_run(unsigned frame, const char *test) {
             if (sel == MI_EXIT) { quit = 1; break; }
             dir = 1;
         }
-        if (dir && menu_ini[sel]) { menu_change(sel, dir); changed |= 1u << sel; }
+        if (dir && menu_ini[sel]) { menu_change(sel, dir); config_store(menu_ini[sel], menu_value(sel, 1)); }   /* saved at once */
         if (hit & (MB_TRIANGLE | MB_SELECT | MB_MENU)) break;
         if (!test) { menu_draw(sel); menu_show(); plat_sleep_ms(16); }
     }
-    for (int i = 0; i < MI_COUNT; i++) if (changed & (1u << i)) config_store(menu_ini[i], menu_value(i, 1));
     if (quit) host_quit();
     /* the button that closed the menu must not reach the game: wait until nothing is held (2 seconds at most) */
     for (int n = 0; !test && n < 120 && menu_buttons(); n++) { plat_pump(); plat_sleep_ms(16); }

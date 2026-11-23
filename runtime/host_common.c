@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <errno.h>
 #include <math.h>
 #include "hw.h"
 #include "host.h"
@@ -282,18 +283,22 @@ static u8 axis(int v, int flip) { v = (flip ? -v : v) / 256 + 128; return (u8)(v
 
 /* mouse -> pad buttons for player 1 (added to b, active-high) */
 static void mouse_input(u16 *b) {
-    static int wheel_hold[2];   /* frames left in the press a notch makes */
     int mb, wheel;
     plat_mouse(&mb, &wheel);
     if (test_nopad) mb = wheel = 0;   /* a scripted run: a pointer over the window must not disturb it */
     mouse_held = mb;
     for (int i = 0; i < 5; i++) if ((mb & (1 << i)) && mousemap[i] >= 0) *b |= (u16)(1 << mousemap[i]);
-    static int side[2];   /* this notch was turned with left Shift held: it goes left/right instead */
-    if (wheel > 0) { wheel_hold[0] = 6; side[0] = key(HK_LSHIFT); } else if (wheel < 0) { wheel_hold[1] = 6; side[1] = key(HK_LSHIFT); }   /* a notch is a short press */
+    /* Each notch is a short press of its own: 6 frames down, then 4 up, so that the game sees every one. Notches that
+       come faster than that wait their turn (8 at most). side: the press was started with left Shift held, and goes
+       left or right instead. */
+    static int waiting[2], hold[2], gap[2], side[2];
+    if (wheel > 0) waiting[0] += wheel; else if (wheel < 0) waiting[1] -= wheel;
     for (int i = 0; i < 2; i++) {
+        if (waiting[i] > 8) waiting[i] = 8;
+        if (!hold[i] && !gap[i] && waiting[i]) { waiting[i]--; hold[i] = 6; gap[i] = 4; side[i] = key(HK_LSHIFT); }
         int bit = side[i] ? (i ? 5 : 7) : mousemap[MS_WHEEL_UP + i];   /* Shift + wheel: up = left, down = right */
-        if (wheel_hold[i] > 0 && bit >= 0) *b |= (u16)(1 << bit);
-        if (wheel_hold[i] > 0) wheel_hold[i]--;
+        if (hold[i]) { if (bit >= 0) *b |= (u16)(1 << bit); hold[i]--; }
+        else if (gap[i]) gap[i]--;
     }
 }
 
@@ -316,7 +321,7 @@ static void poll_input(void) {
         pad_found[n] = plat_pad(n, &s);
         if (!pad_found[n]) continue;
         for (int i = 0; i < 16; i++) if (xsrc(&s, padmap[i])) b[n] |= (u16)(1 << i);
-        if (n == 0 && (s.buttons & HP_LS) && (s.buttons & HP_RS)) menu_held = 1;
+        if (n == 0 && (s.buttons & HP_LS) && (s.buttons & HP_RS) && plat_focused()) menu_held = 1;   /* a gamepad is read without the focus too */
         if (g_pad_analog[n]) {
             pad_axes[n][0] = axis(s.rx, 0); pad_axes[n][1] = axis(s.ry, 1);
             pad_axes[n][2] = axis(s.lx, 0); pad_axes[n][3] = axis(s.ly, 1);
@@ -587,6 +592,40 @@ static void debug_frame(unsigned frame) {
         else mw8(pokes[i].addr, (u8)pokes[i].val);
     }
 }
+#ifdef GAME_VIEW_CONE
+/* Widescreen, the other half. The squeeze in the GTE (g_ws_kq) widens what is drawn, but the game leaves out, before it
+   draws, every object whose bounding sphere is outside its own 4:3 view cone, so things at the sides of a wide picture
+   appeared and vanished. The game keeps the cone in three words of its camera record, set when the field of view
+   changes (Freestyle BMX: main_8003edf4, read by the sphere test main_8003f864 and by main_80042660): the slope x/z of
+   the side planes at GAME_VIEW_CONE, its inverse 8 bytes on, and sqrt(slope^2 + 1) 16 bytes on, all in 20.12 fixed
+   point. With widescreen on, those three are widened by the same factor as the picture, once a frame, here. The
+   game's own values are remembered and put back when widescreen is switched off; words that do not look like a cone
+   (before the game has set one) are left alone, and with widescreen off nothing is ever written. */
+static void ws_view_cone(void) {
+    static s32 game[3], ours[3]; static int have;
+    u8 *p = psx_ram + (GAME_VIEW_CONE & 0x1fffffu);
+    s32 cur[3], want[3];
+    for (int i = 0; i < 3; i++) memcpy(&cur[i], p + 8 * i, 4);
+    if (!have || memcmp(cur, ours, sizeof cur)) {   /* not what was left here: the game has set a cone */
+        double xs = cur[0], one = 4096.0 * 4096.0;
+        have = cur[0] > 0 && fabs(xs * cur[1] - one) < one / 50 && fabs(cur[2] - sqrt(xs * xs + one)) < 64;
+        if (!have) return;
+        memcpy(game, cur, sizeof game);
+    }
+    memcpy(want, game, sizeof want);
+    if (ws_ratio > 0) {
+        double wide = ws_ratio / (4.0 / 3.0), xs = game[0] * wide;
+        want[0] = (s32)(xs + 0.5); want[1] = (s32)(game[1] / wide + 0.5); want[2] = (s32)(sqrt(xs * xs + 4096.0 * 4096.0) + 0.5);
+    }
+    if (memcmp(want, cur, sizeof want)) {
+        static int said;
+        if (!said && ws_ratio > 0) { said = 1; fprintf(stderr, "[video] widescreen: the game's view cone is widened too (slope %d to %d)\n", game[0], want[0]); }
+        for (int i = 0; i < 3; i++) memcpy(p + 8 * i, &want[i], 4);
+    }
+    memcpy(ours, want, sizeof ours);
+}
+#endif
+
 void host_frame(void) {
     static unsigned frame_no;
     static double t_host, t_last_exit, t_guest;
@@ -639,6 +678,9 @@ void host_frame(void) {
         if (ws_ratio > 0 && n > 15) hot_until = frame_no + 15;
         ws_on = ws_ratio > 0 && frame_no < hot_until;
         g_ws_kq = ws_on ? (int)(65536.0 * (4.0 / 3.0) / ws_ratio + 0.5) : 65536;
+#ifdef GAME_VIEW_CONE
+        ws_view_cone();
+#endif
     }
     static int skip;
     if (!turbo || (++skip & 7) == 0) present();
@@ -651,7 +693,7 @@ void host_frame(void) {
     if (menu_want || (menu_test_keys && frame_no == menu_test_frame)) {   /* the game stands still until the menu is closed */
         int asked = menu_want; menu_want = 0;
         menu_run(frame_no, asked ? NULL : menu_test_keys);
-        menu_want = 0; last_frame = plat_now_ms();
+        menu_want = 0; last_frame = t_enter = plat_now_ms();   /* the pause is neither game time nor host time */
     }
     t_last_exit = plat_now_ms(); t_host += t_last_exit - t_enter;
     if (turbo) { last_frame = plat_now_ms(); return; }

@@ -108,6 +108,10 @@ def main(argv):
                 '#define GAME_SERIAL "%s"\n#define GAME_EXE "%s"\n'
                 '#define GAME_FILE "%s"   /* the name as it can appear in a Windows file name */\n'
                 % (g['id'], g['name'], g['serial'], g['exe'], g['name'].replace(':', ' -')))
+        if g.get('view_cone'):   # where the game keeps its view cone: widescreen widens it (ws_view_cone in host_common.c)
+            f.write('#define GAME_VIEW_CONE 0x%su\n' % g['view_cone'])
+        if g.get('hud_slot'):    # the drawing-list slot from which everything is flat: widescreen keeps its shape (mem.c, gpu.c)
+            f.write('#define GAME_HUD_SLOT %d\n' % int(g['hud_slot']))
     print('translated %s (%s)' % (g['name'], g['serial']))
     return 0
 

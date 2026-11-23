@@ -141,8 +141,27 @@ def driver(win, n=0):
     pump(1.0)
     check("a line only the first game's file has does not reach the second", val("maxremix", "rumble") == "0" and val("maxremix", "foo") is None,
           "rumble %r foo %r" % (val("maxremix", "rumble"), val("maxremix", "foo")))
-    check("nor the first game's typed values", val("maxremix", "key_cross") == "Z, K" and val("maxremix", "window_size") == "auto",
+    # a save writes only what was changed here, so these two lines are not in the second file at all
+    check("nor the first game's typed values", val("maxremix", "key_cross") in (None, "Z, K") and val("maxremix", "window_size") in (None, "auto"),
           "key_cross %r window_size %r" % (val("maxremix", "key_cross"), val("maxremix", "window_size")))
+    check("a save writes only the changed setting", ini("maxremix") == "scale = 4\nrumble = 0\n", repr(ini("maxremix")))
+    # the game writes this file too (its in-game menu): what it changed must survive the launcher's next save
+    time.sleep(0.05)
+    open(os.path.join(T, "game", "maxremix", "dmrecomp.ini"), "w", newline="\n").write("scale = 2\nrumble = 0\nfilter = smooth\n")
+    pick("Rumble", "1")
+    pump(1.0)
+    check("a change made by the game survives a save here", val("maxremix", "scale") == "2" and val("maxremix", "filter") == "smooth" and val("maxremix", "rumble") == "1",
+          repr(ini("maxremix")))
+    check("and is shown", win.getvar(field("Internal 3D resolution")[1]) == "2" and win.getvar(field("Picture filter")[1]) == "smooth",
+          "%r %r" % (win.getvar(field("Internal 3D resolution")[1]), win.getvar(field("Picture filter")[1])))
+    time.sleep(0.05)
+    open(os.path.join(T, "game", "maxremix", "dmrecomp.ini"), "w", newline="\n").write("scale = 1\nrumble = 1\nfilter = nearest\n")
+    pick("Internal 3D resolution", "4")                      # changed in both places: the choice made here counts
+    pump(1.0)
+    check("a setting changed in both places keeps the launcher's value", val("maxremix", "scale") == "4" and val("maxremix", "filter") == "nearest",
+          repr(ini("maxremix")))
+    pick("Internal 3D resolution", "2")
+    pump(1.0)
     pick("Graphics API", "vulkan")
     type_in("Window size", "800x600", False)                 # typed in full, the cursor still in the field
     win.tk.call(win.protocol("WM_DELETE_WINDOW"))            # the window is closed before the timer runs out

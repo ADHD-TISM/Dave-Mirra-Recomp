@@ -142,10 +142,13 @@ static void pad_removed(SDL_JoystickID id) {
 }
 static int mouse_buttons, mouse_wheel_acc;
 void plat_mouse(int *buttons, int *wheel) {
-    if (SDL_GetMouseFocus() != win) { *buttons = *wheel = 0; mouse_wheel_acc = 0; return; }
+    /* the pointer over the window is not enough: a window behind others gets wheel and button events too */
+    if (SDL_GetMouseFocus() != win || SDL_GetKeyboardFocus() != win) { *buttons = *wheel = 0; mouse_wheel_acc = 0; return; }
     *buttons = mouse_buttons; *wheel = mouse_wheel_acc;
     mouse_wheel_acc = 0;
 }
+int plat_focused(void) { return SDL_GetKeyboardFocus() == win; }
+int plat_replace_file(const char *from, const char *to) { return rename(from, to) == 0; }   /* rename replaces in one step here */
 void plat_pump(void) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {

@@ -1715,9 +1715,47 @@ def gui(root_dir, pinned=False, notice=None):
     autosave = {"job": None, "quiet": False}
     watched = set()
 
+    # The game writes this file too (its in-game menu), so the launcher is not the only writer. disk is what the file
+    # held when the launcher last read or wrote it: a save writes only the settings that differ from it, and what the
+    # game changed meanwhile is taken over first (take_file_changes), so neither undoes the other.
+    disk = dict(cur)
+    disk_time = [None]
+
+    def file_time():
+        try:
+            return os.stat(settings_ini[0]).st_mtime_ns
+        except OSError:
+            return None
+
+    def take_file_changes():
+        """Show what the file says now, for every setting that was not changed here since the launcher last looked.
+        One changed in both places keeps the launcher's value, and the next save writes it."""
+        if file_time() == disk_time[0]:
+            return
+        new = read_ini(settings_ini[0])
+        was = autosave["quiet"]
+        autosave["quiet"] = True
+        try:
+            for k, v in new.items():
+                if disk.get(k) == v:
+                    continue
+                if k in svars:
+                    here = committed.get(k, "") if k in typed else svars[k].get().strip()
+                    if here != disk.get(k, ""):
+                        continue
+                    svars[k].set(v)
+                    if k in typed:
+                        committed[k] = v
+                disk[k] = v
+        finally:
+            autosave["quiet"] = was
+        disk_time[0] = file_time()
+
     def save_settings():
-        """Write the settings. A value that is not valid (a size or a key half typed) is left as the file has it."""
+        """Write the settings that were changed here. A value that is not valid (a size or a key half typed) is left as
+        the file has it."""
         autosave["job"] = None
+        take_file_changes()
         vals = {}
         for k, var in svars.items():
             v = committed.get(k, "") if k in typed else var.get().strip()
@@ -1726,8 +1764,12 @@ def gui(root_dir, pinned=False, notice=None):
         bad = sorted(k for k, v in vals.items() if not valid_setting(k, v))
         for k in bad:
             del vals[k]
+        vals = {k: v for k, v in vals.items() if disk.get(k) != v}
         try:
-            write_ini(settings_ini[0], vals)
+            if vals or not os.path.exists(settings_ini[0]):
+                write_ini(settings_ini[0], vals)
+            disk.update(vals)
+            disk_time[0] = file_time()
             with C.lock:
                 C.d["debug_console"] = bool(dc.get())
                 C.d["debug_flags"] = [f for f, v in dflags.items() if v.get()]
@@ -1795,6 +1837,9 @@ def gui(root_dir, pinned=False, notice=None):
         try:
             settings_ini[0] = P.ini
             new = read_ini(P.ini)
+            disk.clear()
+            disk.update(new)
+            disk_time[0] = file_time()
             for k in [k for k in svars if k not in SCHEMA and k not in new]:   # a line only the other game's file has
                 del svars[k]
                 watched.discard(k)
@@ -1820,6 +1865,9 @@ def gui(root_dir, pinned=False, notice=None):
     edits_lbl.pack(side="left", padx=8)
     watch_settings()
     sync_typed()
+    disk_time[0] = file_time()
+    # back from the game: show what its menu changed (a save that is waiting does this itself)
+    win.bind("<FocusIn>", lambda e: take_file_changes() if e.widget is win and autosave["job"] is None else None, add="+")
     dc.trace_add("write", settings_changed)
     for _v in dflags.values():
         _v.trace_add("write", settings_changed)

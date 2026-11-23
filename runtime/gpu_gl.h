@@ -11,6 +11,7 @@ enum { GK_TRI, GK_RECT, GK_PIX, GK_FILL, GK_BLIT, GK_COPY };
 typedef struct {
     int kind;
     int vx[3], vy[3], vr[3], vg[3], vb[3], vu[3], vv[3];   /* GK_TRI: corners, colours, texture coordinates */
+    int vfx[3];                                             /* GK_TRI: quarters of a pixel to add to vx (widescreen, flat polygons); else 0 */
     int x, y, w, h;                    /* the box; GK_PIX: one pixel; GK_COPY: the destination */
     int sx, sy;                        /* GK_COPY: the source corner */
     int u0, v0, flipx, flipy, r, g, b; /* GK_RECT: first texel, flips, colour */

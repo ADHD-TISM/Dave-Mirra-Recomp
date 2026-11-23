@@ -38,7 +38,7 @@ static const int vk_of[HK_COUNT - 256] = {
     [HK_MINUS - 256] = VK_OEM_MINUS, [HK_EQUALS - 256] = VK_OEM_PLUS, [HK_LBRACKET - 256] = VK_OEM_4, [HK_RBRACKET - 256] = VK_OEM_6,
     [HK_BACKSLASH - 256] = VK_OEM_5, [HK_QUOTE - 256] = VK_OEM_7, [HK_GRAVE - 256] = VK_OEM_3,
     [HK_NUMADD - 256] = VK_ADD, [HK_NUMSUB - 256] = VK_SUBTRACT, [HK_NUMMUL - 256] = VK_MULTIPLY, [HK_NUMDIV - 256] = VK_DIVIDE,
-    [HK_NUMDOT - 256] = VK_DECIMAL,   /* no HK_NUMENTER: Win32 reports it as the main Enter key */
+    [HK_NUMDOT - 256] = VK_DECIMAL, [HK_NUMENTER - 256] = VK_RETURN,   /* Win32 reports the keypad's Enter as the main one: "numenter" is either */
     [HK_F1 - 256] = VK_F1, [HK_F2 - 256] = VK_F2, [HK_F3 - 256] = VK_F3, [HK_F4 - 256] = VK_F4, [HK_F5 - 256] = VK_F5,
     [HK_F6 - 256] = VK_F6, [HK_F7 - 256] = VK_F7, [HK_F8 - 256] = VK_F8, [HK_F9 - 256] = VK_F9, [HK_F10 - 256] = VK_F10,
     [HK_F11 - 256] = VK_F11, [HK_F12 - 256] = VK_F12 };
@@ -146,7 +146,14 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_MOUSEWHEEL:
         mouse_wheel_acc += GET_WHEEL_DELTA_WPARAM(w);
         return 0;
-    case WM_KILLFOCUS: mouse_buttons = 0; break;
+    case WM_KILLFOCUS: mouse_buttons = 0; ReleaseCapture(); break;
+    case WM_CAPTURECHANGED: mouse_buttons = 0; break;   /* the capture was taken away: the releases will not arrive */
+    case WM_MOUSEACTIVATE:   /* the click that brings the window to the front is not a press in the game */
+        if (GetForegroundWindow() != h && LOWORD(l) == HTCLIENT) return MA_ACTIVATEANDEAT;
+        break;
+    case WM_SYSCOMMAND:   /* F10 or Alt alone would put the window in menu mode, and the next arrow key would open the system menu and stop the game */
+        if ((w & 0xfff0) == SC_KEYMENU && l == 0) return 0;
+        break;
     case WM_CLOSE: host_quit(); return 0;
     case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h, &ps); EndPaint(h, &ps); return 0; }
     case WM_ERASEBKGND: return 1;
@@ -241,6 +248,8 @@ void plat_soft_present(const uint32_t *fb, int fb_w, int fb_h, int cw, int ch, i
     if (smooth) SetBrushOrgEx(dc, 0, 0, NULL);
     StretchDIBits(dc, (cw - w) / 2, (ch - h) / 2, w, h, 0, 0, fb_w, fb_h, fb, &bi, DIB_RGB_COLORS, SRCCOPY);
 }
+int plat_focused(void) { return GetForegroundWindow() == wnd; }
+int plat_replace_file(const char *from, const char *to) { return MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0; }
 void plat_mouse(int *buttons, int *wheel) {
     if (GetForegroundWindow() != wnd) { *buttons = *wheel = 0; mouse_wheel_acc = 0; return; }
     *buttons = mouse_buttons;

@@ -104,8 +104,11 @@ Command line: `--scale N`, `--fullscreen`, `--console-cpu`, and
 file.
 
 `widescreen` (experimental) squeezes the game's 3D projection horizontally and stretches the picture to the wider shape, so 3D keeps its
-proportions and the sides show more of the scene. It applies only while 3D is being drawn; menus stay 4:3. Text and other 2D elements drawn over a 3D
-scene (the HUD, pause and finish menus) are stretched wide, and anything the game itself leaves out beyond its normal view can pop in at the edges.
+proportions and the sides show more of the scene. It applies only while 3D is being drawn; menus stay 4:3. The HUD and the texts drawn over a
+3D scene (the timer, the score, the pause and finish menus) keep their shape too: they are squeezed by the same amount, towards the middle of
+the picture, so at 16:9 they sit inside its middle three quarters. A flat item that spans the whole width (a fade) is stretched, so that it
+covers the picture. The game leaves out objects that are outside its own view before it draws; that view is widened to match, so objects at
+the sides no longer appear and vanish. Anything the game leaves out by another rule (distance, for one) is unchanged.
 
 `upscale = fsr` runs the picture through FSR 1 (edge-directed upscaling plus sharpening, as two OpenGL shaders) when the window is 
 larger than the game's internal picture; if the graphics driver lacks the needed OpenGL features it falls back to the plain picture. 

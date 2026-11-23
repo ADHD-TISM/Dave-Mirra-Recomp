@@ -106,7 +106,7 @@ static inline DS ds_now(void) {
     return s;
 }
 typedef struct { int tx, ty, depth, cx, cy; } TexInfo;
-typedef struct { int x, y, r, g, b, u, v; } Vtx;
+typedef struct { int x, y, r, g, b, u, v; int fx; } Vtx;   /* fx: quarters of a pixel to add to x in the 2x / 4x picture (widescreen, flat polygons); else 0 */
 
 static inline void put(const DS *s, u16 *d, u16 c, int semi, int mode) {
     if (s->check_mask && (*d & 0x8000)) return;
@@ -257,8 +257,9 @@ static void tri(const DS *ds, const Vtx *a0, const Vtx *a1, const Vtx *a2, int t
         if (vv[i]->y < miny) miny = vv[i]->y; if (vv[i]->y > maxy) maxy = vv[i]->y;
     }
     if (maxx - minx >= 1024 || maxy - miny >= 512) return;
-    s0.x *= S; s0.y *= S; s1.x *= S; s1.y *= S; s2.x *= S; s2.y *= S;
-    minx *= S; maxx *= S; miny *= S; maxy *= S;
+    s0.x = s0.x * S + s0.fx * S / 4; s1.x = s1.x * S + s1.fx * S / 4; s2.x = s2.x * S + s2.fx * S / 4;   /* fx is 0 to 3: nothing at S = 1 */
+    s0.y *= S; s1.y *= S; s2.y *= S;
+    minx *= S; maxx = maxx * S + (S - 1); miny *= S; maxy *= S;
     s64 area = (s64)(v1->x - v0->x) * (v2->y - v0->y) - (s64)(v2->x - v0->x) * (v1->y - v0->y);
     if (area == 0) return;
     if (area < 0) { const Vtx *t = v1; v1 = v2; v2 = t; area = -area; }
@@ -367,6 +368,13 @@ static void hi_run(int id, int n) {
 
 static inline s32 sx11(u32 v) { return ((s32)(v << 21)) >> 21; }
 
+/* Widescreen: the 3D picture is squeezed in the GTE and stretched again by the host, which would make everything flat
+   that is drawn over it (the HUD, texts) wide. While gpu_2d is set (mem.c: the flat part of the game's drawing list),
+   polygons are squeezed here by the same factor, towards the middle of the drawing area, so they keep their shape on
+   screen. One that spans nearly the whole width (a fade, a darkening) is left alone: it has to cover the picture. */
+int gpu_2d;
+extern int g_ws_kq;
+
 static void cmd_polygon(void) {
     u32 c = fifo[0], op = c >> 24;
     int quad = op & 8, textured = op & 4, semi = op & 2, raw = op & 1, gouraud = op & 0x10;
@@ -377,13 +385,22 @@ static void cmd_polygon(void) {
         u32 col = (i > 0 && gouraud) ? fifo[k++] : fifo[0];
         u32 xy = fifo[k++];
         v[i].r = col & 0xff; v[i].g = (col >> 8) & 0xff; v[i].b = (col >> 16) & 0xff;
-        v[i].x = sx11(xy) + g.ox; v[i].y = sx11(xy >> 16) + g.oy;
+        v[i].x = sx11(xy) + g.ox; v[i].y = sx11(xy >> 16) + g.oy; v[i].fx = 0;
         if (textured) {
             u32 uv = fifo[k++];
             v[i].u = uv & 0xff; v[i].v = (uv >> 8) & 0xff;
             if (i == 0) clut = uv >> 16;
             if (i == 1) tpage = uv >> 16;
         } else v[i].u = v[i].v = 0;
+    }
+    if (gpu_2d) {
+        int lo = v[0].x, hi = lo, wide = g.dx2 - g.dx1 + 1, mid = g.dx1 + wide / 2;
+        for (int i = 1; i < n; i++) { if (v[i].x < lo) lo = v[i].x; if (v[i].x > hi) hi = v[i].x; }
+        if (hi - lo < wide - wide / 8)
+            for (int i = 0; i < n; i++) {   /* to a quarter of a pixel: the 2x and 4x pictures use the fraction, small text needs it */
+                int q = (int)(((s64)(v[i].x - mid) * 4 * g_ws_kq + 0x8000) >> 16);
+                v[i].x = mid + (q >> 2); v[i].fx = q & 3;
+            }
     }
     int semimode = (g.texpage >> 5) & 3;
     if (textured) {
@@ -409,7 +426,7 @@ static void cmd_polygon(void) {
             if (maxx - minx >= 1024 || maxy - miny >= 512) continue;   /* the hardware drops oversized primitives */
             GPrim p; memset(&p, 0, sizeof p);
             p.kind = GK_TRI;
-            for (int i = 0; i < 3; i++) { p.vx[i] = c3[i]->x; p.vy[i] = c3[i]->y; p.vr[i] = c3[i]->r; p.vg[i] = c3[i]->g; p.vb[i] = c3[i]->b; p.vu[i] = c3[i]->u; p.vv[i] = c3[i]->v; }
+            for (int i = 0; i < 3; i++) { p.vx[i] = c3[i]->x; p.vfx[i] = c3[i]->fx; p.vy[i] = c3[i]->y; p.vr[i] = c3[i]->r; p.vg[i] = c3[i]->g; p.vb[i] = c3[i]->b; p.vu[i] = c3[i]->u; p.vv[i] = c3[i]->v; }
             p.textured = textured != 0; p.raw = raw != 0; p.semi = semi != 0; p.semimode = semimode;
             p.dither = ds.dither && (gouraud || (textured && !raw));
             p.tx = ti.tx; p.ty = ti.ty; p.depth = ti.depth; p.cx = ti.cx; p.cy = ti.cy;

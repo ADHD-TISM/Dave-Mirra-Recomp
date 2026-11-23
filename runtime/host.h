@@ -52,6 +52,9 @@ void plat_pump(void);               /* handle window events; may call host_hotke
 /* The mouse over the window: buttons held (bit 0 left, 1 right, 2 middle, 3 and 4 the side buttons) and wheel notches
    since the last call (+ is away from the player). Both zero without focus. */
 void plat_mouse(int *buttons, int *wheel);
+int  plat_focused(void);            /* the window has the keyboard (it is the one in front) */
+/* put the file "from" in the place of "to" in one step: there is no moment without "to". 1 when done. */
+int  plat_replace_file(const char *from, const char *to);
 int  plat_key(int code);            /* key held, and the window has the keyboard */
 int  plat_pad(int n, HostPad *p);   /* gamepad n (0 or 1): fills p and returns 1 when it is connected */
 void plat_pad_rumble(int n, uint16_t large, uint16_t small);
