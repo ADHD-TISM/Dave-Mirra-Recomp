@@ -497,8 +497,11 @@ void bios_report_stall(const char *tag, int all) {
     }
     /* how many records the list below has, and how many more there were: the ring keeps the last 256 only */
     unsigned made = all ? mc_ring_n : mc_ring_n - mc_ring_shown, kept = made > 256 ? 256 : made;
-    fprintf(stderr, "[%s] card events: %u queued, %u delivered (%u of them to no waiting event), %u dropped, at most %d waiting; now vblank %u. Card records %s: %u, the last %u listed (oldest first):\n",
-            tag, mc_n_queued, mc_n_delivered, mc_n_unheard, mc_n_dropped, mc_most, mc_vbl, all ? "since the start" : "since the report before", made, kept);
+    char part[40] = "";   /* said only when the list is shorter than the count */
+    if (made > kept) snprintf(part, sizeof part, ", the last %u listed", kept);
+    fprintf(stderr, "[%s] card events: %u queued, %u delivered (%u of them to no waiting event), %u dropped, at most %d waiting; now vblank %u. Card records %s: %u%s%s\n",
+            tag, mc_n_queued, mc_n_delivered, mc_n_unheard, mc_n_dropped, mc_most, mc_vbl,
+            all || !mc_ring_shown ? "since the start" : "since the report before", made, part, made ? " (oldest first):" : "");
     unsigned lines = 0;
     for (unsigned k = 0; k < 256; k++) {
         unsigned seq = mc_ring_n - 256 + k, i = seq & 255; u32 a = mc_ring[i].a, b = mc_ring[i].b, c = mc_ring[i].c;
