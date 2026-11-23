@@ -215,11 +215,11 @@ no regressions against it (phases 1 and 3 change the OpenGL code on purpose; the
    limit, so it left no `[exit]` report. Speed, from how far each 150-second `--turbo` run got (one run each, nothing else
    measured): on NVIDIA the GPU picture ran further than the CPU picture under both renderers (about 490 against 352 seconds
    of game time); on Intel Vulkan's GPU picture did too (441), but OpenGL's fell behind the CPU picture (263 against 350), and
-   at 4x OpenGL reached 102 seconds of game time in 90 where Vulkan reached 210. The 4x figures are as they were written down
-   on the laptop: how long the 4x runs were, and why 10 shots were compared where 102 seconds of game time give about 20, was
-   not recorded. Not done on the laptop: nobody watched the runs or played by hand; one scripted level per game; FSR in the
-   window was not compared on Intel; fullscreen, a gamepad and sound were not checked; whether the Vulkan validation layer was
-   on is not recorded, so this phase's "no validation errors" is not shown for these two chips.
+   at 4x OpenGL reached 102 seconds of game time in 90 seconds where Vulkan reached 210. The 4x figures are as they were
+   written down on the laptop: which runs the 4x shots compared above came from, and why they are 10 where 102 seconds of game
+   time give about 20, were not recorded. Not done on the laptop: nobody watched the runs or played by hand; one scripted
+   level per game; FSR in the window was not compared on Intel; fullscreen, a gamepad and sound were not checked; whether the
+   Vulkan validation layer was on is not recorded, so this phase's "no validation errors" is not shown for these two chips.
    Not done: Vulkan on Linux on a graphics card (lavapipe is a CPU driver), Linux on real hardware with Mesa's own drivers
    or NVIDIA's, and a Steam Deck.
 7. **Make Vulkan the default presentation where it works** (not estimated). A new setting, `renderer = auto | vulkan | gl`,
