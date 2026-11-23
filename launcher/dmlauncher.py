@@ -948,8 +948,9 @@ def default_ini_text():
 _INI_LINE = re.compile(r"^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$")
 
 
-def read_ini(path):
-    """Settings in the file (name -> value); the defaults for anything missing."""
+def read_ini(path, strict=False):
+    """Settings in the file (name -> value); the defaults for anything missing. A file that is not there gives the
+    defaults, as the game sees it; one that cannot be read does too, unless strict: then OSError is raised."""
     vals = {s[0]: s[5] for s in SETTINGS}
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -960,8 +961,11 @@ def read_ini(path):
                 m = _INI_LINE.match(line)
                 if m:
                     vals[m.group(1).lower()] = m.group(2)
-    except OSError:
+    except FileNotFoundError:
         pass
+    except OSError:
+        if strict:
+            raise
     return vals
 
 
@@ -969,6 +973,13 @@ def valid_setting(key, val):
     s = SCHEMA.get(key)
     if not s:
         return True
+    if key == "volume":                 # as the game takes them: more than the lists here offer
+        return val.isdecimal() and val.isascii() and 0 <= int(val) <= 100
+    if key == "pad_menu":               # one control, or two different ones joined by +
+        parts = [p.strip().lower() for p in val.split("+")]
+        if len(parts) == 1:
+            return parts[0] in PADNAMES
+        return len(parts) == 2 and parts[0] != parts[1] and all(p in PADNAMES and p != "none" for p in parts)
     if s[3] in ("choice", "bool"):
         return val.lower() in [c.lower() for c in s[4]]
     if s[3] == "combo":
@@ -1739,12 +1750,9 @@ def gui(root_dir, pinned=False, notice=None):
         if file_time() == disk_time[0]:
             return
         try:                            # the game may be replacing the file this instant: look again at the next save or focus
-            open(settings_ini[0], "rb").close()
-        except FileNotFoundError:
-            pass                        # no file: the defaults, as the game sees it
+            new = read_ini(settings_ini[0], strict=True)
         except OSError:
             return
-        new = read_ini(settings_ini[0])
         was = autosave["quiet"]
         autosave["quiet"] = True
         try:

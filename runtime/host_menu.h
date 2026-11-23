@@ -169,7 +169,10 @@ static u32 menu_buttons(void) {
     HostPad s;
     menu_pad_combo = 0;
     if (!test_nopad && (pad_found[0] || probe++ % 60 == 0) && (pad_found[0] = plat_pad(0, &s)) != 0) {
-        for (int i = 0; i < 16; i++) if (xsrc(&s, padmap[i])) b |= (u16)(1 << i);
+        /* The controls that open the menu (pad_menu) mean only that in here, alone or together: with back+start, Start
+           would otherwise select the highlighted entry on the way to closing the menu, and that entry may be Exit. */
+        for (int i = 0; i < 16; i++)
+            if (padmap[i] != X_NONE && padmap[i] != pad_menu[0] && padmap[i] != pad_menu[1] && xsrc(&s, padmap[i])) b |= (u16)(1 << i);
         if (s.ly > 16000) b |= MB_UP;
         if (s.ly < -16000) b |= MB_DOWN;
         if (s.lx < -16000) b |= MB_LEFT;
@@ -186,8 +189,8 @@ static u32 menu_buttons(void) {
     return r;
 }
 
-/* --menu-at FRAME:KEYS (a test aid): the menu opens at that frame and gets these presses, one a turn: u d l r, x (select)
-   and t (back). After the last one menu_<frame>.png is written and the menu closes, unless a press already closed it. */
+/* --menu-at FRAME:KEYS (a test aid): the menu opens at that frame and gets these presses, one a turn: u d l r, x (select),
+   t (back) and m (the menu controls). After the last one menu_<frame>.png is written and the menu closes, unless a press already closed it. */
 static unsigned menu_test_frame; static const char *menu_test_keys;
 void host_set_menu_test(const char *t) {
     menu_test_frame = (unsigned)strtoul(t, (char **)&t, 10);
@@ -207,7 +210,8 @@ static void menu_run(unsigned frame, const char *test) {
         u32 hit;
         if (test) {
             char c = *test ? *test++ : 0;
-            hit = c == 'u' ? MB_UP : c == 'd' ? MB_DOWN : c == 'l' ? MB_LEFT : c == 'r' ? MB_RIGHT : c == 'x' ? MB_CROSS : c == 't' ? MB_TRIANGLE : 0;
+            hit = c == 'u' ? MB_UP : c == 'd' ? MB_DOWN : c == 'l' ? MB_LEFT : c == 'r' ? MB_RIGHT : c == 'x' ? MB_CROSS : c == 't' ? MB_TRIANGLE
+                : c == 'm' ? MB_MENU | MB_START | MB_SELECT : 0;   /* m: the menu controls, with the meanings they must not have here */
             if (!c) {
                 menu_draw(sel); menu_show();
                 char name[64]; snprintf(name, sizeof name, "menu_%05u.png", frame);
@@ -222,6 +226,7 @@ static void menu_run(unsigned frame, const char *test) {
             u32 b = menu_buttons();
             hit = b & ~prev; prev = b;
         }
+        if (hit & MB_MENU) break;   /* before anything else: the press that closes the menu selects nothing */
         if (hit & MB_UP) sel = (sel + MI_COUNT - 1) % MI_COUNT;
         if (hit & MB_DOWN) sel = (sel + 1) % MI_COUNT;
         int dir = (hit & MB_RIGHT) ? 1 : (hit & MB_LEFT) ? -1 : 0;
@@ -231,7 +236,7 @@ static void menu_run(unsigned frame, const char *test) {
             dir = 1;
         }
         if (dir && menu_ini[sel]) { menu_change(sel, dir); config_store(menu_ini[sel], menu_value(sel, 1)); }   /* saved at once */
-        if (hit & (MB_TRIANGLE | MB_SELECT | MB_MENU)) break;
+        if (hit & (MB_TRIANGLE | MB_SELECT)) break;
         if (!test) { menu_draw(sel); menu_show(); plat_sleep_ms(16); }
     }
     if (quit) host_quit();

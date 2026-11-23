@@ -725,7 +725,8 @@ void host_frame(void) {
     if (menu_want || (menu_test_keys && frame_no == menu_test_frame)) {   /* the game stands still until the menu is closed */
         int asked = menu_want; menu_want = 0;
         menu_run(frame_no, asked ? NULL : menu_test_keys);
-        menu_want = 0; wheel_waiting[0] = wheel_waiting[1] = 0; last_frame = t_enter = plat_now_ms();   /* the pause is neither game time nor host time */
+        menu_want = 0; wheel_waiting[0] = wheel_waiting[1] = 0; last_frame = t_enter = plat_now_ms();
+        pad_state[0] = pad_state[1] = 0xffff;   /* what was held when the menu opened was let go long ago: the game must not get it now */   /* the pause is neither game time nor host time */
     }
     t_last_exit = plat_now_ms(); t_host += t_last_exit - t_enter;
     if (turbo) { last_frame = plat_now_ms(); return; }

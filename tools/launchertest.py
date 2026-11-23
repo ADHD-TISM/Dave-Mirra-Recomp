@@ -119,6 +119,10 @@ def driver(win, n=0):
     pick("Pad: in-game menu", "ls+rs")
     pump(1.0)
     check("the gamepad menu controls are saved", val("dmbmx", "pad_menu") == "ls+rs", repr(val("dmbmx", "pad_menu")))
+    for k, v, want in (("volume", "55", True), ("volume", "101", False), ("volume", "x", False), ("pad_menu", "a+b", True),
+                       ("pad_menu", "Back + Start", True), ("pad_menu", "none", True), ("pad_menu", "a+a", False),
+                       ("pad_menu", "none+a", False), ("pad_menu", "ls+", False), ("pad_menu", "a+b+x", False)):
+        check("valid_setting %s = %s is %s" % (k, v, want), dml.valid_setting(k, v) == want)
     pick("Volume (percent)", "50")
     pump(1.0)
     check("the volume is saved", val("dmbmx", "volume") == "50", repr(val("dmbmx", "volume")))
