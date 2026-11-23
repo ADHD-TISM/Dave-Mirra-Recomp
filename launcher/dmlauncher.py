@@ -902,6 +902,8 @@ SETTINGS = [
      "1 = skip the movies shown when the game starts (the publisher, the developer and the intro), 0 = show them"),
     ("cpu_assist", "Gameplay", "Hold 30 fps in busy scenes", "bool", B01, "1",
      "1 = hold 30 fps in busy scenes, 0 = console CPU timing with its slowdowns"),
+    ("volume", "Audio", "Volume (percent)", "choice", ["0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"], "100",
+     "Sound volume in percent, 0 to 100 (also in the menu while playing)"),
     ("reverb", "Audio", "Console echo effect (reverb)", "bool", B01, "1",
      "1 = echo effect the console adds in levels, 0 = dry sound"),
     ("dualshock", "Gameplay", "DualShock pad (sticks, rumble)", "bool", B01, "1",
@@ -918,6 +920,10 @@ KEYS = [("up", "up"), ("right", "right"), ("down", "down"), ("left", "left"), ("
         ("triangle", "S, I"), ("l1", "Q"), ("r1", "W"), ("l2", "1"), ("r2", "3")]
 for _n, _d in PADS:
     SETTINGS.append(("pad_" + _n, "Input", "Pad: " + _n.upper(), "choice", PADNAMES, _d, None))
+SETTINGS.append(("pad_menu", "Input", "Pad: in-game menu", "choice",
+                 ["back+start", "ls+rs", "lb+rb", "lt+rt", "back", "start", "ls", "rs", "none"], "back+start",
+                 "The gamepad controls that open the menu while playing: one, or two held together (ls+rs = both sticks pressed). "
+                 "Other pairs can be typed into dmrecomp.ini"))
 for _n, _d in KEYS:
     SETTINGS.append(("key_" + _n, "Input", "Key: " + _n.upper(), "key", None, _d, None))
 SETTINGS.append(("key_fast_forward", "Input", "Key: fast-forward", "key", None, "tab", None))
@@ -1731,6 +1737,12 @@ def gui(root_dir, pinned=False, notice=None):
         """Show what the file says now, for every setting that was not changed here since the launcher last looked.
         One changed in both places keeps the launcher's value, and the next save writes it."""
         if file_time() == disk_time[0]:
+            return
+        try:                            # the game may be replacing the file this instant: look again at the next save or focus
+            open(settings_ini[0], "rb").close()
+        except FileNotFoundError:
+            pass                        # no file: the defaults, as the game sees it
+        except OSError:
             return
         new = read_ini(settings_ini[0])
         was = autosave["quiet"]

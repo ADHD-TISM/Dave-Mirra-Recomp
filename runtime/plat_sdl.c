@@ -148,7 +148,12 @@ void plat_mouse(int *buttons, int *wheel) {
     mouse_wheel_acc = 0;
 }
 int plat_focused(void) { return SDL_GetKeyboardFocus() == win; }
+#ifdef _WIN32   /* this front end can be built on Windows too (-DDM_SDL=ON), and rename() there fails when the target exists */
+__declspec(dllimport) int __stdcall MoveFileExA(const char *from, const char *to, unsigned long flags);
+int plat_replace_file(const char *from, const char *to) { return MoveFileExA(from, to, 1 | 8) != 0; }   /* REPLACE_EXISTING | WRITE_THROUGH */
+#else
 int plat_replace_file(const char *from, const char *to) { return rename(from, to) == 0; }   /* rename replaces in one step here */
+#endif
 void plat_pump(void) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {

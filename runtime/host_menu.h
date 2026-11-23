@@ -1,5 +1,5 @@
 /* The in-game menu: part of host_common.c (included once, after present and save_png), kept apart for its size.
-   The menu key (key_menu, Escape unless changed) or both gamepad sticks pressed together opens it. While it is open the
+   The menu key (key_menu, Escape unless changed) or the gamepad controls of pad_menu (Back + Start unless changed) open it. While it is open the
    game stands still: host_frame does not return, so no guest code runs, no sound is made and no game time passes. The
    menu is drawn by the CPU into its own 640x480 picture, over a darkened copy of the game's last frame, and shown through
    the backend's ordinary CPU-picture path, so it looks the same under Vulkan, OpenGL and the software stretch, with the
@@ -67,10 +67,10 @@ static void menu_text(int x, int y, int sc, const char *s, u32 col) {   /* sc: p
 }
 
 /* ---- the entries ---- */
-enum { MI_RESUME, MI_SCALE, MI_FILTER, MI_ASPECT, MI_FSR, MI_WIDE, MI_FULL, MI_RUMBLE, MI_EXIT, MI_COUNT };
+enum { MI_RESUME, MI_SCALE, MI_FILTER, MI_ASPECT, MI_FSR, MI_WIDE, MI_FULL, MI_VOLUME, MI_RUMBLE, MI_EXIT, MI_COUNT };
 static const char *const menu_names[MI_COUNT] = { "Resume", "Internal resolution", "Picture filter", "Aspect ratio", "FSR upscaler",
-                                                  "Widescreen", "Fullscreen", "Rumble", "Exit game" };
-static const struct { double ratio; const char *name; } menu_wide[] = { { 0, "off" }, { 16.0 / 9, "16:9" }, { 16.0 / 10, "16:10" }, { 21.0 / 9, "21:9" } };
+                                                  "Widescreen", "Fullscreen", "Volume", "Rumble", "Exit game" };
+static const struct { double ratio; const char *name; } menu_wide[] = { { 0, "off" }, { 16.0 / 10, "16:10" }, { 16.0 / 9, "16:9" }, { 21.0 / 9, "21:9" } };   /* narrow to wide */
 static int menu_wide_at(void) {   /* which of the shapes is set; -1 for one typed into the settings file */
     for (int i = 0; i < 4; i++) if (fabs(ws_ratio - menu_wide[i].ratio) < 0.005) return i;
     return -1;
@@ -84,11 +84,12 @@ static const char *menu_value(int item, int ini) {
     case MI_FSR: return g_upscale ? (ini ? "fsr" : "on") : "off";
     case MI_WIDE: { int i = menu_wide_at(); return i < 0 ? "custom" : menu_wide[i].name; }
     case MI_FULL: return g_fullscreen ? (ini ? "1" : "on") : (ini ? "0" : "off");
+    case MI_VOLUME: { static char t[8]; snprintf(t, sizeof t, ini ? "%d" : "%d%%", g_volume); return t; }
     case MI_RUMBLE: return g_rumble ? (ini ? "1" : "on") : (ini ? "0" : "off");
     }
     return "";
 }
-static const char *const menu_ini[MI_COUNT] = { NULL, "scale", "filter", "aspect", "upscale", "widescreen", "fullscreen", "rumble", NULL };
+static const char *const menu_ini[MI_COUNT] = { NULL, "scale", "filter", "aspect", "upscale", "widescreen", "fullscreen", "volume", "rumble", NULL };
 static void menu_change(int item, int dir) {   /* dir: +1 the next value, -1 the one before */
     switch (item) {
     case MI_SCALE: {
@@ -111,6 +112,10 @@ static void menu_change(int item, int dir) {   /* dir: +1 the next value, -1 the
         ws_ratio = menu_wide[i].ratio; break;
     }
     case MI_FULL: set_fullscreen(!g_fullscreen); break;
+    case MI_VOLUME: {   /* steps of 10, stopping at the ends; a value between steps goes to the next step first */
+        int v = dir > 0 ? (g_volume / 10 + 1) * 10 : ((g_volume + 9) / 10 - 1) * 10;
+        g_volume = v < 0 ? 0 : v > 100 ? 100 : v; break;
+    }
     case MI_RUMBLE: g_rumble = !g_rumble; break;
     }
     show_settings();
@@ -125,8 +130,8 @@ static void menu_draw(int sel) {
     menu_text((MENU_W - (int)strlen(title) * 16) / 2, py + 14, 2, title, 0xffffff);
     menu_fill(px + 16, py + 40, pw - 32, 2, 0x5a7fb8);
     for (int i = 0; i < MI_COUNT; i++) {
-        int y = py + 56 + i * 30;
-        if (i == sel) menu_fill(px + 12, y - 6, pw - 24, 28, 0x2a5db0);
+        int y = py + 56 + i * 27;   /* 10 rows above the 3 lines of help */
+        if (i == sel) menu_fill(px + 12, y - 5, pw - 24, 26, 0x2a5db0);
         u32 col = i == sel ? 0xffffff : 0xc0c8d0;
         menu_text(px + 24, y, 2, menu_names[i], col);
         const char *v = menu_value(i, 0);
@@ -155,7 +160,7 @@ static void menu_show(void) {
 /* ---- input: the pad buttons as the game would get them, plus keys that always work here ---- */
 enum { MB_UP = 1 << 4, MB_RIGHT = 1 << 5, MB_DOWN = 1 << 6, MB_LEFT = 1 << 7, MB_START = 1 << 3, MB_SELECT = 1 << 0,
        MB_CROSS = 1 << 14, MB_TRIANGLE = 1 << 12, MB_MENU = 1 << 16 };
-static int menu_pad_combo;   /* both sticks of player 1's gamepad are pressed (set by poll_input and by menu_buttons) */
+static int menu_pad_combo;   /* pad_menu is held on player 1's gamepad */
 static u32 menu_buttons(void) {
     static unsigned probe;
     u16 b = 0; u32 r;
@@ -169,7 +174,7 @@ static u32 menu_buttons(void) {
         if (s.ly < -16000) b |= MB_DOWN;
         if (s.lx < -16000) b |= MB_LEFT;
         if (s.lx > 16000) b |= MB_RIGHT;
-        menu_pad_combo = (s.buttons & HP_LS) && (s.buttons & HP_RS) && plat_focused();
+        menu_pad_combo = pad_menu_held(&s) && plat_focused();
     }
     r = b;
     if (key(HK_UP)) r |= MB_UP;

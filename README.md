@@ -62,8 +62,8 @@ Q/W = L1/R1, 1/3 = L2/R2, Enter = Start, Backspace = Select, Tab = fast-forward.
 An XInput gamepad also works. The mouse works too: the wheel steps up and down (hold left Shift to step left and right), left click is Cross (accept), right click is Triangle (back) and middle click is Start.
 Every key and mouse button can be changed (see Settings; the launcher has a "Press a key..." button for each).
 
-Escape opens a menu while playing (on a gamepad: press both sticks). The game stands still while it is open. It changes the
-internal resolution, picture filter, aspect ratio, FSR, widescreen, fullscreen and rumble, and it has Exit game. What is
+Escape opens a menu while playing (on a gamepad: hold Back and Start; `pad_menu` changes that). The game stands still while it is open. It changes the
+internal resolution, picture filter, aspect ratio, FSR, widescreen, fullscreen, volume and rumble, and it has Exit game. What is
 changed there is written to `dmrecomp.ini`.
 
 ## Settings
@@ -91,11 +91,13 @@ the original console picture; delete the file to get them back.
 | `reverb` | `1` console echo effect, `0` dry | |
 | `dualshock` | `1` DualShock (sticks, rumble), `0` plain digital pad | |
 | `rumble` | `1`, `0` | |
+| `volume` | `0` to `100` (percent) | in the menu while playing, in steps of 10 |
 | `player2` | `1` a second gamepad is player 2, `0` off | |
 | `key_up` ... `key_r2` | up to four keys each, separated by commas: letters, digits, `up down left right enter backspace tab space lshift rshift lctrl rctrl lalt ralt comma period slash semicolon minus equals lbracket rbracket backslash quote grave escape insert delete home end pageup pagedown capslock f1`..`f12 num0`..`num9 numadd numsub nummul numdiv numdot numenter none` | |
 | `key_fast_forward` | one key | hold to fast-forward |
 | `key_fullscreen`, `key_scale`, `key_filter`, `key_aspect`, `key_fsr`, `key_widescreen` | one key each | defaults F11, F6, F7, F8, F9, F10; Alt+Enter also toggles fullscreen |
-| `key_menu` | one key | opens the menu while playing; default `escape`. Both gamepad sticks pressed together open it too |
+| `key_menu` | one key | opens the menu while playing; default `escape` |
+| `pad_menu` | one gamepad control, or two joined by `+` that are held together, or `none` | opens the menu from player 1's gamepad; default `back+start`. Examples: `ls+rs` (both sticks pressed), `lb+rb`, `back`. The game gets these presses too |
 | `mouse_left`, `mouse_right`, `mouse_middle`, `mouse_x1`, `mouse_x2`, `wheel_up`, `wheel_down` | the pad button each presses: `up right down left start select cross circle square triangle l1 r1 l2 r2 l3 r3 none` | defaults cross, triangle, start, none, none, up, down |
 | `pad_up` ... `pad_r3` | a gamepad control: `a b x y lb rb lt rt start back ls rs up down left right none` | |
 
@@ -107,7 +109,8 @@ file.
 proportions and the sides show more of the scene. It applies only while 3D is being drawn; menus stay 4:3. The HUD and the texts drawn over a
 3D scene (the timer, the score, the pause and finish menus) keep their shape too: they are squeezed by the same amount, towards the middle of
 the picture, so at 16:9 they sit inside its middle three quarters. A flat item that spans the whole width (a fade) is stretched, so that it
-covers the picture. The game leaves out objects that are outside its own view before it draws; that view is widened to match, so objects at
+covers the picture. What counts as flat is decided by where the game puts it in its drawing order (`hud_slot` in `games/<id>.json`, found
+by measuring one level of each game), and a polygon there whose corners all came from the 3D projection is left alone. The game leaves out objects that are outside its own view before it draws; that view is widened to match, so objects at
 the sides no longer appear and vanish. Anything the game leaves out by another rule (distance, for one) is unchanged.
 
 `upscale = fsr` runs the picture through FSR 1 (edge-directed upscaling plus sharpening, as two OpenGL shaders) when the window is 

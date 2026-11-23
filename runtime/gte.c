@@ -113,6 +113,26 @@ static u32 gte_divide(u32 h, u32 sz3) {
 /* Widescreen: the host squeezes the projected X by g_ws_kq/65536 about the screen centre, then stretches the
    picture to the wider shape, so 3D keeps its proportions and the sides show more of the scene. */
 int g_ws_kq = 65536;
+/* The screen positions projected since the last 3D drawing list, kept while widescreen is on. The game puts some 3D
+   models in the drawing slots of the HUD (those it wants in front, and anything very near the camera); gpu.c squeezes
+   what is drawn from those slots, and must leave alone a polygon whose corners all came out of the GTE: its x is
+   squeezed already. A small table with linear probing; when a place is not found within 8 steps the value is not
+   kept, and that corner then counts as flat. */
+#define SXY_SLOTS 32768
+static u32 sxy_tab[SXY_SLOTS]; static u8 sxy_used[SXY_SLOTS]; static int sxy_n;
+static void sxy_note(u32 v) {
+    u32 h = (v * 2654435761u) >> 17;
+    for (int i = 0; i < 8; i++, h = (h + 1) & (SXY_SLOTS - 1)) {
+        if (!sxy_used[h]) { sxy_used[h] = 1; sxy_tab[h] = v; sxy_n++; return; }
+        if (sxy_tab[h] == v) return;
+    }
+}
+int gte_sxy_seen(u32 v) {
+    u32 h = (v * 2654435761u) >> 17;
+    for (int i = 0; i < 8 && sxy_used[h]; i++, h = (h + 1) & (SXY_SLOTS - 1)) if (sxy_tab[h] == v) return 1;
+    return 0;
+}
+void gte_sxy_clear(void) { if (sxy_n) { memset(sxy_used, 0, sizeof sxy_used); sxy_n = 0; } }
 unsigned g_gte_rtp;   /* projections done; the host uses it to tell 3D frames from menus */
 static void rtp(int v, int sh, int lm, int last) {
     g_gte_rtp++;
@@ -138,6 +158,7 @@ static void rtp(int v, int sh, int lm, int last) {
     MAC0 = (s32)sy;
     SXY(0) = SXY(1); SXY(1) = SXY(2);
     SXY(2) = (s32)(((u32)X & 0xffff) | ((u32)Y << 16));
+    if (g_ws_kq != 65536) sxy_note((u32)SXY(2));
     if (last) {
         s64 dq = F((s64)n * DQA + DQB);
         MAC0 = (s32)dq;

@@ -379,13 +379,14 @@ static void cmd_polygon(void) {
     u32 c = fifo[0], op = c >> 24;
     int quad = op & 8, textured = op & 4, semi = op & 2, raw = op & 1, gouraud = op & 0x10;
     int n = quad ? 4 : 3, k = 1;
-    Vtx v[4]; TexInfo ti = { 0 };
+    Vtx v[4]; TexInfo ti = { 0 }; int projected = 0;   /* corners that came out of the GTE (widescreen) */
     u32 clut = 0, tpage = g.texpage;
     for (int i = 0; i < n; i++) {
         u32 col = (i > 0 && gouraud) ? fifo[k++] : fifo[0];
         u32 xy = fifo[k++];
         v[i].r = col & 0xff; v[i].g = (col >> 8) & 0xff; v[i].b = (col >> 16) & 0xff;
         v[i].x = sx11(xy) + g.ox; v[i].y = sx11(xy >> 16) + g.oy; v[i].fx = 0;
+        if (gpu_2d && gte_sxy_seen(xy)) projected++;
         if (textured) {
             u32 uv = fifo[k++];
             v[i].u = uv & 0xff; v[i].v = (uv >> 8) & 0xff;
@@ -393,7 +394,7 @@ static void cmd_polygon(void) {
             if (i == 1) tpage = uv >> 16;
         } else v[i].u = v[i].v = 0;
     }
-    if (gpu_2d) {
+    if (gpu_2d && projected < n) {   /* all corners projected: a 3D polygon the game put in front, squeezed already */
         int lo = v[0].x, hi = lo, wide = g.dx2 - g.dx1 + 1, mid = g.dx1 + wide / 2;
         for (int i = 1; i < n; i++) { if (v[i].x < lo) lo = v[i].x; if (v[i].x > hi) hi = v[i].x; }
         if (hi - lo < wide - wide / 8)

@@ -116,6 +116,12 @@ def driver(win, n=0):
     type_in("Key: in-game menu", "f1", True)                # a valid value again, so that the checks below see only their own field
     pump(1.0)
     check("Press a key: its window is gone", not [w for w in win.winfo_children() if isinstance(w, tk.Toplevel)])
+    pick("Pad: in-game menu", "ls+rs")
+    pump(1.0)
+    check("the gamepad menu controls are saved", val("dmbmx", "pad_menu") == "ls+rs", repr(val("dmbmx", "pad_menu")))
+    pick("Volume (percent)", "50")
+    pump(1.0)
+    check("the volume is saved", val("dmbmx", "volume") == "50", repr(val("dmbmx", "volume")))
     pick("Mouse: left button", "circle")
     pump(1.0)
     check("a mouse button is saved", val("dmbmx", "mouse_left") == "circle", repr(val("dmbmx", "mouse_left")))

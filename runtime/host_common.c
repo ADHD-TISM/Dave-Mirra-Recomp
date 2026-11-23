@@ -35,6 +35,7 @@ static int pad_found[2];      /* a gamepad is plugged in for this player */
 static int log_input;         /* DM_LOG_INPUT is set (a test aid): every change of player 1's buttons is printed */
 static int test_nopad;        /* DMRECOMP_GFX_TEST has "nopad": gamepads are not read, so a scripted run cannot be disturbed by one */
 int g_rumble = 1, g_player2 = 1;
+static int g_volume = 100;    /* volume: percent, 0 to 100 */
 extern int g_pad_analog[2], g_dualshock;
 
 static int key(int k) { return k && plat_key(k); }
@@ -64,7 +65,9 @@ static int key_turbo = HK_TAB;
 /* keys for the display actions, indexed by the HOT_ numbers in host.h */
 static int hotkeys[6] = { HK_F11, HK_F6, HK_F7, HK_F8, HK_F9, HK_F10 };
 static const char *const hotkey_opts[6] = { "key_fullscreen", "key_scale", "key_filter", "key_aspect", "key_fsr", "key_widescreen" };
-static int key_menu = HK_ESCAPE;   /* opens the in-game menu (host_menu.h); both gamepad sticks pressed together do too */
+static int key_menu = HK_ESCAPE;   /* opens the in-game menu (host_menu.h) */
+static int pad_menu[2];             /* and so do these gamepad controls of player 1, held together (X_ numbers; the second may be none):
+                                       pad_menu, Back + Start unless changed. Set in host_set_option and before the settings are read. */
 static int menu_want;               /* the menu was asked for: host_frame opens it */
 static int menu_capture;            /* present() must leave the game's picture in fb, also when the graphics card holds it */
 static char config_path[512];       /* the settings file host_load_config read: where the menu writes a changed setting */
@@ -152,6 +155,7 @@ int host_set_option(const char *name, const char *val) {
     if (!_stricmp(name, "cpu_assist")) { g_cpu_assist = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "skip_intro")) { g_skip_intro = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "rumble")) { g_rumble = atoi(val) != 0; return 1; }
+    if (!_stricmp(name, "volume")) { char *e; long v = strtol(val, &e, 10); if (e == val || *e || v < 0 || v > 100) return 0; g_volume = (int)v; return 1; }
     if (!_stricmp(name, "dualshock")) { g_dualshock = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "player2")) { g_player2 = atoi(val); return 1; }   /* 2 = always present (tests) */
     if (!_stricmp(name, "reverb")) { extern int g_reverb; g_reverb = atoi(val) != 0; return 1; }
@@ -162,6 +166,18 @@ int host_set_option(const char *name, const char *val) {
     }
     if (!_stricmp(name, "key_fast_forward")) { int vk = key_parse(val); if (vk < 0) return 0; key_turbo = vk; return 1; }
     if (!_stricmp(name, "key_menu")) { int vk = key_parse(val); if (vk < 0) return 0; key_menu = vk; return 1; }
+    if (!_stricmp(name, "pad_menu")) {   /* one control, or two joined by +: both must be held; none = the gamepad does not open the menu */
+        char buf[32]; snprintf(buf, sizeof buf, "%s", val);
+        char *plus = strchr(buf, '+'); if (plus) *plus++ = 0;
+        int got[2] = { -1, plus ? -1 : X_NONE };
+        for (int k = 0; k < (int)(sizeof xnames / sizeof *xnames); k++) {
+            if (!_stricmp(xnames[k], trim(buf))) got[0] = k;
+            if (plus && !_stricmp(xnames[k], trim(plus))) got[1] = k;
+        }
+        if (got[0] < 0 || got[1] < 0 || (plus && (got[0] == X_NONE || got[1] == X_NONE || got[0] == got[1]))) return 0;
+        pad_menu[0] = got[0]; pad_menu[1] = got[1];
+        return 1;
+    }
     for (int i = 0; i < 6; i++) if (!_stricmp(hotkey_opts[i], name)) { int vk = key_parse(val); if (vk < 0) return 0; hotkeys[i] = vk; return 1; }
     for (int i = 0; key_opts[i].name; i++) if (!_stricmp(key_opts[i].name, name)) {   /* up to MAXKEYS keys, separated by commas */
         char buf[128]; snprintf(buf, sizeof buf, "%s", val);
@@ -215,6 +231,8 @@ static void config_write_default(const char *path) {
                "cpu_assist = 1\n"
                "# 1 = skip the movies shown when the game starts (the publisher, the developer and the intro), 0 = show them\n"
                "skip_intro = 1\n"
+               "# Sound volume in percent, 0 to 100 (also in the menu while playing)\n"
+               "volume = 100\n"
                "# 1 = echo effect the console adds in levels, 0 = dry sound\n"
                "reverb = 1\n\n"
                "# Controllers. dualshock = 0 makes the game see a plain digital pad (no sticks, no rumble).\n"
@@ -238,8 +256,11 @@ static void config_write_default(const char *path) {
         fprintf(f, "\n");
     }
     fprintf(f, "key_fast_forward = %s\n", key_label(key_turbo));
-    fprintf(f, "# Opens the menu while playing: display settings and Exit (on a gamepad: press both sticks)\n"
+    fprintf(f, "# Opens the menu while playing: display settings, volume and Exit\n"
                "key_menu = %s\n", key_label(key_menu));
+    fprintf(f, "# The same on player 1's gamepad: one control, or two held together joined by + (back+start,\n"
+               "# ls+rs = both sticks pressed, lb+rb ...), or none. The game gets these presses too.\n"
+               "pad_menu = %s%s%s\n", xnames[pad_menu[0]], pad_menu[1] ? "+" : "", pad_menu[1] ? xnames[pad_menu[1]] : "");
     fprintf(f, "\n# Keys for the display actions (one key each, or none)\n");
     for (int i = 0; i < 6; i++) fprintf(f, "%s = %s\n", hotkey_opts[i], key_label(hotkeys[i]));
     fprintf(f, "\n# Mouse. Each button and wheel direction presses a pad button: up right down left start select\n"
@@ -253,6 +274,7 @@ static void config_write_default(const char *path) {
 }
 void host_load_config(const char *path) {
     snprintf(config_path, sizeof config_path, "%s", path);
+    pad_menu[0] = X_BACK; pad_menu[1] = X_START;   /* the default, before the file and the command line */
     FILE *f = fopen(path, "r");
     if (!f) { config_write_default(path); return; }
     char line[256]; int n = 0;
@@ -279,8 +301,11 @@ static int xsrc(const HostPad *p, int s) {
     }
     return 0;
 }
+/* the gamepad controls that open the in-game menu are held */
+static int pad_menu_held(const HostPad *p) { return pad_menu[0] && xsrc(p, pad_menu[0]) && (!pad_menu[1] || xsrc(p, pad_menu[1])); }
 static u8 axis(int v, int flip) { v = (flip ? -v : v) / 256 + 128; return (u8)(v < 0 ? 0 : v > 255 ? 255 : v); }
 
+static int wheel_waiting[2];   /* wheel notches (up, down) not yet turned into a press */
 /* mouse -> pad buttons for player 1 (added to b, active-high) */
 static void mouse_input(u16 *b) {
     int mb, wheel;
@@ -291,11 +316,12 @@ static void mouse_input(u16 *b) {
     /* Each notch is a short press of its own: 6 frames down, then 4 up, so that the game sees every one. Notches that
        come faster than that wait their turn (8 at most). side: the press was started with left Shift held, and goes
        left or right instead. */
-    static int waiting[2], hold[2], gap[2], side[2];
-    if (wheel > 0) waiting[0] += wheel; else if (wheel < 0) waiting[1] -= wheel;
+    static int hold[2], gap[2], side[2];
+    if (test_nopad || !plat_focused()) wheel_waiting[0] = wheel_waiting[1] = 0;   /* notches not yet pressed do not outlive the focus */
+    if (wheel > 0) wheel_waiting[0] += wheel; else if (wheel < 0) wheel_waiting[1] -= wheel;
     for (int i = 0; i < 2; i++) {
-        if (waiting[i] > 8) waiting[i] = 8;
-        if (!hold[i] && !gap[i] && waiting[i]) { waiting[i]--; hold[i] = 6; gap[i] = 4; side[i] = key(HK_LSHIFT); }
+        if (wheel_waiting[i] > 8) wheel_waiting[i] = 8;
+        if (!hold[i] && !gap[i] && wheel_waiting[i]) { wheel_waiting[i]--; hold[i] = 6; gap[i] = 4; side[i] = key(HK_LSHIFT); }
         int bit = side[i] ? (i ? 5 : 7) : mousemap[MS_WHEEL_UP + i];   /* Shift + wheel: up = left, down = right */
         if (hold[i]) { if (bit >= 0) *b |= (u16)(1 << bit); hold[i]--; }
         else if (gap[i]) gap[i]--;
@@ -309,7 +335,7 @@ static void poll_input(void) {
     turbo = key(key_turbo);
     static int hot_down[6];   /* a display key acts once when it goes down */
     for (int i = 0; i < 6; i++) { int d = key(hotkeys[i]); if (d && !hot_down[i]) host_hotkey(i); hot_down[i] = d; }
-    int menu_held = key(key_menu);   /* the menu key, or both sticks of player 1's gamepad (below) */
+    int menu_held = key(key_menu);   /* the menu key, or pad_menu on player 1's gamepad (below) */
     mouse_input(&b[0]);
     /* looking for a controller that is not there is slow, so only retry once a second */
     int look = (probe++ % 60) == 0;
@@ -321,7 +347,7 @@ static void poll_input(void) {
         pad_found[n] = plat_pad(n, &s);
         if (!pad_found[n]) continue;
         for (int i = 0; i < 16; i++) if (xsrc(&s, padmap[i])) b[n] |= (u16)(1 << i);
-        if (n == 0 && (s.buttons & HP_LS) && (s.buttons & HP_RS) && plat_focused()) menu_held = 1;   /* a gamepad is read without the focus too */
+        if (n == 0 && pad_menu_held(&s) && plat_focused()) menu_held = 1;   /* a gamepad is read without the focus too */
         if (g_pad_analog[n]) {
             pad_axes[n][0] = axis(s.rx, 0); pad_axes[n][1] = axis(s.ry, 1);
             pad_axes[n][2] = axis(s.lx, 0); pad_axes[n][3] = axis(s.ly, 1);
@@ -375,6 +401,12 @@ FILE *g_wav;   /* --wav file: raw 44.1 kHz stereo s16 dump of everything mixed *
 void host_audio_push(const s16 *lr, int frames) {
     if (g_wav) fwrite(lr, 4, (size_t)frames, g_wav);
     if (turbo) return;
+    if (g_volume != 100) {   /* the volume setting: what goes to the sound device, not the --wav dump above */
+        static s16 quiet[4096 * 2];
+        if (frames > 4096) frames = 4096;
+        for (int i = 0; i < frames * 2; i++) quiet[i] = (s16)(lr[i] * g_volume / 100);
+        lr = quiet;
+    }
     plat_audio_push(lr, frames);
 }
 
@@ -693,7 +725,7 @@ void host_frame(void) {
     if (menu_want || (menu_test_keys && frame_no == menu_test_frame)) {   /* the game stands still until the menu is closed */
         int asked = menu_want; menu_want = 0;
         menu_run(frame_no, asked ? NULL : menu_test_keys);
-        menu_want = 0; last_frame = t_enter = plat_now_ms();   /* the pause is neither game time nor host time */
+        menu_want = 0; wheel_waiting[0] = wheel_waiting[1] = 0; last_frame = t_enter = plat_now_ms();   /* the pause is neither game time nor host time */
     }
     t_last_exit = plat_now_ms(); t_host += t_last_exit - t_enter;
     if (turbo) { last_frame = plat_now_ms(); return; }

@@ -92,6 +92,8 @@ void host_pad_read(int port, u16 *buttons, u8 axes[4]);   /* axes: right X, righ
 void host_pad_rumble(int port, int small_on, int large);
 void host_fatal(const char *fmt, ...);
 void host_audio_push(const s16 *lr, int frames);
+int  gte_sxy_seen(u32 xy);          /* widescreen: this screen position came out of the GTE since the last 3D drawing list */
+void gte_sxy_clear(void);
 
 /* module dispatch */
 psx_fn psx_lookup(u32 addr);

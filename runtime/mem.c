@@ -61,7 +61,11 @@ static void dma_run(int ch) {
                 if (h & 0x800000) break;
                 a = h & 0x1ffffcu;
             }
-            gpu_2d = 0; (void)slots;
+            gpu_2d = 0;
+#ifdef GAME_HUD_SLOT
+            if (slots >= GAME_HUD_SLOT) gte_sxy_clear();   /* that was the 3D list: the next frame's projections start afresh */
+#endif
+            (void)slots;
         } else {
             n = dma_words(ch);
             if (dir) for (u32 i = 0; i < n; i++) gpu_write_gp0(ram32(a + 4 * i));
