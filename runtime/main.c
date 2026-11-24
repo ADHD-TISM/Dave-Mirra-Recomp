@@ -106,7 +106,7 @@ static int run(int argc, char **argv) {
             char buf[128]; snprintf(buf, sizeof buf, "%s", argv[++i]);
             char *eq = strchr(buf, '='); if (eq) *eq++ = 0;
             if (!eq || !host_set_option(buf, eq)) fprintf(stderr, "--set %s: not understood\n", argv[i]);
-            else if (!strcmp(buf, "fullscreen")) fs_given = 1;
+            else if (!_stricmp(buf, "fullscreen")) fs_given = 1;   /* host_set_option takes any letter case too */
         }
         else if (!strcmp(argv[i], "--stats")) g_stats++;
         else if (!strcmp(argv[i], "--turbo")) g_turbo = 1;

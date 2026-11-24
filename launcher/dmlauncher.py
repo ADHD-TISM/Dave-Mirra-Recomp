@@ -131,10 +131,14 @@ def set_window_icon(win, tk):
 
 
 def default_root():
-    if FROZEN and not WINDOWS and os.environ.get("APPIMAGE"):
-        # run from an AppImage file: its own files are read-only, so everything goes next to the AppImage file
-        # (RecompLauncher unpacks an AppImage and runs it from that folder, without APPIMAGE)
-        return os.path.dirname(os.path.abspath(os.environ["APPIMAGE"]))
+    if FROZEN and not WINDOWS and os.environ.get("APPIMAGE") and os.environ.get("APPDIR"):
+        # run from our own AppImage file: its files are read-only, so everything goes next to the AppImage file
+        # (RecompLauncher unpacks an AppImage and runs it from that folder, without APPIMAGE). Only when this program
+        # is inside APPDIR: an APPIMAGE inherited from some other AppImage program is not ours.
+        appdir = os.path.realpath(os.environ["APPDIR"])
+        me = os.path.realpath(sys.executable)
+        if os.path.commonpath([appdir, me]) == appdir:
+            return os.path.dirname(os.path.abspath(os.environ["APPIMAGE"]))
     if FROZEN:
         return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.abspath(__file__))
@@ -362,9 +366,24 @@ def replace_dir(tmp, final):
     os.replace(tmp, final)
 
 
+def child_env(env=None):
+    """The environment for a program the launcher starts. A packaged Linux launcher (PyInstaller) puts its own bundled
+    libraries first in LD_LIBRARY_PATH; the compiler, the code translator and the game must get the system's, so the
+    variable goes back to what it was before (LD_LIBRARY_PATH_ORIG), or away. Elsewhere it is left as it is."""
+    if not FROZEN or WINDOWS:
+        return env
+    e = dict(os.environ if env is None else env)
+    orig = e.pop("LD_LIBRARY_PATH_ORIG", None)
+    if orig is not None:
+        e["LD_LIBRARY_PATH"] = orig
+    else:
+        e.pop("LD_LIBRARY_PATH", None)
+    return e
+
+
 def run(cmd, log, cwd=None, env=None, tag=""):
     """Run a command, streaming its output to log. Returns the output text."""
-    p = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    p = subprocess.Popen(cmd, cwd=cwd, env=child_env(env), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          creationflags=NO_WINDOW, text=True, errors="replace")
     out = []
     for line in p.stdout:
@@ -455,7 +474,7 @@ def linux_missing(P):
 def sdl_flags(which):
     """sdl2-config --cflags or --libs, as a list."""
     if which not in _sdl:
-        r = subprocess.run(["sdl2-config", which], capture_output=True, text=True)
+        r = subprocess.run(["sdl2-config", which], capture_output=True, text=True, env=child_env())
         if r.returncode != 0:
             raise Fail("sdl2-config %s failed: %s" % (which, r.stderr.strip()))
         _sdl[which] = r.stdout.split()
@@ -583,9 +602,20 @@ def fetch_project_zip(P, tag, log):
     return z
 
 
-def install_project(P, C, log, force=False):
-    """Download the newest project version unless that one is already installed."""
-    tag = latest_tag(log, strict=not (project_ok(P) and C.get("tag")))
+def release_tag():
+    """The project version a packaged launcher was released with (launcher/release.sh puts it in), or None."""
+    base = getattr(sys, "_MEIPASS", None)
+    try:
+        with open(os.path.join(base, "release_tag.txt"), encoding="ascii") as f:
+            tag = f.read().strip()
+        return tag if re.fullmatch(r"v[0-9][0-9A-Za-z.\-]*", tag) else None
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def install_project(P, C, log, force=False, want=None):
+    """Download the newest project version (or the version want) unless that one is already installed."""
+    tag = want or latest_tag(log, strict=not (project_ok(P) and C.get("tag")))
     have = C.get("tag")
     if project_ok(P) and not force and have and (tag is None or tag == have):
         log("project is up to date (%s)" % have)
@@ -885,12 +915,37 @@ def flac_frames(data, nsamples):
     return inter, pos >> 3
 
 
+def chd_errors():
+    """What reading a damaged or cut-short .chd can raise besides Fail and OSError; each is turned into a Fail."""
+    import lzma
+    import zlib
+    return (struct.error, KeyError, ValueError, IndexError, EOFError, lzma.LZMAError, zlib.error)
+
+
+def chd_damaged(path, e):
+    return Fail("%s is damaged or not complete (%s); if it is still being copied, wait until it is done"
+                % (os.path.basename(path), e.__class__.__name__ + (": %s" % e if str(e) else "")))
+
+
 class Chd:
     def __init__(self, path):
         self.path = path
         self.f = open(path, "rb")
+        try:
+            self._open()
+        except Fail:
+            self.f.close()
+            raise
+        except chd_errors() as e:
+            self.f.close()
+            raise chd_damaged(path, e)
+
+    def _open(self):
+        path = self.path
         h = self.f.read(124)
-        if len(h) < 16 or h[:8] != b"MComprHD":
+        if h[:8] == b"MComprHD" and len(h) < 124:
+            raise chd_damaged(path, EOFError("the header is cut short"))
+        if len(h) < 124 or h[:8] != b"MComprHD":
             raise Fail("%s is not a CHD image" % os.path.basename(path))
         version = struct.unpack_from(">I", h, 12)[0]
         if version != 5:
@@ -1008,6 +1063,12 @@ class Chd:
         return tracks
 
     def hunk(self, n):
+        try:
+            return self._hunk(n)
+        except chd_errors() as e:
+            raise chd_damaged(self.path, e)
+
+    def _hunk(self, n):
         got = self._cache.get(n)
         if got is not None:
             return got
@@ -1132,15 +1193,32 @@ def chd_fingerprint(path):
     return "%s|%d|%d" % (os.path.abspath(path), st.st_size, st.st_mtime_ns)
 
 
+def chd_out_paths(path):
+    """(folder, .cue, .bin) a .chd is written out to. The folder is named after the SHA-1 the CHD's header holds for
+    its contents, so the same disc moved, renamed or copied again finds the copy it already has."""
+    if not CHD_CACHE[0]:
+        raise Fail("no folder to write the .chd out to")
+    with open(path, "rb") as f:
+        h = f.read(124)
+    key = h[84:104].hex()[:16] if len(h) == 124 and h[:8] == b"MComprHD" and h[84:104].strip(b"\0") else \
+        hashlib.sha1(chd_fingerprint(path).encode()).hexdigest()[:16]
+    d = os.path.join(CHD_CACHE[0], key)
+    return d, os.path.join(d, "disc.cue"), os.path.join(d, "disc.bin")
+
+
+def chd_ready(path):
+    """True when a .chd is written out already (playing it then starts at once)."""
+    try:
+        d, cue, binp = chd_out_paths(path)
+    except (Fail, OSError):
+        return False
+    return os.path.isfile(os.path.join(d, "done")) and os.path.isfile(cue) and os.path.isfile(binp)
+
+
 def chd_written_out(path):
     """The .cue that a .chd is written out to, writing it the first time: one .bin holding every track one after the
     other, audio little-endian as in a .bin (a CHD keeps it big-endian), and a .cue naming the tracks."""
-    if not CHD_CACHE[0]:
-        raise Fail("no folder to write the .chd out to")
-    key = hashlib.sha1(chd_fingerprint(path).encode()).hexdigest()[:16]
-    stem = re.sub(r"[^A-Za-z0-9 ._()\[\]-]", "_", os.path.splitext(os.path.basename(path))[0]) or "disc"
-    d = os.path.join(CHD_CACHE[0], key)
-    cue, binp = os.path.join(d, stem + ".cue"), os.path.join(d, stem + ".bin")
+    d, cue, binp = chd_out_paths(path)
     if os.path.isfile(os.path.join(d, "done")) and os.path.isfile(cue) and os.path.isfile(binp):
         return cue
     shutil.rmtree(d, ignore_errors=True)
@@ -1310,7 +1388,8 @@ def _sources(P):
             d = os.path.join(rla, sub)
             src += [("ach", os.path.join(d, n)) for n in sorted(os.listdir(d)) if n.endswith(".c")]
         for sub in ("include", os.path.join("third_party", "cjson"), os.path.join("third_party", "rcheevos", "include"),
-                    os.path.join("third_party", "rcheevos", "src", "runtime"), os.path.join("third_party", "rcheevos", "src")):
+                    os.path.join("third_party", "rcheevos", "src", "runtime"), os.path.join("third_party", "rcheevos", "src"),
+                    os.path.join("third_party", "rcheevos", "src", "util")):
             d = os.path.join(rla, sub)
             hdr += [os.path.join(d, n) for n in sorted(os.listdir(d)) if n.endswith(".h")]
     return src, hdr
@@ -1457,6 +1536,9 @@ def build_all(P, C, disc_path, log, progress=None):
         raise Fail("choose your disc image first")
     if not toolchain_ok(P) or not project_ok(P):
         raise Fail("download the build tools and project first (Update tab)")
+    if is_chd(disc_path) and not chd_ready(disc_path):
+        log("writing %s out to a .bin and .cue for the game (once; about a minute)" % os.path.basename(disc_path))
+        resolve_bin(disc_path)
     generate(P, C, disc_path, log)
     compile_game(P, C, log, progress)
 
@@ -1735,14 +1817,23 @@ def play(P, C, disc_path, log, extra=(), wait=False):
             out = None
     try:
         if out:
-            proc = subprocess.Popen(args, cwd=P.home, creationflags=flags, stdin=subprocess.DEVNULL, stdout=out, stderr=out)
+            proc = subprocess.Popen(args, cwd=P.home, creationflags=flags, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+                                    env=child_env())
         else:
-            proc = subprocess.Popen(args, cwd=P.home, creationflags=flags)
+            proc = subprocess.Popen(args, cwd=P.home, creationflags=flags, env=child_env())
     finally:
         if out:
             out.close()                # the game has its own handle now
     log("started the game" + (" (its messages go to %s)" % os.path.join(P.home, RUN_LOG) if out else ""))
-    return proc.wait() if wait else None
+    if not wait:
+        return None
+    code = proc.wait()
+    if out and P.data:   # RecompLauncher sends the newest .log at the top of its data folder with a crash report
+        try:
+            shutil.copyfile(os.path.join(P.home, RUN_LOG), os.path.join(P.data, RUN_LOG))
+        except OSError as e:
+            log("could not copy %s to %s: %s" % (RUN_LOG, P.data, e))
+    return code
 
 
 def desktop_entry_text(P, disc_path, name):
@@ -1928,7 +2019,9 @@ def status(P, C):
 
 def ready_to_play(P, C):
     st = {k: ok for k, _l, ok, _t in status(P, C)}
-    return os.path.isfile(P.exe) and st["disc"]
+    disc = C.get("disc")
+    # a .chd not written out yet would be written out on Play, in the window's own thread: Build does it instead
+    return os.path.isfile(P.exe) and st["disc"] and not (is_chd(disc) and not chd_ready(disc))
 
 
 # ---------------------------------------------------------------- command line
@@ -1993,10 +2086,11 @@ def prepare(root, argv):
         say(0.01, "Downloading the C compiler")
         install_toolchain(P, log)
         say(0.25, "Downloading the project")
-        install_project(P, C, log)
-    elif accept:
-        say(0.25, "Checking for a newer project version")
-        install_project(P, C, log)
+        install_project(P, C, log, want=release_tag())
+    elif accept:   # a packaged release builds its own project version, also when the player goes back to an older one
+        want = release_tag()
+        say(0.25, "Getting project version %s" % want if want else "Checking for a newer project version")
+        install_project(P, C, log, want=want)
     names = dict((i, n) for i, n, _e in game_list(P))
     span = 0.7 / len(picks)
     for i, (gid, disc) in enumerate(picks):
@@ -2282,7 +2376,7 @@ def gui(root_dir, pinned=False, notice=None):
             os.startfile(P.discdir)
         else:
             try:
-                subprocess.Popen(["xdg-open", P.discdir])
+                subprocess.Popen(["xdg-open", P.discdir], env=child_env())
             except OSError:
                 log("your disc folder is %s" % P.discdir)
 

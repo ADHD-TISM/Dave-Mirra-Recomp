@@ -287,9 +287,74 @@ def lone_script():
     finally:
         dml.WINDOWS = real; w.destroy(); first.destroy()
 
+def new_paths():
+    """The paths RecompLauncher uses: damaged CHDs, --data, prepare's arguments and exit codes, run's words."""
+    import struct
+    R = os.path.join(T, "rl"); os.makedirs(R, exist_ok=True)
+    # a CHD cut short (still being copied) or with a map past its end is refused with a Fail, never a crash
+    disc = os.path.join(R, "Dave Mirra BMX"); os.makedirs(disc, exist_ok=True)
+    short = os.path.join(disc, "short.chd")
+    open(short, "wb").write(b"MComprHD" + bytes(32))
+    head = b"MComprHD" + struct.pack(">II", 124, 5) + b"cdlz" + b"cdzl" + bytes(8) + struct.pack(">QQQ", 19584 * 4, 1 << 30, 0)
+    head += struct.pack(">II", 19584, 2448) + bytes(60)
+    nomap = os.path.join(disc, "nomap.chd")
+    open(nomap, "wb").write(head)
+    for name, p in (("cut short", short), ("map past its end", nomap)):
+        try:
+            dml.iso_root_files(p); ok, why = False, "no error"
+        except dml.Fail as e:
+            ok, why = "damaged or not complete" in str(e), str(e)
+        except Exception as e:
+            ok, why = False, "%s: %s" % (type(e).__name__, e)
+        check("a .chd %s is refused with a message" % name, ok, why[:90])
+    P = dml.Paths(R); C = dml.Config(P.cfg)
+    try:
+        found = dml.find_discs(P, C); check("the disc folder with damaged .chd files is looked through", found == {}, repr(found))
+    except Exception as e:
+        check("the disc folder with damaged .chd files is looked through", False, "%s: %s" % (type(e).__name__, e))
+    # --data: the cards are copied once, never moved, never replaced
+    P.data = os.path.join(R, "recompdata"); P.use("dmbmx")
+    os.makedirs(P.game, exist_ok=True)
+    card = os.path.join(P.game, "memcard1.mcd"); open(card, "wb").write(b"A" * 128)
+    said = []
+    dml.bring_saves(P, said.append)
+    copy = os.path.join(P.home, "memcard1.mcd")
+    check("--data: the card is copied", os.path.isfile(copy) and open(copy, "rb").read() == b"A" * 128 and os.path.isfile(card))
+    open(copy, "wb").write(b"B" * 128)
+    dml.bring_saves(P, said.append)
+    check("--data: a card already there is never replaced", open(copy, "rb").read() == b"B" * 128 and open(card, "rb").read() == b"A" * 128)
+    # prepare: wrong words, no disc, and downloads needed but not allowed
+    E = os.path.join(T, "rl-empty"); os.makedirs(E, exist_ok=True)
+    fake = os.path.join(E, "fake.bin"); open(fake, "wb").write(bytes(2352 * 20))
+    check("prepare: a word it does not know gives exit 1", dml.cli(["--root", E, "prepare", "--bogus"]) == 1)
+    check("prepare: no disc gives exit 1", dml.cli(["--root", E, "prepare"]) == 1)
+    check("prepare: downloads needed but not allowed give exit 3", dml.cli(["--root", E, "prepare", "--dmbmx=" + fake]) == 3)
+    # run: the words after it go to the game, the game's exit code comes back, --data is where it runs
+    open(P.exe, "wb").write(b"")
+    seen = {}
+
+    class FakeGame:
+        def __init__(self, args, **kw):
+            seen["args"], seen["cwd"] = args, kw.get("cwd")
+
+        def wait(self):
+            return 7
+    real = dml.subprocess.Popen
+    dml.subprocess.Popen = FakeGame
+    try:
+        rc = dml.cli(["--root", R, "run", "--game", "dmbmx", "--disc", fake, "--data", P.data, "--set", "volume=0"])
+    finally:
+        dml.subprocess.Popen = real
+    check("run: the game's exit code comes back", rc == 7, repr(rc))
+    check("run: the words after it go to the game", seen.get("args", [])[-2:] == ["--set", "volume=0"], repr(seen.get("args")))
+    check("run: with --data the game runs in the data folder", os.path.normcase(seen.get("cwd") or "") == os.path.normcase(P.home),
+          repr(seen.get("cwd")))
+    check("run: the log is copied to the top of the data folder", os.path.isfile(os.path.join(P.data, dml.RUN_LOG)))
+
 tk.Tk.mainloop = driver
 dml.gui(T)
 run_log()
 lone_script()
+new_paths()
 print("%d of %d checks passed" % (sum(res), len(res)))
 sys.exit(0 if all(res) else 1)
