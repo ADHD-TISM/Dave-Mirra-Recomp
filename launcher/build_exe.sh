@@ -6,7 +6,7 @@
 set -e
 OUT=${DIST:-$(dirname "$0")/dist}
 mkdir -p "$OUT"
-OUT=$(cd "$OUT" && pwd)
+OUT=$(CDPATH= cd -- "$OUT" && pwd)   # CDPATH off: the folder itself, and cd prints nothing
 cd "$(dirname "$0")"
 ${PYTHON:-python} -m PyInstaller --onefile --windowed --noconfirm --clean --name "Dave Mirra Freestyle BMX" \
   --icon "$(pwd)/icon.ico" --add-data "$(pwd)/icon.ico:." \

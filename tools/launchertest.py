@@ -270,17 +270,22 @@ def lone_script():
     w = tk.Tk()
     try:
         lone.set_window_icon(w, tk)
-        check("and its window still gets set up", True)
+        err = None
+    except Exception as e:
+        err = e
     finally:
         w.destroy()
+    check("and setting up its window raises nothing", err is None, repr(err))
+    first = tk.Tk()   # a root made before: the picture must still belong to the window it is for
     w = tk.Tk(); real = dml.WINDOWS; dml.WINDOWS = False   # the Linux way, which Tk on Windows can do as well
     try:
         dml.set_window_icon(w, tk)
         img = getattr(w, "icon_image", None)
-        check("off Windows the window gets the icon as a 256-pixel picture", img is not None and img.width() == 256,
-              repr(img and img.width()))
+        mine = img is not None and str(img) in w.tk.call("image", "names")   # in this window's Tk, not the first root's
+        check("off Windows the window gets the icon as a 256-pixel picture of its own", mine and img.width() == 256,
+              repr((mine, img and img.width())))
     finally:
-        dml.WINDOWS = real; w.destroy()
+        dml.WINDOWS = real; w.destroy(); first.destroy()
 
 tk.Tk.mainloop = driver
 dml.gui(T)

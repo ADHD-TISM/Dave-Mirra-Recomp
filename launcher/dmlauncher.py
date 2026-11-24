@@ -119,7 +119,7 @@ def set_window_icon(win, tk):
             png = icon_png(icon)
             if png:
                 import base64
-                win.icon_image = tk.PhotoImage(data=base64.b64encode(png).decode("ascii"))   # kept: Tk needs it alive
+                win.icon_image = tk.PhotoImage(master=win, data=base64.b64encode(png).decode("ascii"))   # kept: Tk needs it alive
                 win.iconphoto(True, win.icon_image)
     except tk.TclError:
         pass
