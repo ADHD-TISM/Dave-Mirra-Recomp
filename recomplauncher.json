@@ -1,0 +1,142 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Dave Mirra Freestyle BMX",
+  "repo": "ADHD-TISM/Dave-Mirra-Recomp",
+  "inputs": [
+    {
+      "id": "bmx",
+      "label": "Your Dave Mirra Freestyle BMX disc image (USA, SLUS-01026): pick the .cue file (with its .bin beside it) or a .chd.",
+      "formats": [{ "type": "file", "extensions": ["cue", "bin", "chd"] }],
+      "check": { "iso9660": "SLUS_010.26" }
+    },
+    {
+      "id": "remix",
+      "label": "Your Dave Mirra Freestyle BMX: Maximum Remix disc image (USA, SLUS-01347): pick the .cue file (with its .bin beside it) or a .chd.",
+      "formats": [{ "type": "file", "extensions": ["cue", "bin", "chd"] }],
+      "check": { "iso9660": "SLUS_013.47" }
+    }
+  ],
+  "games": [
+    {
+      "id": "dmbmx",
+      "name": "Dave Mirra Freestyle BMX",
+      "args": ["--game", "dmbmx", "--disc", "{input:bmx}"],
+      "inputs": ["bmx"],
+      "saves": ["{data}/dmbmx/memcard*.mcd", "{data}/dmbmx/dmrecomp.ini"]
+    },
+    {
+      "id": "maxremix",
+      "name": "Dave Mirra Freestyle BMX: Maximum Remix",
+      "args": ["--game", "maxremix", "--disc", "{input:remix}"],
+      "inputs": ["remix"],
+      "saves": ["{data}/maxremix/memcard*.mcd", "{data}/maxremix/dmrecomp.ini"]
+    }
+  ],
+  "start": {
+    "program": ["Dave Mirra Freestyle BMX.exe", "Dave Mirra Freestyle BMX", "DaveMirraFreestyleBMX-Linux-x86_64.AppImage"],
+    "args": ["run", "--data", "{data}"]
+  },
+  "prepare": {
+    "program": ["Dave Mirra Freestyle BMX.exe", "Dave Mirra Freestyle BMX", "DaveMirraFreestyleBMX-Linux-x86_64.AppImage"],
+    "args": ["prepare", "--dmbmx={input:bmx}", "--maxremix={input:remix}"],
+    "label": "Translating the game's code from your disc and building it",
+    "options": [
+      {
+        "id": "downloads",
+        "label": "Download the build tools and the project's source",
+        "note": "From GitHub, kept in the game's folder: this project's source, and on Windows the llvm-mingw C compiler and a small Python (about 200 MB). On Linux the system's compiler and SDL2 are used; on a Steam Deck a small compiler (Zig) and SDL2's headers are downloaded.",
+        "required": true,
+        "args": ["--accept-downloads"]
+      }
+    ]
+  },
+  "settings": [
+    {
+      "id": "scale", "label": "Internal resolution", "in": "args", "group": "Picture",
+      "help": "How sharp the 3D is drawn. 1x is the PlayStation's own.",
+      "choices": [
+        { "label": "Game's option", "args": [] },
+        { "label": "1x (original)", "args": ["--set", "scale=1"] },
+        { "label": "2x", "args": ["--set", "scale=2"] },
+        { "label": "4x", "args": ["--set", "scale=4"] }
+      ]
+    },
+    {
+      "id": "widescreen", "label": "Widescreen", "in": "args", "group": "Picture",
+      "help": "Shows more of the scene at the sides, with the HUD and sky kept in shape. Experimental.",
+      "choices": [
+        { "label": "Game's option", "args": [] },
+        { "label": "Off (4:3)", "args": ["--set", "widescreen=off"] },
+        { "label": "16:9", "args": ["--set", "widescreen=16:9"] },
+        { "label": "16:10", "args": ["--set", "widescreen=16:10"] },
+        { "label": "21:9", "args": ["--set", "widescreen=21:9"] }
+      ]
+    },
+    {
+      "id": "filter", "label": "Picture filter", "in": "args", "group": "Picture",
+      "help": "How the picture is enlarged to the window.",
+      "choices": [
+        { "label": "Game's option", "args": [] },
+        { "label": "Sharp pixels", "args": ["--set", "filter=nearest"] },
+        { "label": "Smooth", "args": ["--set", "filter=smooth"] }
+      ]
+    },
+    {
+      "id": "upscale", "label": "Upscaling", "in": "args", "group": "Picture",
+      "help": "AMD FSR 1 sharpens the picture when the window is bigger than the game's picture. Works on any card.",
+      "choices": [
+        { "label": "Game's option", "args": [] },
+        { "label": "Off", "args": ["--set", "upscale=off"] },
+        { "label": "FSR", "args": ["--set", "upscale=fsr"] }
+      ]
+    },
+    {
+      "id": "fullscreen", "label": "Window mode", "in": "args", "group": "Picture",
+      "choices": [
+        { "label": "Game's option", "args": [] },
+        { "label": "Window", "args": ["--set", "fullscreen=0"] },
+        { "label": "Fullscreen", "args": ["--set", "fullscreen=1"] }
+      ]
+    },
+    {
+      "id": "renderer", "label": "Graphics API", "in": "args", "group": "Picture", "advanced": true,
+      "help": "Automatic picks Vulkan when it can do everything asked, else OpenGL.",
+      "choices": [
+        { "label": "Game's option", "args": [] },
+        { "label": "Automatic", "args": ["--set", "renderer=auto"] },
+        { "label": "OpenGL", "args": ["--set", "renderer=gl"] },
+        { "label": "Vulkan", "args": ["--set", "renderer=vulkan"] }
+      ]
+    },
+    {
+      "id": "intro", "label": "Intro movies", "in": "args", "group": "Game",
+      "help": "The publisher, developer and intro movies when the game starts.",
+      "choices": [
+        { "label": "Game's option", "args": [] },
+        { "label": "Skip them", "args": ["--set", "skip_intro=1"] },
+        { "label": "Play them", "args": ["--set", "skip_intro=0"] }
+      ]
+    },
+    {
+      "id": "volume", "label": "Volume", "in": "args", "group": "Game",
+      "help": "The game's sound, from 0 to 100.",
+      "slider": { "min": 0, "max": 100, "step": 10, "format": "%.0f" },
+      "args": ["--set", "volume={value}"]
+    }
+  ],
+  "folders": {
+    "saves": [{ "path": "{data}" }]
+  },
+  "actions": [
+    { "id": "saves", "label": "Saves and settings", "help": "Each game's memory cards, settings and last-run.log.", "open": "saves" }
+  ],
+  "looks": {
+    "allowed": false,
+    "reason": "The game is started by the project's own launcher, so the filters can't reach it. Use the game's own Smooth filter and FSR settings."
+  },
+  "system": {
+    "windows": { "version": "10", "graphics": { "opengl": "3.3" } },
+    "linux": { "glibc": "2.35", "graphics": { "opengl": "3.3" } }
+  }
+}

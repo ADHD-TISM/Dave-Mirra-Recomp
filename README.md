@@ -1,5 +1,7 @@
 # dmrecomp
 
+<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 Static recompilation of Dave Mirra Freestyle BMX (PS1, NTSC-U, SLUS-01026) and Dave Mirra Freestyle BMX: Maximum Remix
 (SLUS-01347) for Windows.
 
@@ -147,7 +149,7 @@ cannot be snapshotted).
 setup for you on Windows: **Update** downloads the project and a C compiler (about 200 MB) into
 folders next to the launcher, **Build** checks your disc image, translates the code and builds
 `game/<id>/dmrecomp.exe` (steps that are up to date are skipped), **Play** shows what is ready and starts
-the game, and **Settings** edits `game/<id>/dmrecomp.ini`. The launcher makes a **Dave Mirra BMX** folder next to itself: put your .cue and .bin there and they are found automatically. **Close the launcher when the game starts** is a checkbox on the Play tab. A **Dark mode** checkbox (it starts from your Windows setting) switches the window's colours. Updates never touch `game/`, so settings and
+the game, and **Settings** edits `game/<id>/dmrecomp.ini`. The launcher makes a **Dave Mirra BMX** folder next to itself: put your .cue and .bin (or a .chd) there and they are found automatically. A .chd (made by MAME's chdman, version 5, with its usual LZMA, Deflate and FLAC compression) is written out once to a .bin and .cue in `work/chd/` (about 330 MB per game, the same bytes it was made from), because the game and the code translator read those; the launcher reads it with plain Python, so nothing else is needed. **Close the launcher when the game starts** is a checkbox on the Play tab. A **Dark mode** checkbox (it starts from your Windows setting) switches the window's colours. Updates never touch `game/`, so settings and
 saves are kept. `python launcher/dmlauncher.py status|download|update|build|play|update-launcher`
 does the same without a window. `sh launcher/build_exe.sh` (needs PyInstaller) packs it into one file,
 `launcher/dist/Dave Mirra Freestyle BMX.exe`, which needs no Python installed and holds no game code or art (its icon, `launcher/icon.ico`,
@@ -156,6 +158,33 @@ so it can be shared; put it in its own folder and run it. On Linux run the scrip
 (the window needs Tkinter, `python3-tk` on Debian/Ubuntu; `status`, `download`, `build` and `play` work without it). There it
 uses the system's compiler and SDL2 instead of downloading a compiler, and says what to install when they are missing.
 Tested under WSL from the command line only; the Steam Deck, which has no compiler of its own, is not handled yet.
+
+### RecompLauncher
+
+[RecompLauncher](https://recomplauncher.com) can install and set up both games from `recomplauncher.json`, which
+`sh launcher/release.sh <version>` packs next to the launcher: on Windows into `DaveMirraFreestyleBMX-<version>-Windows-x64.zip`,
+on Linux into `DaveMirraFreestyleBMX-<version>-Linux-x86_64.tar.xz` and, given `APPIMAGE_RUNTIME=<the AppImage type 2
+runtime>`, an AppImage of the same files (build it on Ubuntu 22.04 or another system with glibc 2.35 or older, so it runs
+on newer ones; the packaged Linux launcher runs the code translator with the system's `python3`, and an AppImage started
+by itself keeps its folders next to the AppImage file).
+The player picks their disc image there; its setup step runs
+`"Dave Mirra Freestyle BMX.exe" prepare --dmbmx=<.cue> --maxremix=<.cue> --accept-downloads`, which downloads the
+compiler and the project only with `--accept-downloads` (a tick on the setup screen), builds the games without a
+window and prints `progress <0 to 1> <text>` lines. Play runs `"Dave Mirra Freestyle BMX.exe" run --game <id>
+--disc <.cue> --data <folder> [game options]`, which starts the game and waits for it. Its settings are passed as
+`--set name=value`. With `--data`, the game keeps its settings, memory cards and logs in `<folder>/<game id>/` instead of
+`game/<game id>/`; the first time, the ones already in `game/<game id>/` are copied there (never moved). In
+RecompLauncher's Big Picture mode (`RECOMPLAUNCHER_MODE=bigpicture`) the game starts full screen unless a fullscreen
+setting is passed on its command line.
+Started without these words, the launcher opens its window as before.
+
+### Recomp Achievements
+
+The game carries [Recomp Achievements](https://github.com/elripalda/RecompAchievements) (`runtime/achievements.c`, the
+library in `third_party/rl_achievements` under its own license, see `SOURCE.txt` there): when RecompLauncher starts it,
+the launcher's list of memory rules for the game is checked once a frame against the PlayStation's RAM (addresses as
+rcheevos counts them: main RAM from `0x000000`, the scratchpad from `0x200000`), and a memory-card file read from its start
+counts as a save loaded. Started any other way, the library does nothing. The lists themselves are kept by RecompLauncher.
 
 ## Packaging
 
