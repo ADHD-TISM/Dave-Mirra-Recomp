@@ -8,8 +8,8 @@
 set -e
 [ -n "$1" ] || { echo "usage: tools/package.sh <image.cue or image.bin> [out_dir]"; exit 1; }
 # pwd -W gives a Windows-style path under Git Bash, which native Python and CMake need
-IMG=$(cd "$(dirname "$1")" && (pwd -W 2>/dev/null || pwd))/$(basename "$1")
-cd "$(dirname "$0")/.."
+IMG=$(CDPATH= cd -- "$(dirname -- "$1")" && (pwd -W 2>/dev/null || pwd))/$(basename -- "$1")
+CDPATH= cd -- "$(dirname -- "$0")/.."   # CDPATH off, so a relative path is this script's own folder
 ROOT=$(pwd -W 2>/dev/null || pwd)
 case "$2" in "") OUT=$ROOT/dist ;; /*|?:*) OUT=$2 ;; *) OUT=$ROOT/$2 ;; esac
 [ -f "$IMG" ] || { echo "not found: $IMG"; exit 1; }

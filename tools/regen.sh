@@ -4,7 +4,7 @@
 # Without a game id, the game is the one whose executable is on the disc.
 set -e
 D=${1:-../disc}
-cd "$(dirname "$0")/.."
+CDPATH= cd -- "$(dirname -- "$0")/.."   # CDPATH off, so a relative path is this script's own folder
 [ -d "$D" ] || { echo "not found: $D"; exit 1; }
 if [ -n "$2" ]; then exec python -I tools/regen.py --game "$2" "$D" gen; fi
 exec python -I tools/regen.py "$D" gen

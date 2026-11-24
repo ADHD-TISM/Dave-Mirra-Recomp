@@ -275,7 +275,7 @@ def lone_script():
         err = e
     finally:
         w.destroy()
-    check("and setting up its window raises nothing", err is None, repr(err))
+    check("and setting up its window raises nothing", err is None, "" if err is None else repr(err))
     first = tk.Tk()   # a root made before: the picture must still belong to the window it is for
     w = tk.Tk(); real = dml.WINDOWS; dml.WINDOWS = False   # the Linux way, which Tk on Windows can do as well
     try:
