@@ -371,7 +371,10 @@ static inline s32 sx11(u32 v) { return ((s32)(v << 21)) >> 21; }
 /* Widescreen: the 3D picture is squeezed in the GTE and stretched again by the host, which would make everything flat
    that is drawn over it (the HUD, texts) or behind it (the sky) wide. While gpu_2d is set (mem.c: those parts of the list),
    polygons are squeezed here by the same factor, towards the middle of the drawing area, so they keep their shape on
-   screen. One that spans nearly the whole width (a fade, a darkening) is left alone: it has to cover the picture. */
+   screen. One that spans nearly the whole width (a fade, a darkening) is left alone: it has to cover the picture.
+   gpu_2d is 2 for the sky: its row is drawn wider than the screen (ws_sky_right in host_common.c), at very wide shapes
+   past x = 1023, so its x is read as the full halfword the game wrote, not as the 11 bits the console keeps; the
+   squeeze brings it back on screen. */
 int gpu_2d;
 extern int g_ws_kq;
 
@@ -385,7 +388,7 @@ static void cmd_polygon(void) {
         u32 col = (i > 0 && gouraud) ? fifo[k++] : fifo[0];
         u32 xy = fifo[k++];
         v[i].r = col & 0xff; v[i].g = (col >> 8) & 0xff; v[i].b = (col >> 16) & 0xff;
-        v[i].x = sx11(xy) + g.ox; v[i].y = sx11(xy >> 16) + g.oy; v[i].fx = 0;
+        v[i].x = (gpu_2d == 2 ? (s32)(s16)xy : sx11(xy)) + g.ox; v[i].y = sx11(xy >> 16) + g.oy; v[i].fx = 0;
         if (gpu_2d && gte_sxy_seen(xy)) projected++;
         if (textured) {
             u32 uv = fifo[k++];

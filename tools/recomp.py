@@ -469,6 +469,8 @@ def main():
         import json
         with open(a.patches, encoding='utf-8') as f:
             for k, v in json.load(f).get('patches', {}).items():
+                if not (isinstance(v, list) and len(v) == 2 and all(isinstance(s, str) for s in v)):
+                    raise SystemExit(f'patch {k}: want ["the C the instruction gives", "the C to emit instead"]')
                 PATCHES[int(k, 16)] = (v[0], v[1])
     extra = []
     for fn in a.extra:
@@ -535,7 +537,8 @@ def main():
     open(os.path.join(a.out_dir, f'{P}_table.c'), 'w').write(NL.join(tab) + NL)
     missing = sorted(set(PATCHES) - PATCHED)
     if missing:   # a patch whose instruction is in no translated function would silently do nothing
-        raise SystemExit('patches not applied (address not in a translated function): ' + ', '.join(f'{m:08x}' for m in missing))
+        raise SystemExit('patches not applied (not translated as a plain instruction: not reached, a branch or jump, '
+                         'or a branch in a delay slot): ' + ', '.join(f'{m:08x}' for m in missing))
     ninsn = sum(len(f.addrs) for f in funcs.values())
     njt = sum(len(f.tables) for f in funcs.values())
     print(f'{P}: {len(keys)} functions, {ninsn} insns, {njt} jump tables, {nfiles} files, {len(unresolved)} unresolved call targets')

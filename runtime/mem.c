@@ -59,7 +59,7 @@ static void dma_run(int ch) {
                 u32 h = ram32(a);
 #ifdef GAME_HUD_SLOT
                 if (!(h >> 24)) slots++;
-                gpu_2d = g_ws_kq != 65536 && (slots >= GAME_HUD_SLOT || slots == GAME_SKY_SLOT);
+                gpu_2d = g_ws_kq == 65536 ? 0 : slots == GAME_SKY_SLOT ? 2 : slots >= GAME_HUD_SLOT;   /* 2: the sky (gpu.c) */
 #endif
                 for (u32 i = 0, c = h >> 24; i < c; i++) gpu_write_gp0(ram32(a + 4 + 4 * i));
                 if (h & 0x800000) break;
