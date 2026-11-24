@@ -1056,8 +1056,10 @@ class Chd:
     def _read_tracks(self, metaoffset):
         tracks, off, seen = [], metaoffset, set()
         while off:
-            if off in seen or len(seen) >= 256:   # a CD has at most 99 tracks; a list that loops back is damaged
+            if off in seen:                      # a list that points back at an entry already read is damaged
                 raise chd_damaged(self.path, ValueError("its track list loops"))
+            if len(seen) >= 256:                 # a CD has at most 99 tracks
+                raise chd_damaged(self.path, ValueError("its track list is too long"))
             seen.add(off)
             self.f.seek(off)
             mh = self.f.read(16)
