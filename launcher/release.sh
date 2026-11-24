@@ -9,7 +9,8 @@
 # Needs what build_exe.sh needs.
 set -e
 V=${1:?usage: sh launcher/release.sh <version, like v1.2.3> [out folder]}
-case "$V" in   # the packed launcher only takes a version of this form (release_tag in dmlauncher.py)
+case "$V" in   # exactly the form the packed launcher takes (release_tag in dmlauncher.py: v, a digit, then 0-9 A-Z a-z . -)
+    *[!0-9A-Za-z.-]*) echo "the version must look like v1.2.3, not $V" >&2; exit 2 ;;
     v[0-9]*) ;;
     *) echo "the version must look like v1.2.3, not $V" >&2; exit 2 ;;
 esac
