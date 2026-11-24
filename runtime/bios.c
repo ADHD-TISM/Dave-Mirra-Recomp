@@ -395,6 +395,7 @@ static u32 mc_frw(u32 fd, u32 buf, u32 n, int wr) {
     mc_select(mc_fd[k].slot);
     if (mc_fd[k].pos < 0 || mc_fd[k].pos > mc_fd[k].size) return 0xffffffffu;
     if (n > (u32)(mc_fd[k].size - mc_fd[k].pos)) n = (u32)(mc_fd[k].size - mc_fd[k].pos);
+    if (!wr && n && mc_fd[k].pos == 0) { void ach_save_loaded(void); ach_save_loaded(); }   /* a save read from its start */
     for (u32 i = 0; i < n; i++) {
         int pos = mc_fd[k].pos + (int)i;
         u8 *b = mc + (mc_fd[k].chain[pos / MC_BLOCK] + 1) * MC_BLOCK + pos % MC_BLOCK;

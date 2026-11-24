@@ -10,6 +10,10 @@ this file, and nothing is written outside that folder.
     python dmlauncher.py status               what is ready (no window)
     python dmlauncher.py games                the games it can build
     python dmlauncher.py download|update|build|play|update-launcher
+    python dmlauncher.py run [game options]   start the game and wait until it ends (its exit code is this one's)
+    python dmlauncher.py prepare --dmbmx=FILE.cue --maxremix=FILE.cue [--accept-downloads]
+                                              build those games without a window, printing "progress" lines;
+                                              downloads only with --accept-downloads (RecompLauncher's setup step)
     python dmlauncher.py shortcut             Linux: add the game to the applications menu (Steam can add it from there)
     python dmlauncher.py --game ID ...        pick the game (dmbmx, maxremix) instead of the remembered one
     python dmlauncher.py --root DIR ...       keep everything in DIR instead
@@ -26,6 +30,7 @@ development files are used when there are any; otherwise (the Steam Deck's Steam
 portable compiler (Zig) and SDL2's header files are downloaded, and the system's SDL2 and OpenGL libraries
 are used. The Update tab says what to install if even those are missing.
 """
+import array
 import hashlib
 import json
 import os
@@ -126,6 +131,10 @@ def set_window_icon(win, tk):
 
 
 def default_root():
+    if FROZEN and not WINDOWS and os.environ.get("APPIMAGE"):
+        # run from an AppImage file: its own files are read-only, so everything goes next to the AppImage file
+        # (RecompLauncher unpacks an AppImage and runs it from that folder, without APPIMAGE)
+        return os.path.dirname(os.path.abspath(os.environ["APPIMAGE"]))
     if FROZEN:
         return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.abspath(__file__))
@@ -144,6 +153,8 @@ class Paths:
         self.sdl_inc = os.path.join(self.tools, "sdl2-include")
         self.discdir = os.path.join(self.root, "Dave Mirra BMX")   # where people put their disc image
         self.cfg = os.path.join(self.root, "launcher.json")
+        CHD_CACHE[0] = os.path.join(self.work, "chd")   # where a .chd disc image is written out for the game
+        self.data = None    # --data DIR: the game keeps its settings, memory cards and logs in DIR/<game> instead
         self.use(gid)
 
     def use(self, gid):
@@ -154,7 +165,8 @@ class Paths:
         self.obj = os.path.join(self.work, gid, "obj")
         self.disc = os.path.join(self.work, gid, "disc")
         self.exe = os.path.join(self.game, EXE_FILE)
-        self.ini = os.path.join(self.game, "dmrecomp.ini")
+        self.home = os.path.join(self.data, gid) if self.data else self.game   # where the game runs and writes
+        self.ini = os.path.join(self.home, "dmrecomp.ini")
 
     @property
     def cc(self):
@@ -178,7 +190,13 @@ class Paths:
 
     @property
     def tool_python(self):
-        return os.path.join(self.pydir, "python.exe") if FROZEN else sys.executable
+        """The Python the code translator runs with: this one; when packaged, the downloaded one on Windows and the
+        system's python3 elsewhere (Linux desktops and the Steam Deck have one)."""
+        if not FROZEN:
+            return sys.executable
+        if WINDOWS:
+            return os.path.join(self.pydir, "python.exe")
+        return shutil.which("python3") or "python3"
 
 
 PER_GAME = ("disc", "regen_key", "build_key")   # kept separately for each game
@@ -419,6 +437,8 @@ def find_lib(name):
 def linux_missing(P):
     """What the build needs from the system and cannot get for itself."""
     miss = []
+    if FROZEN and not shutil.which("python3"):   # the packaged launcher runs the code translator with it
+        miss.append("Python 3 (python3)")
     if not P.portable:
         if not (shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")):
             miss.append("a C compiler (gcc)")
@@ -619,12 +639,556 @@ def update_launcher(P, C, log):
     return True
 
 
+# ---------------------------------------------------------------- CHD disc images
+# A .chd (MAME's compressed hunks of data, version 5) is read here with the standard library only: its map, its CD
+# tracks, and hunks compressed with LZMA or Deflate (the "cdlz" and "cdzl" codecs chdman uses for CDs). Hunks in FLAC or
+# Zstandard, and CHDs that need a parent, are refused with a message saying how to make one this reads. The launcher reads
+# a few sectors of it to tell which game it is; to translate and play, it writes the disc out once as the .bin and .cue the
+# game reads (work/chd/), the same bytes the image was made from.
+
+CHD_CACHE = [None]                     # the folder the images are written out to: set by Paths (work/chd)
+CD_FRAME, CD_SECTOR = 2448, 2352       # a CHD CD frame: the sector and its 96 bytes of subcode
+CHD_CD_CODECS = {b"cdlz": "lzma", b"cdzl": "deflate", b"cdfl": "flac", b"cdzs": "zstd"}
+
+
+class ChdBits:
+    """Bits read most significant first, as libchdr's bitstream does; reading past the end gives zeros."""
+    def __init__(self, data):
+        self.data, self.pos = data, 0
+
+    def read(self, n):
+        if n == 0:
+            return 0
+        first, last = self.pos >> 3, (self.pos + n - 1) >> 3
+        chunk = self.data[first:last + 1].ljust(last - first + 1, b"\0")
+        v = (int.from_bytes(chunk, "big") >> ((last + 1) * 8 - self.pos - n)) & ((1 << n) - 1)
+        self.pos += n
+        return v
+
+
+class ChdHuffman:
+    """The canonical Huffman code a v5 map is written with (libchdr's huffman_import_tree_rle and decode_one)."""
+    def __init__(self, bits, numcodes=16, maxbits=8):
+        nb = 5 if maxbits >= 16 else 4 if maxbits >= 8 else 3
+        lens = []
+        while len(lens) < numcodes:
+            n = bits.read(nb)
+            if n != 1:
+                lens.append(n)
+            else:
+                n = bits.read(nb)
+                if n == 1:
+                    lens.append(n)
+                else:
+                    lens.extend([n] * (bits.read(nb) + 3))
+        if len(lens) != numcodes or max(lens) > maxbits:
+            raise Fail("the .chd map is damaged (its code table)")
+        histo = [0] * 33
+        for n in lens:
+            histo[n] += 1
+        start = 0
+        for n in range(32, 0, -1):
+            nxt = (start + histo[n]) >> 1
+            histo[n], start = start, nxt
+        self.maxbits, self.table = maxbits, [None] * (1 << maxbits)
+        for sym, n in enumerate(lens):
+            if n:
+                code = histo[n]
+                histo[n] += 1
+                shift = maxbits - n
+                for k in range(code << shift, (code + 1) << shift):
+                    self.table[k] = (sym, n)
+
+    def decode(self, bits):
+        save = bits.pos
+        hit = self.table[bits.read(self.maxbits)]
+        if hit is None:
+            raise Fail("the .chd map is damaged (an unknown code)")
+        bits.pos = save + hit[1]
+        return hit[0]
+
+
+def _ecc_tables():
+    f, b = [0] * 256, [0] * 256
+    for i in range(256):
+        j = ((i << 1) ^ (0x11D if i & 0x80 else 0)) & 0xFF
+        f[i], b[i ^ j] = j, i
+    return f, b
+
+
+def cd_ecc_generate(sector):
+    """Put back the P and Q error correction of a sector (bytes 2076 to 2351), as the CD format defines it. A Mode 2
+    sector (a PlayStation disc) has it worked out with its 4-byte address read as zeros."""
+    f, b = _ecc_tables()
+    address = bytes(sector[12:16])
+    if sector[15] == 2:
+        sector[12:16] = b"\0\0\0\0"
+
+    def block(major_count, minor_count, major_mult, minor_inc, dest):
+        size = major_count * minor_count    # bytes from offset 12 on; Q covers P's bytes, so P is made first
+        for major in range(major_count):
+            index, ea, eb = (major >> 1) * major_mult + (major & 1), 0, 0
+            for _minor in range(minor_count):
+                t = sector[12 + index]
+                index += minor_inc
+                if index >= size:
+                    index -= size
+                ea ^= t
+                eb ^= t
+                ea = f[ea]
+            ea = b[f[ea] ^ eb]
+            sector[dest + major] = ea
+            sector[dest + major + major_count] = ea ^ eb
+    block(86, 24, 2, 86, 0x81C)
+    block(52, 43, 86, 88, 0x8C8)
+    sector[12:16] = address
+
+
+def flac_frames(data, nsamples):
+    """Decode FLAC frames (no stream header, as a CHD's "cdfl" hunk holds them) until nsamples stereo samples are
+    out. Returns (the samples interleaved left, right; the byte offset after the last frame). The subset libFLAC
+    writes: constant, verbatim, fixed and LPC subframes, Rice residuals, the three stereo decorrelations."""
+    bits = bin(int.from_bytes(b"\x01" + data, "big"))[3:]   # one '0' or '1' per bit: str.find reads unary codes fast
+    pos = 0
+
+    def rd(n):
+        nonlocal pos
+        if not n:
+            return 0
+        v = int(bits[pos:pos + n], 2)
+        pos += n
+        return v
+
+    def rds(n):
+        v = rd(n)
+        return v - (1 << n) if n and v >> (n - 1) else v
+
+    def residual(bs, order):
+        nonlocal pos
+        method, porder = rd(2), None
+        pbits, esc = (4, 15) if method == 0 else (5, 31)
+        porder = rd(4)
+        out = []
+        for p in range(1 << porder):
+            n = (bs >> porder) - (order if p == 0 else 0)
+            k = rd(pbits)
+            if k == esc:
+                w = rd(5)
+                out.extend(rds(w) for _ in range(n))
+                continue
+            find = bits.find
+            for _ in range(n):
+                one = find("1", pos)
+                if one < 0:
+                    raise Fail("a FLAC hunk of the .chd is damaged")
+                q, pos = one - pos, one + 1
+                v = (q << k) | (int(bits[pos:pos + k], 2) if k else 0)
+                pos += k
+                out.append((v >> 1) ^ -(v & 1))
+        return out
+
+    left, right, done = [], [], 0
+    while done < nsamples:
+        if rd(14) != 0x3FFE:
+            raise Fail("a FLAC hunk of the .chd is damaged (no frame start)")
+        rd(2)
+        bscode, srcode, chan, sscode = rd(4), rd(4), rd(4), rd(3)
+        rd(1)
+        first = rd(8)
+        extra = 0
+        while first & (0x80 >> extra):
+            extra += 1
+        for _ in range(max(extra - 1, 0)):
+            rd(8)
+        if bscode == 1:
+            bs = 192
+        elif 2 <= bscode <= 5:
+            bs = 576 << (bscode - 2)
+        elif bscode == 6:
+            bs = rd(8) + 1
+        elif bscode == 7:
+            bs = rd(16) + 1
+        elif bscode >= 8:
+            bs = 256 << (bscode - 8)
+        else:
+            raise Fail("a FLAC hunk of the .chd is damaged (block size)")
+        if srcode == 12:
+            rd(8)
+        elif srcode in (13, 14):
+            rd(16)
+        ss = {0: 16, 1: 8, 2: 12, 4: 16, 5: 20, 6: 24}.get(sscode, 16)
+        rd(8)                                             # header CRC-8
+        if chan not in (1, 8, 9, 10):
+            raise Fail("a FLAC hunk of the .chd is not stereo")
+        chans = []
+        for ch in range(2):
+            bps = ss + (1 if (chan == 8 and ch == 1) or (chan == 9 and ch == 0) or (chan == 10 and ch == 1) else 0)
+            rd(1)
+            t = rd(6)
+            wasted = 0
+            if rd(1):
+                one = bits.find("1", pos)
+                wasted, pos = one - pos + 1, one + 1
+                bps -= wasted
+            if t == 0:
+                s = [rds(bps)] * bs
+            elif t == 1:
+                s = [rds(bps) for _ in range(bs)]
+            elif 8 <= t <= 12:
+                order = t - 8
+                s = [rds(bps) for _ in range(order)]
+                res = residual(bs, order)
+                if order == 0:
+                    s = res
+                else:
+                    for r in res:
+                        if order == 1:
+                            s.append(r + s[-1])
+                        elif order == 2:
+                            s.append(r + 2 * s[-1] - s[-2])
+                        elif order == 3:
+                            s.append(r + 3 * s[-1] - 3 * s[-2] + s[-3])
+                        else:
+                            s.append(r + 4 * s[-1] - 6 * s[-2] + 4 * s[-3] - s[-4])
+            elif t >= 32:
+                order = (t & 31) + 1
+                s = [rds(bps) for _ in range(order)]
+                prec = rd(4) + 1
+                shift = rds(5)
+                coefs = [rds(prec) for _ in range(order)]
+                res = residual(bs, order)
+                rc = coefs[::-1]
+                for r in res:
+                    tail = s[-order:]
+                    s.append(r + (sum(c * x for c, x in zip(rc, tail)) >> shift))
+            else:
+                raise Fail("a FLAC hunk of the .chd uses a subframe type this does not read")
+            if wasted:
+                s = [x << wasted for x in s]
+            chans.append(s)
+        pos = (pos + 7) & ~7
+        rd(16)                                            # frame CRC-16
+        a, b = chans
+        if chan == 8:                                     # left, side
+            b = [x - y for x, y in zip(a, b)]
+        elif chan == 9:                                   # side, right
+            a = [x + y for x, y in zip(a, b)]
+        elif chan == 10:                                  # mid, side
+            m = [(x << 1) | (y & 1) for x, y in zip(a, b)]
+            a = [(x + y) >> 1 for x, y in zip(m, b)]
+            b = [(x - y) >> 1 for x, y in zip(m, b)]
+        left += a
+        right += b
+        done += bs
+    inter = [0] * (2 * nsamples)
+    inter[0::2], inter[1::2] = left[:nsamples], right[:nsamples]
+    return inter, pos >> 3
+
+
+class Chd:
+    def __init__(self, path):
+        self.path = path
+        self.f = open(path, "rb")
+        h = self.f.read(124)
+        if len(h) < 16 or h[:8] != b"MComprHD":
+            raise Fail("%s is not a CHD image" % os.path.basename(path))
+        version = struct.unpack_from(">I", h, 12)[0]
+        if version != 5:
+            raise Fail("%s is a version %d CHD; this reads version 5 (make it again with a recent chdman: "
+                       "chdman createcd -i <your .cue> -o <new .chd>)" % (os.path.basename(path), version))
+        self.codecs = [h[16 + 4 * i:20 + 4 * i] for i in range(4)]
+        self.logical, mapoffset, metaoffset = struct.unpack_from(">QQQ", h, 32)
+        self.hunkbytes, self.unitbytes = struct.unpack_from(">II", h, 56)
+        if h[104:124] != b"\0" * 20:
+            raise Fail("%s needs a parent CHD; make a whole one with chdman" % os.path.basename(path))
+        if not self.hunkbytes or self.hunkbytes % CD_FRAME:
+            raise Fail("%s is not a CD image (its hunks are not whole CD frames)" % os.path.basename(path))
+        self.hunks = (self.logical + self.hunkbytes - 1) // self.hunkbytes
+        self.map = self._read_map(mapoffset)
+        self.tracks = self._read_tracks(metaoffset)
+        self._cache = {}
+
+    def close(self):
+        self.f.close()
+
+    def _read_map(self, mapoffset):
+        if self.codecs[0] == b"\0\0\0\0":    # an uncompressed CHD: a plain table of hunk offsets
+            self.f.seek(mapoffset)
+            raw = self.f.read(4 * self.hunks)
+            return [(4, struct.unpack_from(">I", raw, 4 * i)[0] * self.hunkbytes, self.hunkbytes, None) if
+                    struct.unpack_from(">I", raw, 4 * i)[0] else (None, 0, 0, None) for i in range(self.hunks)]
+        self.f.seek(mapoffset)
+        mh = self.f.read(16)
+        mapbytes = struct.unpack_from(">I", mh, 0)[0]
+        firstoffs = int.from_bytes(mh[4:10], "big")
+        mapcrc = struct.unpack_from(">H", mh, 10)[0]
+        lengthbits, selfbits, parentbits = mh[12], mh[13], mh[14]
+        bits = ChdBits(self.f.read(mapbytes))
+        huff = ChdHuffman(bits)
+        comps, rep, last = [], 0, 0
+        for _ in range(self.hunks):
+            if rep:
+                comps.append(last)
+                rep -= 1
+                continue
+            v = huff.decode(bits)
+            if v == 7:                       # COMPRESSION_RLE_SMALL
+                comps.append(last)
+                rep = 2 + huff.decode(bits)
+            elif v == 8:                     # COMPRESSION_RLE_LARGE
+                comps.append(last)
+                rep = 2 + 16 + (huff.decode(bits) << 4)
+                rep += huff.decode(bits)
+            else:
+                comps.append(v)
+                last = v
+        out, cur, last_self, last_parent = [], firstoffs, 0, 0
+        raw = bytearray()
+        for n, c in enumerate(comps):
+            length, offset, crc = 0, 0, 0
+            if c <= 3:                       # COMPRESSION_TYPE_0..3: compressed with codecs[c]
+                length = bits.read(lengthbits)
+                offset, cur = cur, cur + length
+                crc = bits.read(16)
+            elif c == 4:                     # COMPRESSION_NONE
+                length = self.hunkbytes
+                offset, cur = cur, cur + length
+                crc = bits.read(16)
+            elif c == 5:                     # COMPRESSION_SELF: a copy of an earlier hunk
+                offset = last_self = bits.read(selfbits)
+            elif c == 6:                     # COMPRESSION_PARENT
+                offset = last_parent = bits.read(parentbits)
+            elif c == 9:                     # COMPRESSION_SELF_0
+                c, offset = 5, last_self
+            elif c == 10:                    # COMPRESSION_SELF_1
+                last_self += 1
+                c, offset = 5, last_self
+            elif c == 11:                    # COMPRESSION_PARENT_SELF
+                c, offset = 6, n * self.hunkbytes // self.unitbytes
+                last_parent = offset
+            elif c == 12:                    # COMPRESSION_PARENT_0
+                c, offset = 6, last_parent
+            elif c == 13:                    # COMPRESSION_PARENT_1
+                last_parent += self.hunkbytes // self.unitbytes
+                c, offset = 6, last_parent
+            else:
+                raise Fail("the .chd map is damaged (hunk type %d)" % c)
+            out.append((c, offset, length, crc))
+            raw += bytes([c]) + length.to_bytes(3, "big") + offset.to_bytes(6, "big") + (crc & 0xFFFF).to_bytes(2, "big")
+        import binascii
+        if binascii.crc_hqx(bytes(raw), 0xFFFF) != mapcrc:
+            raise Fail("the .chd map is damaged (its check sum is wrong)")
+        return out
+
+    def _read_tracks(self, metaoffset):
+        tracks, off = [], metaoffset
+        while off:
+            self.f.seek(off)
+            mh = self.f.read(16)
+            if len(mh) < 16:
+                break
+            tag, fl, nxt = mh[:4], struct.unpack_from(">I", mh, 4)[0], struct.unpack_from(">Q", mh, 8)[0]
+            data = self.f.read(fl & 0xFFFFFF)
+            if tag in (b"CHT2", b"CHTR"):
+                d = dict(re.findall(r"([A-Z]+):(\S+)", data.split(b"\0")[0].decode("ascii", "replace")))
+                tracks.append({"num": int(d["TRACK"]), "type": d["TYPE"], "frames": int(d["FRAMES"]),
+                               "pregap": int(d.get("PREGAP", 0)), "pgtype": d.get("PGTYPE", "MODE1"),
+                               "postgap": int(d.get("POSTGAP", 0))})
+            off = nxt
+        if not tracks:
+            raise Fail("%s is not a CD image (it has no track list)" % os.path.basename(self.path))
+        tracks.sort(key=lambda t: t["num"])
+        start = 0
+        for t in tracks:
+            if t["type"] not in ("MODE1_RAW", "MODE2_RAW", "AUDIO"):
+                raise Fail("%s has a %s track; this reads raw 2352-byte tracks (make it with chdman createcd from "
+                           "your .cue and .bin)" % (os.path.basename(self.path), t["type"]))
+            t["start"] = start
+            start += (t["frames"] + 3) // 4 * 4    # each track's frames are padded to a multiple of 4 in the CHD
+        return tracks
+
+    def hunk(self, n):
+        got = self._cache.get(n)
+        if got is not None:
+            return got
+        c, offset, length, crc = self.map[n]
+        if c is None:                            # never written: zeros
+            data = bytes(self.hunkbytes)
+        elif c == 5:
+            data = self.hunk(offset)
+        elif c == 6:
+            raise Fail("%s needs a parent CHD; make a whole one with chdman" % os.path.basename(self.path))
+        else:
+            self.f.seek(offset)
+            src = self.f.read(length)
+            data = src if c == 4 else self._decompress(self.codecs[c], src)
+            if crc is not None and c != 5:
+                import binascii
+                if binascii.crc_hqx(data, 0xFFFF) != crc:
+                    raise Fail("%s is damaged: hunk %d does not match its check sum" % (os.path.basename(self.path), n))
+        if len(self._cache) > 64:
+            self._cache.clear()
+        self._cache[n] = data
+        return data
+
+    def _decompress(self, codec, src):
+        kind = CHD_CD_CODECS.get(codec)
+        if kind not in ("lzma", "deflate", "flac"):
+            raise Fail("%s uses %s compression, which this does not read. Make one with LZMA, Deflate and FLAC: "
+                       "chdman createcd -c cdlz,cdzl,cdfl -i <your .cue> -o <new .chd>"
+                       % (os.path.basename(self.path), kind or codec.decode("ascii", "replace")))
+        frames = self.hunkbytes // CD_FRAME
+        if kind == "flac":                 # the sectors as 16-bit big-endian stereo samples, then the subcode (Deflate)
+            import zlib
+            samples, end = flac_frames(src, frames * CD_SECTOR // 4)
+            a = array.array("h", samples)
+            if sys.byteorder == "little":
+                a.byteswap()
+            base = a.tobytes()
+            sub = zlib.decompressobj(-15).decompress(src[end:], frames * 96).ljust(frames * 96, b"\0")
+            return b"".join(base[i * CD_SECTOR:(i + 1) * CD_SECTOR] + sub[i * 96:(i + 1) * 96] for i in range(frames))
+        clen = 2 if self.hunkbytes < 65536 else 3
+        eccb = (frames + 7) // 8
+        hdr = eccb + clen
+        base_len = int.from_bytes(src[eccb:eccb + clen], "big")
+        base_src, sub_src = src[hdr:hdr + base_len], src[hdr + base_len:]
+        want = frames * CD_SECTOR
+        if kind == "lzma":
+            import lzma
+            dsz = max(1 << 12, 1 << (want - 1).bit_length())
+            base = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[
+                {"id": lzma.FILTER_LZMA1, "dict_size": dsz, "lc": 3, "lp": 0, "pb": 2}]).decompress(base_src, want)
+        else:
+            import zlib
+            base = zlib.decompressobj(-15).decompress(base_src, want)
+        import zlib
+        sub = zlib.decompressobj(-15).decompress(sub_src, frames * 96) if sub_src else bytes(frames * 96)
+        if len(base) != want:
+            raise Fail("%s is damaged: a hunk is too short" % os.path.basename(self.path))
+        sub = sub.ljust(frames * 96, b"\0")
+        out = bytearray()
+        for i in range(frames):
+            sector = bytearray(base[i * CD_SECTOR:(i + 1) * CD_SECTOR])
+            if src[i >> 3] & (1 << (i & 7)):     # sync and error correction left out: they are put back
+                sector[0:12] = b"\x00" + b"\xff" * 10 + b"\x00"
+                cd_ecc_generate(sector)
+            out += sector + sub[i * 96:(i + 1) * 96]
+        return bytes(out)
+
+    def frame(self, n):
+        """Sector n (2352 bytes, no subcode) counted from the start of the CHD's frames."""
+        per = self.hunkbytes // CD_FRAME
+        h = self.hunk(n // per)
+        i = n % per
+        return h[i * CD_FRAME:i * CD_FRAME + CD_SECTOR]
+
+    def data_sector(self, lba):
+        """The 2048 data bytes of the first track's sector at lba, or b"" past its end."""
+        t = self.tracks[0]
+        if lba >= t["frames"]:
+            return b""
+        raw = self.frame(t["start"] + lba)
+        return raw[24:24 + 2048] if raw[15] == 2 else raw[16:16 + 2048]
+
+
+class ChdRaw:
+    """A .chd's first track read like the raw .bin it was made from (seek and read), for a look at a few sectors."""
+    def __init__(self, path):
+        self.chd, self.pos = Chd(path), 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.chd.close()
+
+    def seek(self, pos):
+        self.pos = pos
+
+    def read(self, n):
+        t, out = self.chd.tracks[0], bytearray()
+        while n > 0:
+            lba, off = divmod(self.pos, CD_SECTOR)
+            if lba >= t["frames"]:
+                break
+            part = self.chd.frame(t["start"] + lba)[off:off + n]
+            out += part
+            self.pos += len(part)
+            n -= len(part)
+        return bytes(out)
+
+
+def is_chd(path):
+    return bool(path) and path.lower().endswith(".chd")
+
+
+def game_image(path):
+    """The image the game itself is given: a .chd is written out to a .bin and .cue first, which the game reads."""
+    return chd_written_out(path) if is_chd(path) else path
+
+
+def chd_fingerprint(path):
+    st = os.stat(path)
+    return "%s|%d|%d" % (os.path.abspath(path), st.st_size, st.st_mtime_ns)
+
+
+def chd_written_out(path):
+    """The .cue that a .chd is written out to, writing it the first time: one .bin holding every track one after the
+    other, audio little-endian as in a .bin (a CHD keeps it big-endian), and a .cue naming the tracks."""
+    if not CHD_CACHE[0]:
+        raise Fail("no folder to write the .chd out to")
+    key = hashlib.sha1(chd_fingerprint(path).encode()).hexdigest()[:16]
+    stem = re.sub(r"[^A-Za-z0-9 ._()\[\]-]", "_", os.path.splitext(os.path.basename(path))[0]) or "disc"
+    d = os.path.join(CHD_CACHE[0], key)
+    cue, binp = os.path.join(d, stem + ".cue"), os.path.join(d, stem + ".bin")
+    if os.path.isfile(os.path.join(d, "done")) and os.path.isfile(cue) and os.path.isfile(binp):
+        return cue
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(d)
+    c = Chd(path)
+    try:
+        lines, pos = ['FILE "%s" BINARY' % os.path.basename(binp)], 0
+        with open(binp + ".tmp", "wb") as out:
+            for t in c.tracks:
+                typ = {"MODE1_RAW": "MODE1/2352", "MODE2_RAW": "MODE2/2352", "AUDIO": "AUDIO"}[t["type"]]
+                lines.append("  TRACK %02d %s" % (t["num"], typ))
+                stored_pregap = t["pgtype"].startswith("V") and t["pregap"]
+                if t["pregap"] and not stored_pregap:
+                    lines.append("    PREGAP %s" % cue_msf(t["pregap"]))
+                if stored_pregap:
+                    lines.append("    INDEX 00 %s" % cue_msf(pos))
+                lines.append("    INDEX 01 %s" % cue_msf(pos + (t["pregap"] if stored_pregap else 0)))
+                if t["postgap"]:
+                    lines.append("    POSTGAP %s" % cue_msf(t["postgap"]))
+                for i in range(t["frames"]):
+                    s = c.frame(t["start"] + i)
+                    if t["type"] == "AUDIO":     # big-endian samples back to little-endian
+                        a = array.array("H", s)
+                        a.byteswap()
+                        s = a.tobytes()
+                    out.write(s)
+                pos += t["frames"]
+        os.replace(binp + ".tmp", binp)
+        with open(cue, "w", newline="\r\n") as f:
+            f.write("\n".join(lines) + "\n")
+        open(os.path.join(d, "done"), "w").close()
+    finally:
+        c.close()
+    return cue
+
+
+def cue_msf(frames):
+    return "%02d:%02d:%02d" % (frames // 4500, frames // 75 % 60, frames % 75)
+
+
 # ---------------------------------------------------------------- disc
 
 def resolve_bin(path):
-    """The .bin behind a .cue (or the .bin itself)."""
+    """The .bin behind a .cue (or the .bin itself; for a .chd, the .bin it is written out to)."""
     if not path or not os.path.isfile(path):
         raise Fail("disc image not found: %s" % (path or "(none chosen)"))
+    if is_chd(path):
+        path = chd_written_out(path)
     if path.lower().endswith(".cue"):
         with open(path, encoding="utf-8", errors="replace") as f:
             m = re.search(r'^\s*FILE\s+"(.+?)"', f.read(), re.M | re.I)
@@ -649,10 +1213,18 @@ def resolve_bin(path):
 
 
 def disc_fingerprint(path):
+    if is_chd(path):                   # the .chd itself: writing it out is left for the build
+        if not os.path.isfile(path):
+            raise Fail("disc image not found: %s" % path)
+        with open(path, "rb") as f:
+            if f.read(8) != b"MComprHD":
+                raise Fail("%s is not a CHD image" % os.path.basename(path))
+        return chd_fingerprint(path)
     b = resolve_bin(path)
     st = os.stat(b)
     if st.st_size % 2352:
-        raise Fail("%s is not a raw 2352-byte-sector image; the game needs a BIN/CUE dump" % os.path.basename(b))
+        raise Fail("%s is not a raw 2352-byte-sector image; the game needs a BIN/CUE or CHD dump (an .iso holds "
+                   "no movie or XA sound sectors)" % os.path.basename(b))
     return "%s|%d|%d" % (os.path.abspath(b), st.st_size, st.st_mtime_ns)
 
 
@@ -731,6 +1303,16 @@ def _sources(P):
     src += [("gen", os.path.join(P.gen, n)) for n in sorted(os.listdir(P.gen)) if n.endswith(".c")]
     hdr = [os.path.join(rt, n) for n in sorted(os.listdir(rt)) if n.endswith(".h")]
     hdr += [os.path.join(P.gen, n) for n in sorted(os.listdir(P.gen)) if n.endswith(".h")]
+    rla = os.path.join(P.project, "third_party", "rl_achievements")   # Recomp Achievements, in newer projects
+    if os.path.isdir(rla):
+        for sub in ("src", os.path.join("third_party", "cjson"), os.path.join("third_party", "rcheevos", "src", "runtime"),
+                    os.path.join("third_party", "rcheevos", "src", "util")):
+            d = os.path.join(rla, sub)
+            src += [("ach", os.path.join(d, n)) for n in sorted(os.listdir(d)) if n.endswith(".c")]
+        for sub in ("include", os.path.join("third_party", "cjson"), os.path.join("third_party", "rcheevos", "include"),
+                    os.path.join("third_party", "rcheevos", "src", "runtime"), os.path.join("third_party", "rcheevos", "src")):
+            d = os.path.join(rla, sub)
+            hdr += [os.path.join(d, n) for n in sorted(os.listdir(d)) if n.endswith(".h")]
     return src, hdr
 
 
@@ -740,6 +1322,12 @@ def _flags(P, kind):
          "-Wall", "-Wno-unused-function", "-fno-strict-aliasing"]
     if kind == "gen":
         f += ["-O1", "-w"]
+    rla = os.path.join(P.project, "third_party", "rl_achievements")
+    if os.path.isdir(rla):   # runtime/achievements.c and the library itself (CMakeLists.txt does the same)
+        f += ["-I", os.path.join(rla, "include")]
+        if kind == "ach":
+            f += ["-I", os.path.join(rla, "third_party", "rcheevos", "include"), "-I", os.path.join(rla, "third_party", "rcheevos", "src"),
+                  "-I", os.path.join(rla, "third_party", "cjson"), "-DRC_DISABLE_LUA", "-w"]
     if not WINDOWS:
         f += ["-DDM_SDL"] + (["-I", P.sdl_inc] if P.portable else sdl_flags("--cflags"))
     return f
@@ -1086,19 +1674,40 @@ def _log_lock(f):
                 raise
 
 
-def play(P, C, disc_path, log):
+SAVE_FILES = ("memcard1.mcd", "memcard2.mcd", "dmrecomp.ini")
+
+
+def bring_saves(P, log):
+    """With --data, the game's own files live in DIR/<game>. The first time, the memory cards and settings the game
+    already has in game/<game> are copied there (copied, never moved: the originals stay). A file already in DIR/<game>
+    is never replaced."""
+    os.makedirs(P.home, exist_ok=True)
+    for n in SAVE_FILES:
+        src, dst = os.path.join(P.game, n), os.path.join(P.home, n)
+        if os.path.isfile(src) and not os.path.exists(dst):
+            tmp = dst + ".copying"
+            shutil.copy2(src, tmp)
+            os.replace(tmp, dst)
+            log("copied %s to %s (the one in %s stays)" % (n, P.home, P.game))
+
+
+def play(P, C, disc_path, log, extra=(), wait=False):
+    """Start the built game. extra: more arguments for the game (after the disc). wait: stay until the game ends and
+    return its exit code (the run command, for a launcher that watches the process); otherwise return at once."""
     if not os.path.isfile(P.exe):
         raise Fail("the game is not built yet (Build tab)")
     if not disc_path:
         raise Fail("choose your disc image first (Build tab)")
     resolve_bin(disc_path)
-    args = [P.exe, os.path.abspath(disc_path)] + [f for f, _ in DEBUG_FLAGS if f in C.get("debug_flags", [])]
+    args = [P.exe, os.path.abspath(game_image(disc_path))] + [f for f, _ in DEBUG_FLAGS if f in C.get("debug_flags", [])] + list(extra)
     flags = NEW_CONSOLE if C.get("debug_console", False) else NO_WINDOW
+    if P.home != P.game:
+        bring_saves(P, log)
     # Without the console window, what the game says goes to a file in its folder: if the game ever stops, the stall
     # watchdog's report is in there. The run before is kept too, because the first thing done after a freeze is to start again.
     out = None
     if not (WINDOWS and C.get("debug_console", False)):   # the console window exists on Windows only
-        cur, old = os.path.join(P.game, RUN_LOG), os.path.join(P.game, RUN_LOG_BEFORE)
+        cur, old = os.path.join(P.home, RUN_LOG), os.path.join(P.home, RUN_LOG_BEFORE)
         try:
             if os.path.isfile(cur):
                 if WINDOWS:
@@ -1126,13 +1735,14 @@ def play(P, C, disc_path, log):
             out = None
     try:
         if out:
-            subprocess.Popen(args, cwd=P.game, creationflags=flags, stdin=subprocess.DEVNULL, stdout=out, stderr=out)
+            proc = subprocess.Popen(args, cwd=P.home, creationflags=flags, stdin=subprocess.DEVNULL, stdout=out, stderr=out)
         else:
-            subprocess.Popen(args, cwd=P.game, creationflags=flags)
+            proc = subprocess.Popen(args, cwd=P.home, creationflags=flags)
     finally:
         if out:
             out.close()                # the game has its own handle now
-    log("started the game" + (" (its messages go to %s)" % os.path.join(P.game, RUN_LOG) if out else ""))
+    log("started the game" + (" (its messages go to %s)" % os.path.join(P.home, RUN_LOG) if out else ""))
+    return proc.wait() if wait else None
 
 
 def desktop_entry_text(P, disc_path, name):
@@ -1161,7 +1771,7 @@ def make_shortcut(P, C, log):
     os.makedirs(d, exist_ok=True)
     path = os.path.join(d, "dmrecomp-%s.desktop" % P.gid)
     with open(path, "w", encoding="utf-8") as f:
-        f.write(desktop_entry_text(P, disc, name))
+        f.write(desktop_entry_text(P, game_image(disc), name))
     os.chmod(path, 0o755)
     log("added \"%s (recomp)\" to the applications menu: %s" % (name, path))
     log("On the Steam Deck: in Steam choose Games > Add a Non-Steam Game to My Library, tick it, then add it. "
@@ -1174,8 +1784,8 @@ EXE_NAME = re.compile(r"^S[A-Z]{3}_\d{3}\.\d{2}$")
 
 
 def iso_root_files(bin_path):
-    """File names in the root directory of a raw 2352-byte-sector PS1 image."""
-    with open(bin_path, "rb") as f:
+    """File names in the root directory of a raw 2352-byte-sector PS1 image (or of a .chd's first track)."""
+    with (ChdRaw(bin_path) if is_chd(bin_path) else open(bin_path, "rb")) as f:
         def sector(lba):
             f.seek(lba * 2352)
             raw = f.read(2352)
@@ -1207,7 +1817,7 @@ def identify_disc(P, C, path):
     with C.lock:
         cached = C.d.get("ident", {}).get(fp)
     if cached is None:
-        exes = [n for n in iso_root_files(resolve_bin(path)) if EXE_NAME.match(n)]
+        exes = [n for n in iso_root_files(path if is_chd(path) else resolve_bin(path)) if EXE_NAME.match(n)]
         cached = exes[0] if exes else ""
         with C.lock:
             C.d.setdefault("ident", {})[fp] = cached
@@ -1227,7 +1837,7 @@ def find_discs(P, C):
     found = {}
     try:
         os.makedirs(P.discdir, exist_ok=True)
-        cands = {".cue": [], ".bin": []}
+        cands = {".cue": [], ".bin": [], ".chd": []}
         for dirpath, dirs, files in os.walk(P.discdir):
             if os.path.relpath(dirpath, P.discdir).count(os.sep) >= 1:
                 dirs[:] = []
@@ -1235,7 +1845,7 @@ def find_discs(P, C):
                 ext = os.path.splitext(n)[1].lower()
                 if ext in cands:
                     cands[ext].append(os.path.join(dirpath, n))
-        for path in cands[".cue"] + cands[".bin"]:
+        for path in cands[".cue"] + cands[".bin"] + cands[".chd"]:
             try:
                 gid = game_for_exe(P, identify_disc(P, C, path))
             except (Fail, OSError):
@@ -1349,8 +1959,67 @@ def open_session(root, disc=None, game=None):
     return P, C, note
 
 
+PREPARE_GAMES = ("dmbmx", "maxremix")
+
+
+def prepare(root, argv):
+    """The setup step for RecompLauncher (recomplauncher.json): no window, nothing asked. --dmbmx=FILE and
+    --maxremix=FILE are the disc images (.cue) to build those games from; --accept-downloads allows downloading the
+    build tools and the project's source, which the player agreed to on the setup screen. Prints lines
+    "progress <0 to 1> <text>". Returns 0 when every game given is built (or already was), 3 when the downloads are
+    needed but not allowed; a failure raises Fail."""
+    picks, accept = [], False
+    for a in argv:
+        name, eq, value = a[2:].partition("=") if a.startswith("--") else ("", "", "")
+        if a == "--accept-downloads":
+            accept = True
+        elif eq and name in PREPARE_GAMES and value:
+            picks.append((name, value))
+        else:
+            raise Fail("prepare: not understood: %s (use --dmbmx=FILE, --maxremix=FILE, --accept-downloads)" % a)
+    if not picks:
+        raise Fail("prepare: no disc image given (--dmbmx=FILE or --maxremix=FILE)")
+    lock = threading.Lock()
+
+    def say(f, text):
+        with lock:
+            print("progress %.3f %s" % (min(max(f, 0.0), 1.0), text), flush=True)
+    log = lambda s: print(s, flush=True)
+    P, C, _note = open_session(root, picks[0][1], picks[0][0])
+    if not (toolchain_ok(P) and project_ok(P)):
+        if not accept:
+            print("the build tools and the project are not downloaded yet, and --accept-downloads was not given", flush=True)
+            return 3
+        say(0.01, "Downloading the C compiler")
+        install_toolchain(P, log)
+        say(0.25, "Downloading the project")
+        install_project(P, C, log)
+    elif accept:
+        say(0.25, "Checking for a newer project version")
+        install_project(P, C, log)
+    names = dict((i, n) for i, n, _e in game_list(P))
+    span = 0.7 / len(picks)
+    for i, (gid, disc) in enumerate(picks):
+        P, C, _note = open_session(root, disc, gid)
+        lo, name = 0.3 + i * span, names.get(gid, gid)
+        say(lo, "Translating %s from your disc" % name)
+        generate(P, C, disc, log)
+        say(lo + span * 0.2, "Building %s" % name)
+        compile_game(P, C, log, lambda d, n, lo=lo, name=name:
+                     say(lo + span * (0.2 + 0.8 * d / max(n, 1)), "Building %s (%d of %d files)" % (name, d, n)))
+    say(1, "Ready to play")
+    return 0
+
+
 def cli(argv):
-    root, disc, game, cmd = None, None, None, []
+    if argv[:1] == ["prepare"] or (argv[:2] and argv[0] == "--root" and argv[2:3] == ["prepare"]):
+        root = argv[1] if argv[0] == "--root" else None
+        try:
+            return prepare(root, argv[3:] if argv[0] == "--root" else argv[1:])
+        except (Fail, OSError) as e:
+            print("error: %s" % e, flush=True)
+            return 1
+    root, disc, game, data, cmd = None, None, None, None, []
     it = iter(argv)
     for a in it:
         if a == "--root":
@@ -1359,6 +2028,8 @@ def cli(argv):
             disc = next(it, None)
         elif a == "--game":
             game = next(it, None)
+        elif a == "--data":
+            data = next(it, None)
         else:
             cmd.append(a)
     try:
@@ -1366,6 +2037,9 @@ def cli(argv):
     except Fail as e:
         print("error: %s" % e)
         return 1
+    if data:                           # the game's settings, memory cards and logs in DATA/<game> (RecompLauncher's {data})
+        P.data = os.path.abspath(data)
+        P.use(P.gid)
     if note:
         print("warning: %s" % note)
     log = lambda s: print(s, flush=True)
@@ -1390,6 +2064,8 @@ def cli(argv):
             build_all(P, C, C.get("disc"), log)
         elif what == "play":
             play(P, C, C.get("disc"), log)
+        elif what == "run":            # like play, but stays until the game ends; the words after it go to the game
+            return play(P, C, C.get("disc"), log, extra=cmd[1:], wait=True) or 0
         elif what == "shortcut":
             make_shortcut(P, C, log)
         else:
@@ -1588,7 +2264,7 @@ def gui(root_dir, pinned=False, notice=None):
         if busy.is_set():
             return                      # the game must not change under a running build
         f = filedialog.askopenfilename(title="Choose the disc image",
-                                       filetypes=[("Disc image", "*.cue *.bin"), ("All files", "*.*")])
+                                       filetypes=[("Disc image", "*.cue *.bin *.chd"), ("All files", "*.*")])
         if f:
             try:                      # an image of the other game switches to that game
                 gid = game_for_exe(P, identify_disc(P, C, f))
@@ -1976,7 +2652,7 @@ def gui(root_dir, pinned=False, notice=None):
                     disc_msg.configure(text="This image is %s: choose it in the game list at the top." % dict(
                         (i, n) for i, n, _e in game_list(P)).get(other, other), foreground=pal["bad"])
                 else:
-                    disc_msg.configure(text="Image found: %s" % os.path.basename(resolve_bin(d)), foreground=pal["ok"])
+                    disc_msg.configure(text="Image found: %s" % os.path.basename(d if is_chd(d) else resolve_bin(d)), foreground=pal["ok"])
             except (Fail, OSError) as e:
                 disc_msg.configure(text=str(e), foreground=pal["bad"])
         else:
@@ -2095,12 +2771,42 @@ def gui(root_dir, pinned=False, notice=None):
     return 0
 
 
+def attach_std_streams():
+    """The packaged launcher has no console, so Python gives it no stdout and stderr. When whoever started it handed
+    it a pipe or a file for them (RecompLauncher reads the setup step's progress lines that way), write there;
+    otherwise, as when it is started by a double click, what it prints goes nowhere."""
+    if sys.stdout is not None:
+        return
+    streams = []
+    if WINDOWS:
+        try:
+            import ctypes
+            import msvcrt
+            k32 = ctypes.windll.kernel32
+            k32.GetStdHandle.restype = ctypes.c_void_p
+            for which in (-11, -12):    # STD_OUTPUT_HANDLE, STD_ERROR_HANDLE
+                h = k32.GetStdHandle(which)
+                if h in (None, 0, ctypes.c_void_p(-1).value) or k32.GetFileType(ctypes.c_void_p(h)) == 0:
+                    streams.append(None)
+                    continue
+                streams.append(os.fdopen(msvcrt.open_osfhandle(h, os.O_WRONLY), "w", encoding="utf-8", errors="replace"))
+        except (OSError, AttributeError, ValueError):
+            streams = []
+    out = streams[0] if streams else None
+    err = streams[1] if len(streams) > 1 else None
+    sink = None if (out and err) else open(os.devnull, "w")
+    sys.stdout = out or err or sink
+    sys.stderr = err or out or sink
+
+
 def main(argv):
-    if sys.stdout is None:          # packaged without a console window
-        sys.stdout = sys.stderr = open(os.devnull, "w")
-    cmds = {"status", "games", "download", "update", "build", "play", "shortcut", "update-launcher", "-h", "--help", "help"}
+    cmds = {"status", "games", "download", "update", "build", "play", "run", "prepare", "shortcut", "update-launcher",
+            "-h", "--help", "help"}
     if any(a in cmds for a in argv):
+        attach_std_streams()        # packaged without a console window: print where the caller put stdout and stderr
         return cli(argv)
+    if sys.stdout is None:          # the window: what it prints goes nowhere, as before
+        sys.stdout = sys.stderr = open(os.devnull, "w")
     def opt(name):
         return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else None
     root, disc, game = opt("--root"), opt("--disc"), opt("--game")

@@ -93,18 +93,20 @@ static const char *default_images[] = {
 
 static int run(int argc, char **argv) {
     const char *img = NULL;
+    int fs_given = 0;   /* a fullscreen choice on the command line */
     void host_load_config(const char *path); int host_set_option(const char *name, const char *val);
     host_load_config("dmrecomp.ini");
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--log-bios")) g_log_bios = 1;
         else if (!strcmp(argv[i], "--console-cpu")) g_cpu_assist = 0;
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) host_set_option("scale", argv[++i]);
-        else if (!strcmp(argv[i], "--fullscreen")) host_set_option("fullscreen", "1");
+        else if (!strcmp(argv[i], "--fullscreen")) { host_set_option("fullscreen", "1"); fs_given = 1; }
         else if (!strcmp(argv[i], "--shot-window")) { extern int g_shot_window; g_shot_window = 1; }
         else if (!strcmp(argv[i], "--set") && i + 1 < argc) {   /* --set name=value: any dmrecomp.ini setting */
             char buf[128]; snprintf(buf, sizeof buf, "%s", argv[++i]);
             char *eq = strchr(buf, '='); if (eq) *eq++ = 0;
             if (!eq || !host_set_option(buf, eq)) fprintf(stderr, "--set %s: not understood\n", argv[i]);
+            else if (!strcmp(buf, "fullscreen")) fs_given = 1;
         }
         else if (!strcmp(argv[i], "--stats")) g_stats++;
         else if (!strcmp(argv[i], "--turbo")) g_turbo = 1;
@@ -121,6 +123,11 @@ static int run(int argc, char **argv) {
         }
         else if (!strcmp(argv[i], "--shot-every") && i + 1 < argc) g_shot_every = atoi(argv[++i]);
         else img = argv[i];
+    }
+    {   /* RecompLauncher's Big Picture mode (played with a controller, from the couch): full screen, unless the
+           command line chose. Read once, here; without the variable nothing changes. */
+        const char *m = getenv("RECOMPLAUNCHER_MODE");
+        if (m && !strcmp(m, "bigpicture") && !fs_given) host_set_option("fullscreen", "1");
     }
     if (!img) for (int i = 0; default_images[i]; i++) {
         FILE *f = fopen(default_images[i], "rb");

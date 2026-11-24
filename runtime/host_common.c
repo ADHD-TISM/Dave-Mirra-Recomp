@@ -462,6 +462,7 @@ void host_quit(void) {
     print_stack(0x80200000u, 24);
     fprintf(stderr, "\n");
     bios_report_stall("exit", 1);
+    { void ach_shutdown(void); ach_shutdown(); }
     g_rumble = 0; host_pad_rumble(0, 0, 0); host_pad_rumble(1, 0, 0); plat_exit(0);
 }
 
@@ -490,6 +491,7 @@ void host_init(void) {
     show_settings();
     if (g_fullscreen || plat_wants_fullscreen()) set_fullscreen(1);
     plat_audio_init();
+    { void ach_init(void); ach_init(); }   /* Recomp Achievements (achievements.c): does nothing without RecompLauncher */
 }
 
 extern int g_shot_every;
@@ -687,6 +689,7 @@ void host_frame(void) {
     frame_no++;
     run_frames = frame_no;
     debug_frame(frame_no);
+    { void ach_frame(void); ach_frame(); }   /* achievement rules on this frame's memory (nothing without RecompLauncher) */
     {   /* stall watchdog: no flips, movie frames, disc reads or drawing for 10 s means the game is stuck (a long load or movie still flips or finishes sooner) */
         extern unsigned g_flip_total;
         static unsigned last_flips, still;

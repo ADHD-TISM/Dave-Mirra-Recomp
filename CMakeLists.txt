@@ -31,6 +31,17 @@ target_include_directories(dmrecomp PRIVATE runtime gen)
 set_source_files_properties(${GEN_SRC} PROPERTIES COMPILE_OPTIONS "-O1;-fno-strict-aliasing;-w")
 target_compile_options(dmrecomp PRIVATE -Wall -Wno-unused-function -fno-strict-aliasing)
 
+# Recomp Achievements (third_party/rl_achievements, under its own license: see SOURCE.txt there), used by runtime/achievements.c
+set(RLA ${CMAKE_SOURCE_DIR}/third_party/rl_achievements)
+file(GLOB RLA_SRC CONFIGURE_DEPENDS ${RLA}/src/*.c ${RLA}/third_party/cjson/cJSON.c
+     ${RLA}/third_party/rcheevos/src/runtime/*.c ${RLA}/third_party/rcheevos/src/util/*.c)
+add_library(rl_achievements STATIC ${RLA_SRC})
+target_include_directories(rl_achievements PUBLIC ${RLA}/include
+  PRIVATE ${RLA}/third_party/rcheevos/include ${RLA}/third_party/rcheevos/src ${RLA}/third_party/cjson)
+target_compile_definitions(rl_achievements PRIVATE RC_DISABLE_LUA)
+target_compile_options(rl_achievements PRIVATE -w)
+target_link_libraries(dmrecomp PRIVATE rl_achievements)
+
 if(DM_SDL)
   find_package(SDL2 REQUIRED)
   target_compile_definitions(dmrecomp PRIVATE DM_SDL)

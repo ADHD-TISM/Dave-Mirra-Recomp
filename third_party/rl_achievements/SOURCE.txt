@@ -1,0 +1,6 @@
+Recomp Achievements SDK (rl-achievements), copied unchanged from https://github.com/elripalda/RecompAchievements
+at commit faf094acdf1e (2026-11-12): its sdk/include, sdk/src and sdk/third_party folders, and its LICENSE.
+
+It is under its own license (LICENSE here: free to use in a game; launchers and front-ends need its authors' written
+permission), not under this project's MIT license. rcheevos and cJSON in third_party/ keep their MIT licenses.
+Only the game (dmrecomp, through runtime/achievements.c) uses it; this project's launcher does not.
