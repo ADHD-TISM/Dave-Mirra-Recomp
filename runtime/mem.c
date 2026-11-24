@@ -33,8 +33,11 @@ static u32 dma_words(int ch) {
 
 int mdec_dma_ready(int ch);  /* mdec.c: returns 0 to keep the channel busy */
 
-#include "game.h"   /* GAME_HUD_SLOT */
+#include "game.h"   /* GAME_HUD_SLOT, GAME_SKY_SLOT */
 extern int g_ws_kq, gpu_2d;
+#ifndef GAME_SKY_SLOT
+#define GAME_SKY_SLOT -1
+#endif
 
 static void dma_run(int ch) {
     u32 a = madr[ch] & 0x1ffffcu, n, mode = (chcr[ch] >> 9) & 3, dir = chcr[ch] & 1;
@@ -49,13 +52,14 @@ static void dma_run(int ch) {
             /* Widescreen: the game draws a 3D scene from one ordering table, back to front; an empty node is one of its
                slots. Both games put the 3D polygons in the slots up to 1524 and everything flat (the HUD, the pause and
                finish texts) in the slots from 1534 on, so counting the slots passed tells the two apart: gpu_2d is set
-               for the flat part, and gpu.c squeezes it like the 3D picture (GAME_HUD_SLOT, from games/<id>.json). */
+               for the flat part, and gpu.c squeezes it like the 3D picture (GAME_HUD_SLOT, from games/<id>.json). The sky
+               backdrop is flat too, in slot 1 (GAME_SKY_SLOT), and gets the same squeeze (ws_sky_left in host_common.c). */
             int slots = 0;
             for (int guard = 0; guard < 0x100000; guard++) {
                 u32 h = ram32(a);
 #ifdef GAME_HUD_SLOT
                 if (!(h >> 24)) slots++;
-                gpu_2d = g_ws_kq != 65536 && slots >= GAME_HUD_SLOT;
+                gpu_2d = g_ws_kq != 65536 && (slots >= GAME_HUD_SLOT || slots == GAME_SKY_SLOT);
 #endif
                 for (u32 i = 0, c = h >> 24; i < c; i++) gpu_write_gp0(ram32(a + 4 + 4 * i));
                 if (h & 0x800000) break;

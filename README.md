@@ -112,6 +112,10 @@ the picture, so at 16:9 they sit inside its middle three quarters. A flat item t
 covers the picture. What counts as flat is decided by where the game puts it in its drawing order (`hud_slot` in `games/<id>.json`, found
 by measuring one level of each game), and a polygon there whose corners all came from the 3D projection is left alone. The game leaves out objects that are outside its own view before it draws; that view is widened to match, so objects at
 the sides no longer appear and vanish. Anything the game leaves out by another rule (distance, for one) is unchanged.
+The sky backdrop is made of rows of flat tiles that the game moves with the camera; it gets the same squeeze, and the game's sky routine is made
+to draw as many more tiles at each side as the wider view needs (`sky_slot` and `patches` in `games/<id>.json`: four instructions of that
+routine are replaced when the code is translated, each checked against what the disc holds). With widescreen off the routine draws exactly
+what it always did.
 
 `upscale = fsr` runs the picture through FSR 1 (edge-directed upscaling plus sharpening, as two OpenGL shaders) when the window is 
 larger than the game's internal picture; if the graphics driver lacks the needed OpenGL features it falls back to the plain picture. 

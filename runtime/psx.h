@@ -41,6 +41,10 @@ void psx_syscall(u32 pc);
 void psx_break(u32 pc, u32 code);
 void psx_bad(u32 pc, u32 insn);
 void psx_fallthrough(u32 pc);
+/* widescreen sky: called from the game's sky routine through the "patches" of games/<id>.json (host_common.c) */
+s32 ws_sky_left(u32 w);
+u32 ws_sky_first(u32 i, u32 n);
+s32 ws_sky_right(void);
 static inline void psx_div(u32 a, u32 b) {
     s32 n = (s32)a, d = (s32)b;
     if (d == 0) { cpu.hi = a; cpu.lo = n >= 0 ? 0xffffffffu : 1; }

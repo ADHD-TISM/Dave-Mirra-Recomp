@@ -12,5 +12,12 @@
   "fullcost": ["80059a9c"],
   "view_cone": "8007e5bc",
   "hud_slot": 1529,
+  "sky_slot": 1,
+  "patches": {
+    "8003f51c": ["R[17] = R[20] + 0;", "R[17] = R[20] - ws_sky_left(mr32(R[29] + 0x18u));"],
+    "8003f520": ["R[2] = (s32)R[17] < 512;", "R[2] = (s32)R[17] < ws_sky_right();"],
+    "8003f528": ["R[16] = R[21] + 0;", "R[16] = ws_sky_first(R[21], mr32(R[28] + 0x13d0u));"],
+    "8003f5a8": ["R[2] = (s32)R[17] < 512;", "R[2] = (s32)R[17] < ws_sky_right();"]
+  },
   "extras": "games/dmbmx"
 }

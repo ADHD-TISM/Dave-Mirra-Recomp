@@ -12,5 +12,12 @@
   "fullcost": ["8005a290"],
   "view_cone": "8007f9a8",
   "hud_slot": 1529,
+  "sky_slot": 1,
+  "patches": {
+    "80040410": ["R[17] = R[21] + 0;", "R[17] = R[21] - ws_sky_left(mr32(R[29] + 0x18u));"],
+    "80040414": ["R[2] = (s32)R[17] < 512;", "R[2] = (s32)R[17] < ws_sky_right();"],
+    "8004041c": ["R[16] = R[20] + 0;", "R[16] = ws_sky_first(R[20], mr32(R[28] + 0x14acu));"],
+    "8004049c": ["R[2] = (s32)R[17] < 512;", "R[2] = (s32)R[17] < ws_sky_right();"]
+  },
   "extras": "games/maxremix"
 }

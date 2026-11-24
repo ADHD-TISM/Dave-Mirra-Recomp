@@ -369,7 +369,7 @@ static void hi_run(int id, int n) {
 static inline s32 sx11(u32 v) { return ((s32)(v << 21)) >> 21; }
 
 /* Widescreen: the 3D picture is squeezed in the GTE and stretched again by the host, which would make everything flat
-   that is drawn over it (the HUD, texts) wide. While gpu_2d is set (mem.c: the flat part of the game's drawing list),
+   that is drawn over it (the HUD, texts) or behind it (the sky) wide. While gpu_2d is set (mem.c: those parts of the list),
    polygons are squeezed here by the same factor, towards the middle of the drawing area, so they keep their shape on
    screen. One that spans nearly the whole width (a fade, a darkening) is left alone: it has to cover the picture. */
 int gpu_2d;

@@ -2,6 +2,7 @@
 
 usage: python recomp.py <input> <prefix> <out_dir> [--raw HEXBASE] [--extra FILE] [--roots FILE]
        [--scan FILE] [--extern FILE] [--fullcost HEXENTRY]    (options repeat; see tools/regen.sh)
+       [--patches games/<id>.json]
 
 Each discovered entry point becomes one C function `f_XXXXXXXX(void)` that
 contains every instruction reachable from that entry by local control flow
@@ -256,7 +257,22 @@ def discover(exe, extra, roots=()):
 # --- code generation --------------------------------------------------------
 def R(n): return '0' if n == 0 else f'R[{n}]'
 
+# Instruction patches, from the "patches" of games/<id>.json (--patches): address -> (the C the instruction gives,
+# the C to emit instead). The first part is checked, so a patch never lands on a different instruction.
+PATCHES = {}
+PATCHED = set()
+
 def emit_simple(i):
+    """C for a non-branch instruction (returns string, may be empty), with the patches applied."""
+    s = emit_plain(i)
+    p = PATCHES.get(i.a)
+    if p is None: return s
+    if s != p[0]:
+        raise SystemExit(f'patch at {i.a:08x}: the instruction gives {s!r}, not {p[0]!r}')
+    PATCHED.add(i.a)
+    return p[1]
+
+def emit_plain(i):
     """C for a non-branch instruction (returns string, may be empty)."""
     op, rs, rt, rd, sa, fn = i.op, i.rs, i.rt, i.rd, i.sa, i.fn
     imm, simm = i.imm, i.simm
@@ -446,8 +462,14 @@ def main():
     ap.add_argument('--scan', action='append', default=[], help='binary file whose aligned words are candidate entries')
     ap.add_argument('--fullcost', action='append', default=[], type=lambda x: int(x, 16), help='entry whose instructions always cost console time')
     ap.add_argument('--extern', action='append', default=[], help='entries file of an always-resident module')
+    ap.add_argument('--patches', help='game profile (games/<id>.json) whose "patches" replace single instructions')
     a = ap.parse_args()
     P = a.prefix
+    if a.patches:
+        import json
+        with open(a.patches, encoding='utf-8') as f:
+            for k, v in json.load(f).get('patches', {}).items():
+                PATCHES[int(k, 16)] = (v[0], v[1])
     extra = []
     for fn in a.extra:
         if os.path.exists(fn):
@@ -511,6 +533,9 @@ def main():
     sig = ', '.join(f'0x{exe.word(exe.base + 4 * k):08x}u' for k in range(8))
     tab.append(f'const u32 {P}_sig[8] = {{ {sig} }};')
     open(os.path.join(a.out_dir, f'{P}_table.c'), 'w').write(NL.join(tab) + NL)
+    missing = sorted(set(PATCHES) - PATCHED)
+    if missing:   # a patch whose instruction is in no translated function would silently do nothing
+        raise SystemExit('patches not applied (address not in a translated function): ' + ', '.join(f'{m:08x}' for m in missing))
     ninsn = sum(len(f.addrs) for f in funcs.values())
     njt = sum(len(f.tables) for f in funcs.values())
     print(f'{P}: {len(keys)} functions, {ninsn} insns, {njt} jump tables, {nfiles} files, {len(unresolved)} unresolved call targets')

@@ -658,6 +658,27 @@ static void ws_view_cone(void) {
 }
 #endif
 
+/* Widescreen, the sky. Both games draw the sky backdrop as rows of flat tiles in one slot of the drawing list
+   (sky_slot), not through the GTE: each row starts left of the screen, at a place set by the camera's heading, and
+   steps one tile width at a time while x < 512, the tile number going round the sky's ring of tiles. mem.c and gpu.c
+   squeeze those tiles towards the middle like the 3D picture, so they keep their shape. To fill the wider view, the
+   "patches" in games/<id>.json make the game's own routine start whole tiles further left, with the tile number as
+   many tiles back, and stop further right. With widescreen off the three give the game's own values. */
+static int sky_back;   /* tiles added on the left of the row being drawn */
+static s32 sky_reach(void) {   /* how far the wide view reaches past each side of the 512-pixel screen */
+    return g_ws_kq == 65536 ? 0 : (s32)((256LL * 65536 + g_ws_kq - 1) / g_ws_kq) - 256;
+}
+s32 ws_sky_left(u32 w) {
+    s32 r = sky_reach();
+    sky_back = (r > 0 && w >= 16 && w <= 512) ? (int)((r + (s32)w - 1) / (s32)w) : 0;
+    return sky_back * (s32)w;
+}
+u32 ws_sky_first(u32 i, u32 n) {
+    if (!sky_back || !n || i >= n) return i;
+    return (i + n - (u32)sky_back % n) % n;
+}
+s32 ws_sky_right(void) { return 512 + sky_reach(); }
+
 void host_frame(void) {
     static unsigned frame_no;
     static double t_host, t_last_exit, t_guest;

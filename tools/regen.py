@@ -73,16 +73,18 @@ def main(argv):
     scan = []
     for o in ovl.values():
         scan += ['--scan', d(o['file']), '--scan', d(o['data'])]
-    cost = []
+    main_opts = []   # options for the main executable only
     for a in g.get('fullcost', []):
-        cost += ['--fullcost', a]
+        main_opts += ['--fullcost', a]
+    if g.get('patches'):   # single instructions of the main executable replaced (widescreen sky: ws_sky_* in host_common.c)
+        main_opts += ['--patches', os.path.join(ROOT, 'games', g['id'] + '.json')]
 
     def run(cmd):
         subprocess.run(cmd, check=True, cwd=ROOT)
 
     prev = -1
     for _ in range(8):
-        run(py + [exe, 'main', gen] + scan + ['--extra', ex('main'), '--extra', xref] + cost)
+        run(py + [exe, 'main', gen] + scan + ['--extra', ex('main'), '--extra', xref] + main_opts)
         for name, o in ovl.items():
             run(py + [d(o['file']), name, gen, '--raw', base, '--scan', exe, '--scan', d(o['data']),
                       '--roots', os.path.join(gen, 'main_unresolved.txt'), '--extra', ex(name),
@@ -112,6 +114,8 @@ def main(argv):
             f.write('#define GAME_VIEW_CONE 0x%su\n' % g['view_cone'])
         if g.get('hud_slot'):    # the drawing-list slot from which everything is flat: widescreen keeps its shape (mem.c, gpu.c)
             f.write('#define GAME_HUD_SLOT %d\n' % int(g['hud_slot']))
+        if g.get('sky_slot'):    # the drawing-list slot of the sky backdrop: widescreen squeezes it like the 3D picture
+            f.write('#define GAME_SKY_SLOT %d\n' % int(g['sky_slot']))
     print('translated %s (%s)' % (g['name'], g['serial']))
     return 0
 
