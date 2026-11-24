@@ -126,7 +126,8 @@
     }
   ],
   "folders": {
-    "saves": [{ "path": "{data}" }]
+    "saves": [{ "path": "{data}" }],
+    "logs": [{ "path": "{data}" }]
   },
   "actions": [
     { "id": "saves", "label": "Saves and settings", "help": "Each game's memory cards, settings and last-run.log.", "open": "saves" }

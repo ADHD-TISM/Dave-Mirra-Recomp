@@ -13,7 +13,7 @@ OUT=${2:-$(dirname -- "$0")/dist}
 mkdir -p "$OUT"
 OUT=$(CDPATH= cd -- "$OUT" && pwd)
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-DIST="$OUT" sh "$HERE/build_exe.sh"
+RELEASE_TAG="$V" DIST="$OUT" sh "$HERE/build_exe.sh"   # the launcher's setup step then installs exactly this project version
 NAME="Dave Mirra Freestyle BMX"
 pack() {   # pack <archive> <files...>: each file at the top of a .zip or .tar.xz
     ${PYTHON:-python} -c '
@@ -41,7 +41,7 @@ case "$(uname -s)" in
             ${PYTHON:-python} "$HERE/../tools/make_icon.py" "$A/.icon.ico" "$A/dmrecomp.png" > /dev/null
             rm -f "$A/.icon.ico"
             ln -s dmrecomp.png "$A/.DirIcon"
-            printf '[Desktop Entry]\nType=Application\nName=%s\nExec=dmrecomp\nIcon=dmrecomp\nCategories=Game;\nTerminal=false\n' "$NAME" > "$A/dmrecomp.desktop"
+            printf '[Desktop Entry]\nType=Application\nName=%s\nExec=AppRun\nIcon=dmrecomp\nCategories=Game;\nTerminal=false\n' "$NAME" > "$A/dmrecomp.desktop"
             printf '#!/bin/sh\n# the launcher keeps its tools, project, builds and games next to itself, in this folder\nexec "$(dirname "$(readlink -f "$0")")/%s" "$@"\n' "$NAME" > "$A/AppRun"
             chmod +x "$A/AppRun" "$A/$NAME"
             IMG="$OUT/DaveMirraFreestyleBMX-$V-Linux-x86_64.AppImage"

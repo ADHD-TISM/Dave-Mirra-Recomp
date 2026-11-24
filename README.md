@@ -15,7 +15,8 @@ runtime. You need your own copy of the game; this project is not affiliated
 with its publisher or developer, and Dave Mirra Freestyle BMX is their trademark.
 No BIOS file is needed.
 
-Released under the MIT license (see `LICENSE`).
+Released under the MIT license (see `LICENSE`), except `third_party/rl_achievements`, which keeps its own license (see
+`SOURCE.txt` there).
 
 ## Games
 
