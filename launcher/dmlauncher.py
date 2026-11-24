@@ -677,6 +677,7 @@ def update_launcher(P, C, log):
 # game reads (work/chd/), the same bytes the image was made from.
 
 CHD_CACHE = [None]                     # the folder the images are written out to: set by Paths (work/chd)
+CHD_MAX_LOGICAL = 2 << 30              # a 99-minute CD in 2448-byte frames is about 1.09 GB; anything above is no CD
 CD_FRAME, CD_SECTOR = 2448, 2352       # a CHD CD frame: the sector and its 96 bytes of subcode
 CHD_CD_CODECS = {b"cdlz": "lzma", b"cdzl": "deflate", b"cdfl": "flac", b"cdzs": "zstd"}
 
@@ -958,6 +959,10 @@ class Chd:
             raise Fail("%s needs a parent CHD; make a whole one with chdman" % os.path.basename(path))
         if not self.hunkbytes or self.hunkbytes % CD_FRAME:
             raise Fail("%s is not a CD image (its hunks are not whole CD frames)" % os.path.basename(path))
+        if self.logical > CHD_MAX_LOGICAL or self.hunkbytes > 1 << 20:   # a CD holds at most about 1.1 GB this way
+            raise Fail("%s is not a CD image (it says it holds %d bytes in hunks of %d)"
+                       % (os.path.basename(path), self.logical, self.hunkbytes))
+        self.size = os.fstat(self.f.fileno()).st_size
         self.hunks = (self.logical + self.hunkbytes - 1) // self.hunkbytes
         self.map = self._read_map(mapoffset)
         self.tracks = self._read_tracks(metaoffset)
@@ -968,6 +973,8 @@ class Chd:
 
     def _read_map(self, mapoffset):
         if self.codecs[0] == b"\0\0\0\0":    # an uncompressed CHD: a plain table of hunk offsets
+            if mapoffset + 4 * self.hunks > self.size:
+                raise chd_damaged(self.path, EOFError("its hunk table runs past the end of the file"))
             self.f.seek(mapoffset)
             raw = self.f.read(4 * self.hunks)
             return [(4, struct.unpack_from(">I", raw, 4 * i)[0] * self.hunkbytes, self.hunkbytes, None) if
@@ -978,6 +985,8 @@ class Chd:
         firstoffs = int.from_bytes(mh[4:10], "big")
         mapcrc = struct.unpack_from(">H", mh, 10)[0]
         lengthbits, selfbits, parentbits = mh[12], mh[13], mh[14]
+        if mapoffset + 16 + mapbytes > self.size:
+            raise chd_damaged(self.path, EOFError("its map runs past the end of the file"))
         bits = ChdBits(self.f.read(mapbytes))
         huff = ChdHuffman(bits)
         comps, rep, last = [], 0, 0
@@ -1028,6 +1037,8 @@ class Chd:
                 c, offset = 6, last_parent
             else:
                 raise Fail("the .chd map is damaged (hunk type %d)" % c)
+            if c == 5 and offset >= n:       # a copy must be of an earlier hunk (else reading it would never end)
+                raise chd_damaged(self.path, ValueError("hunk %d is a copy of hunk %d" % (n, offset)))
             out.append((c, offset, length, crc))
             raw += bytes([c]) + length.to_bytes(3, "big") + offset.to_bytes(6, "big") + (crc & 0xFFFF).to_bytes(2, "big")
         import binascii
@@ -1531,14 +1542,19 @@ def compile_game(P, C, log, progress=None):
     log("game built: %s" % P.exe)
 
 
+def write_out_chd(disc_path, log):
+    """A .chd not written out yet (never, or its copy in work/chd was deleted) is written out now, before the build."""
+    if is_chd(disc_path) and not chd_ready(disc_path):
+        log("writing %s out to a .bin and .cue for the game (once; about a minute)" % os.path.basename(disc_path))
+        resolve_bin(disc_path)
+
+
 def build_all(P, C, disc_path, log, progress=None):
     if not disc_path:
         raise Fail("choose your disc image first")
     if not toolchain_ok(P) or not project_ok(P):
         raise Fail("download the build tools and project first (Update tab)")
-    if is_chd(disc_path) and not chd_ready(disc_path):
-        log("writing %s out to a .bin and .cue for the game (once; about a minute)" % os.path.basename(disc_path))
-        resolve_bin(disc_path)
+    write_out_chd(disc_path, log)
     generate(P, C, disc_path, log)
     compile_game(P, C, log, progress)
 
@@ -2008,13 +2024,16 @@ def status(P, C):
             disc_ok = not want or identify_disc(P, C, disc).lower() == want.lower()
     except (Fail, OSError):
         pass
-    return [
+    rows = [
         ("tools", "Build tools", toolchain_ok(P), "Update"),
         ("project", "Project files", project_ok(P), "Update"),
         ("disc", "Disc image", disc_ok, "Build"),
         ("gen", "Game code generated", generated_ok(P, C, disc) if disc_ok else False, "Build"),
         ("built", "Game built", built_ok(P, C) if disc_ok else os.path.isfile(P.exe), "Build"),
     ]
+    if is_chd(disc):   # the game reads a .bin and .cue: the .chd must be written out (Build does it)
+        rows.insert(3, ("chd", "Disc written out for the game", disc_ok and chd_ready(disc), "Build"))
+    return rows
 
 
 def ready_to_play(P, C):
@@ -2089,13 +2108,16 @@ def prepare(root, argv):
         install_project(P, C, log, want=release_tag())
     elif accept:   # a packaged release builds its own project version, also when the player goes back to an older one
         want = release_tag()
-        say(0.25, "Getting project version %s" % want if want else "Checking for a newer project version")
+        say(0.25, ("Getting project version %s" % want) if want else "Checking for a newer project version")
         install_project(P, C, log, want=want)
     names = dict((i, n) for i, n, _e in game_list(P))
     span = 0.7 / len(picks)
     for i, (gid, disc) in enumerate(picks):
         P, C, _note = open_session(root, disc, gid)
         lo, name = 0.3 + i * span, names.get(gid, gid)
+        if is_chd(disc) and not chd_ready(disc):
+            say(lo, "Writing out your disc image for %s" % name)
+            write_out_chd(disc, log)
         say(lo, "Translating %s from your disc" % name)
         generate(P, C, disc, log)
         say(lo + span * 0.2, "Building %s" % name)

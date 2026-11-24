@@ -351,10 +351,88 @@ def new_paths():
           repr(seen.get("cwd")))
     check("run: the log is copied to the top of the data folder", os.path.isfile(os.path.join(P.data, dml.RUN_LOG)))
 
+def helpers():
+    """The small helpers the release and the CHD write-out rest on."""
+    import struct
+    H = os.path.join(T, "helpers"); os.makedirs(H, exist_ok=True)
+    # release_tag: the version a packaged launcher carries; nothing, empty or odd text gives None
+    had = hasattr(sys, "_MEIPASS")
+    try:
+        check("release_tag: none outside a packaged launcher", (dml.release_tag() is None) if not had else True)
+        sys._MEIPASS = H
+        for text, want in (("v1.2.3\n", "v1.2.3"), ("\n", None), ("../x\n", None), ("1.2.3\n", None)):
+            open(os.path.join(H, "release_tag.txt"), "w").write(text)
+            check("release_tag: %r gives %r" % (text.strip(), want), dml.release_tag() == want, repr(dml.release_tag()))
+    finally:
+        if not had:
+            del sys._MEIPASS
+    # child_env: a packaged Linux launcher gives its programs the library path from before it started
+    frozen, windows = dml.FROZEN, dml.WINDOWS
+    try:
+        dml.FROZEN, dml.WINDOWS = True, False
+        e = dml.child_env({"LD_LIBRARY_PATH": "/bundle", "LD_LIBRARY_PATH_ORIG": "/usr/lib/x", "A": "1"})
+        check("child_env: LD_LIBRARY_PATH back from LD_LIBRARY_PATH_ORIG", e.get("LD_LIBRARY_PATH") == "/usr/lib/x"
+              and "LD_LIBRARY_PATH_ORIG" not in e and e.get("A") == "1", repr(e))
+        e = dml.child_env({"LD_LIBRARY_PATH": "/bundle"})
+        check("child_env: no LD_LIBRARY_PATH when there was none before", "LD_LIBRARY_PATH" not in e, repr(e))
+        dml.FROZEN, dml.WINDOWS = True, True
+        check("child_env: unchanged on Windows", dml.child_env({"X": "1"}) == {"X": "1"})
+        dml.FROZEN = False
+        check("child_env: unchanged when not packaged", dml.child_env(None) is None)
+        # default_root: APPIMAGE counts only when this program is inside APPDIR
+        dml.FROZEN, dml.WINDOWS = True, False
+        exe_real, env_keep = sys.executable, {k: os.environ.get(k) for k in ("APPIMAGE", "APPDIR")}
+        try:
+            mine = os.path.join(H, "AppDir"); os.makedirs(mine, exist_ok=True)
+            sys.executable = os.path.join(mine, "Dave Mirra Freestyle BMX")
+            os.environ["APPIMAGE"] = os.path.join(H, "far", "Game.AppImage")
+            os.environ["APPDIR"] = mine
+            check("default_root: our own AppImage keeps its folders next to the AppImage file",
+                  dml.default_root() == os.path.join(H, "far"), dml.default_root())
+            os.environ["APPDIR"] = os.path.join(H, "OtherAppDir")
+            check("default_root: an APPIMAGE inherited from another program is not ours",
+                  dml.default_root() == mine, dml.default_root())
+        finally:
+            sys.executable = exe_real
+            for k, v in env_keep.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+    finally:
+        dml.FROZEN, dml.WINDOWS = frozen, windows
+    # CHD: a header that claims more than a CD holds is refused; the write-out folder follows the header's SHA-1
+    head = lambda logical, sha: (b"MComprHD" + struct.pack(">II", 124, 5) + b"cdlz" + b"cdzl" + bytes(8)
+                                 + struct.pack(">QQQ", logical, 124, 0) + struct.pack(">II", 19584, 2448) + bytes(20) + sha + bytes(20))
+    huge = os.path.join(H, "huge.chd"); open(huge, "wb").write(head(1 << 62, b"\1" * 20))
+    try:
+        dml.Chd(huge); ok, why = False, "no error"
+    except dml.Fail as e:
+        ok, why = "not a CD image" in str(e), str(e)
+    except Exception as e:
+        ok, why = False, "%s: %s" % (type(e).__name__, e)
+    check("a .chd header that claims more than a CD holds is refused", ok, why[:80])
+    dml.CHD_CACHE[0] = os.path.join(H, "chd")
+    a, b = os.path.join(H, "a.chd"), os.path.join(H, "moved", "b.chd")
+    os.makedirs(os.path.dirname(b), exist_ok=True)
+    open(a, "wb").write(head(19584, b"\2" * 20)); open(b, "wb").write(head(19584, b"\2" * 20))
+    check("a moved or renamed .chd finds the same written-out copy", dml.chd_out_paths(a) == dml.chd_out_paths(b))
+    check("not written out yet: chd_ready is False", not dml.chd_ready(a))
+    d, cue, binp = dml.chd_out_paths(a)
+    os.makedirs(d, exist_ok=True)
+    for p in (cue, binp, os.path.join(d, "done")):
+        open(p, "w").close()
+    check("written out: chd_ready is True", dml.chd_ready(a) and dml.chd_ready(b))
+    P = dml.Paths(os.path.join(H, "root")); C = dml.Config(P.cfg)
+    C.set("disc", a)
+    keys = [k for k, _l, _ok, _t in dml.status(P, C)]
+    check("a .chd disc adds the 'written out' row to the status", "chd" in keys, repr(keys))
+
 tk.Tk.mainloop = driver
 dml.gui(T)
 run_log()
 lone_script()
 new_paths()
+helpers()
 print("%d of %d checks passed" % (sum(res), len(res)))
 sys.exit(0 if all(res) else 1)
