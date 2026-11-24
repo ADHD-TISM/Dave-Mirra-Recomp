@@ -9,6 +9,10 @@
 # Needs what build_exe.sh needs.
 set -e
 V=${1:?usage: sh launcher/release.sh <version, like v1.2.3> [out folder]}
+case "$V" in   # the packed launcher only takes a version of this form (release_tag in dmlauncher.py)
+    v[0-9]*) ;;
+    *) echo "the version must look like v1.2.3, not $V" >&2; exit 2 ;;
+esac
 OUT=${2:-$(dirname -- "$0")/dist}
 mkdir -p "$OUT"
 OUT=$(CDPATH= cd -- "$OUT" && pwd)

@@ -34,11 +34,11 @@
     }
   ],
   "start": {
-    "program": ["Dave Mirra Freestyle BMX.exe", "Dave Mirra Freestyle BMX", "DaveMirraFreestyleBMX-Linux-x86_64.AppImage"],
+    "program": ["Dave Mirra Freestyle BMX.exe", "Dave Mirra Freestyle BMX"],
     "args": ["run", "--data", "{data}"]
   },
   "prepare": {
-    "program": ["Dave Mirra Freestyle BMX.exe", "Dave Mirra Freestyle BMX", "DaveMirraFreestyleBMX-Linux-x86_64.AppImage"],
+    "program": ["Dave Mirra Freestyle BMX.exe", "Dave Mirra Freestyle BMX"],
     "args": ["prepare", "--dmbmx={input:bmx}", "--maxremix={input:remix}"],
     "label": "Translating the game's code from your disc and building it",
     "options": [
