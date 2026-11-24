@@ -450,6 +450,50 @@ def helpers():
     for p in (cue, binp, os.path.join(d, "done")):
         open(p, "w").close()
     check("written out: chd_ready is True", dml.chd_ready(a) and dml.chd_ready(b))
+    # the map reader on scripted bits (the Huffman codes and the bit fields), without a real CHD
+    import io, binascii
+    script = {}
+
+    class FakeBits:
+        def __init__(self, data):
+            self.vals = list(script["bits"])
+
+        def read(self, n):
+            return self.vals.pop(0)
+
+    class FakeHuff:
+        def __init__(self, bits):
+            self.codes = list(script["codes"])
+
+        def decode(self, bits):
+            return self.codes.pop(0)
+
+    def read_map(codes, bits, firstoffs, stored, widths=(20, 16, 16)):
+        script.update(codes=codes, bits=bits)
+        raw = b"".join(bytes([c]) + l.to_bytes(3, "big") + (o & (2 ** 48 - 1)).to_bytes(6, "big") + k.to_bytes(2, "big")
+                       for c, l, o, k in stored)
+        mh = struct.pack(">I", 0) + firstoffs.to_bytes(6, "big") + struct.pack(">H", binascii.crc_hqx(raw, 0xFFFF)) + bytes(widths) + b"\0"
+        c = dml.Chd.__new__(dml.Chd)
+        c.path, c.f, c.size, c.hunks, c.hunkbytes, c.unitbytes = "x.chd", io.BytesIO(mh), 10 ** 9, len(codes), 19584, 2448
+        c.codecs = [b"cdlz", b"cdzl", b"\0\0\0\0", b"\0\0\0\0"]
+        return c._read_map(0)
+    real_bits, real_huff = dml.ChdBits, dml.ChdHuffman
+    dml.ChdBits, dml.ChdHuffman = FakeBits, FakeHuff
+    try:
+        m = read_map([4, 5, 5, 5], [7, 0, 1, 2], 1000, [(4, 19584, 1000, 7), (5, 0, 0, 0), (5, 0, 1, 0), (5, 0, 2, 0)])
+        check("CHD map: a copy of a copy points at the stored hunk", [e[1] for e in m[1:]] == [0, 0, 0], repr(m))
+        for name, args in (("a bit width too wide", ([0], [10, 1], 1000, [(0, 10, 1000, 1)], (25, 16, 16))),
+                           ("an offset past 48 bits", ([0, 0], [10, 1, 10, 2], 2 ** 48 - 5, [(0, 10, 2 ** 48 - 5, 1), (0, 10, 2 ** 48 + 5, 2)]))):
+            try:
+                read_map(*args[:4], **({"widths": args[4]} if len(args) > 4 else {}))
+                ok, why = name == "an offset past 48 bits", "read (its hunk fails when read)"
+            except dml.Fail as e:
+                ok, why = True, str(e)
+            except Exception as e:
+                ok, why = False, "%s: %s" % (type(e).__name__, e)
+            check("CHD map: %s gives a message, never a crash" % name, ok, why[:80])
+    finally:
+        dml.ChdBits, dml.ChdHuffman = real_bits, real_huff
     P = dml.Paths(os.path.join(H, "root")); C = dml.Config(P.cfg)
     C.set("disc", a)
     keys = [k for k, _l, _ok, _t in dml.status(P, C)]

@@ -920,7 +920,7 @@ def chd_errors():
     """What reading a damaged or cut-short .chd can raise besides Fail and OSError; each is turned into a Fail."""
     import lzma
     import zlib
-    return (struct.error, KeyError, ValueError, IndexError, EOFError, lzma.LZMAError, zlib.error)
+    return (struct.error, KeyError, ValueError, IndexError, EOFError, OverflowError, lzma.LZMAError, zlib.error)
 
 
 def chd_damaged(path, e):
@@ -1041,7 +1041,9 @@ class Chd:
                 raise Fail("the .chd map is damaged (hunk type %d)" % c)
             if c == 5 and offset >= n:       # a copy must be of an earlier hunk (else reading it would never end)
                 raise chd_damaged(self.path, ValueError("hunk %d is a copy of hunk %d" % (n, offset)))
-            raw += bytes([c]) + length.to_bytes(3, "big") + offset.to_bytes(6, "big") + (crc & 0xFFFF).to_bytes(2, "big")
+            # the check sum is over the map as libchdr stores it: 24-bit lengths and 48-bit offsets (put_u24, put_u48)
+            raw += (bytes([c]) + (length & 0xFFFFFF).to_bytes(3, "big") + (offset & 0xFFFFFFFFFFFF).to_bytes(6, "big")
+                    + (crc & 0xFFFF).to_bytes(2, "big"))
             if c == 5 and out[offset][0] == 5:   # a copy of a copy: straight to the stored hunk, so reading never chains
                 offset = out[offset][1]
             out.append((c, offset, length, crc))
