@@ -466,12 +466,17 @@ def main():
     a = ap.parse_args()
     P = a.prefix
     if a.patches:
-        import json
+        import json, re
         with open(a.patches, encoding='utf-8') as f:
-            for k, v in json.load(f).get('patches', {}).items():
-                if not (isinstance(v, list) and len(v) == 2 and all(isinstance(s, str) for s in v)):
-                    raise SystemExit(f'patch {k}: want ["the C the instruction gives", "the C to emit instead"]')
-                PATCHES[int(k, 16)] = (v[0], v[1])
+            pt = json.load(f).get('patches', {})
+        if not isinstance(pt, dict):
+            raise SystemExit(f'{a.patches}: "patches" must be an object of "address": ["the C the instruction gives", "the C to emit instead"]')
+        for k, v in pt.items():
+            if not re.fullmatch(r'[0-9a-fA-F]{8}', k) or int(k, 16) & 3:
+                raise SystemExit(f'patch {k!r}: the address must be 8 hex digits of an instruction (a multiple of 4)')
+            if not (isinstance(v, list) and len(v) == 2 and all(isinstance(s, str) for s in v)):
+                raise SystemExit(f'patch {k}: want ["the C the instruction gives", "the C to emit instead"]')
+            PATCHES[int(k, 16)] = (v[0], v[1])
     extra = []
     for fn in a.extra:
         if os.path.exists(fn):
