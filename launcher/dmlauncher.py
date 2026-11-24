@@ -920,7 +920,8 @@ def chd_errors():
     """What reading a damaged or cut-short .chd can raise besides Fail and OSError; each is turned into a Fail."""
     import lzma
     import zlib
-    return (struct.error, KeyError, ValueError, IndexError, EOFError, OverflowError, lzma.LZMAError, zlib.error)
+    return (struct.error, KeyError, ValueError, IndexError, EOFError, OverflowError, ZeroDivisionError,
+            lzma.LZMAError, zlib.error)
 
 
 def chd_damaged(path, e):
@@ -957,8 +958,8 @@ class Chd:
         self.hunkbytes, self.unitbytes = struct.unpack_from(">II", h, 56)
         if h[104:124] != b"\0" * 20:
             raise Fail("%s needs a parent CHD; make a whole one with chdman" % os.path.basename(path))
-        if not self.hunkbytes or self.hunkbytes % CD_FRAME:
-            raise Fail("%s is not a CD image (its hunks are not whole CD frames)" % os.path.basename(path))
+        if self.unitbytes != CD_FRAME or not self.hunkbytes or self.hunkbytes % CD_FRAME:
+            raise Fail("%s is not a CD image (its units or hunks are not whole CD frames)" % os.path.basename(path))
         if self.logical > CHD_MAX_LOGICAL or self.hunkbytes > 1 << 20:   # a CD holds at most about 1.1 GB this way
             raise Fail("%s is not a CD image (it says it holds %d bytes in hunks of %d)"
                        % (os.path.basename(path), self.logical, self.hunkbytes))
@@ -1053,8 +1054,11 @@ class Chd:
         return out
 
     def _read_tracks(self, metaoffset):
-        tracks, off = [], metaoffset
+        tracks, off, seen = [], metaoffset, set()
         while off:
+            if off in seen or len(seen) >= 256:   # a CD has at most 99 tracks; a list that loops back is damaged
+                raise chd_damaged(self.path, ValueError("its track list loops"))
+            seen.add(off)
             self.f.seek(off)
             mh = self.f.read(16)
             if len(mh) < 16:

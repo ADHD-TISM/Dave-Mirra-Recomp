@@ -334,6 +334,23 @@ def new_paths():
         except Exception as e:
             ok, why = False, "%s: %s" % (type(e).__name__, e)
         check("a .chd %s is refused with a message" % name, ok, why[:90])
+    # a header with no unit size, and a track list that points back at itself, are messages (no crash, no hang)
+    odd = os.path.join(R, "odd"); os.makedirs(odd, exist_ok=True)
+    nounit = os.path.join(odd, "nounit.chd")
+    open(nounit, "wb").write(head[:60] + struct.pack(">I", 0) + head[64:])
+    track1 = b"TRACK:1 TYPE:MODE2_RAW SUBTYPE:NONE FRAMES:8 PREGAP:0 PGTYPE:MODE1 PGSUB:NONE POSTGAP:0\0"
+    loop = os.path.join(odd, "loop.chd")   # uncompressed, 1 hunk, map at 124, its one track entry at 128 points at 128
+    open(loop, "wb").write(b"MComprHD" + struct.pack(">II", 124, 5) + bytes(16) + struct.pack(">QQQ", 19584, 124, 128)
+                           + struct.pack(">II", 19584, 2448) + bytes(60) + bytes(4)
+                           + b"CHT2" + struct.pack(">IQ", len(track1), 128) + track1)
+    for name, p, said in (("with no unit size", nounit, "not a CD image"), ("whose track list loops", loop, "loops")):
+        try:
+            dml.iso_root_files(p); ok, why = False, "no error"
+        except dml.Fail as e:
+            ok, why = said in str(e), str(e)
+        except Exception as e:
+            ok, why = False, "%s: %s" % (type(e).__name__, e)
+        check("a .chd %s is refused with a message" % name, ok, why[:90])
     P = dml.Paths(R); C = dml.Config(P.cfg)
     try:
         found = dml.find_discs(P, C); check("the disc folder with damaged .chd files is looked through", found == {}, repr(found))
