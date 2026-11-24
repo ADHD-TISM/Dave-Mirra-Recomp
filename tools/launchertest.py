@@ -68,6 +68,11 @@ def driver(win, n=0):
     def texts():
         return [str(w.cget("text")) for w in walk(win) if isinstance(w, ttk.Label)]
     pump(1.5)
+    check("the window has the launcher's name", win.title() == dml.APP_NAME == "Dave Mirra Freestyle BMX", repr(win.title()))
+    icon = dml.icon_file()
+    check("the icon is found next to the script", icon == os.path.join(os.path.dirname(os.path.abspath(SRC)), "icon.ico"), repr(icon))
+    png = dml.icon_png(icon) if icon else None
+    check("the icon's largest picture is a 256-pixel PNG", bool(png) and png[16:24] == (256).to_bytes(4, "big") * 2)
     check("nothing is written before a choice", ini() == A_INI)
     check("no Save button", not any(isinstance(w, ttk.Button) and str(w.cget("text")) == "Save" for w in walk(win)))
     pick("Skip the intro movies", "0")
@@ -255,8 +260,31 @@ def run_log():
     last = 4 if os.name == "nt" else 5
     check("run log: the last stand-in games ended", wait(lambda: done() == last), "%d of %d" % (done(), last))
 
+def lone_script():
+    """A launcher script without icon.ico next to it (as update-launcher leaves it) finds no icon and still opens."""
+    d = os.path.join(T, "alone"); os.makedirs(d, exist_ok=True)
+    shutil.copy(SRC, os.path.join(d, "dmlauncher.py"))
+    sp = importlib.util.spec_from_file_location("dml_alone", os.path.join(d, "dmlauncher.py"))
+    lone = importlib.util.module_from_spec(sp); sp.loader.exec_module(lone)
+    check("a script without icon.ico finds no icon", lone.icon_file() is None, repr(lone.icon_file()))
+    w = tk.Tk()
+    try:
+        lone.set_window_icon(w, tk)
+        check("and its window still gets set up", True)
+    finally:
+        w.destroy()
+    w = tk.Tk(); real = dml.WINDOWS; dml.WINDOWS = False   # the Linux way, which Tk on Windows can do as well
+    try:
+        dml.set_window_icon(w, tk)
+        img = getattr(w, "icon_image", None)
+        check("off Windows the window gets the icon as a 256-pixel picture", img is not None and img.width() == 256,
+              repr(img and img.width()))
+    finally:
+        dml.WINDOWS = real; w.destroy()
+
 tk.Tk.mainloop = driver
 dml.gui(T)
 run_log()
+lone_script()
 print("%d of %d checks passed" % (sum(res), len(res)))
 sys.exit(0 if all(res) else 1)

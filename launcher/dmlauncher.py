@@ -89,6 +89,42 @@ def icon_file():
     return path if os.path.isfile(path) else None
 
 
+def icon_png(path):
+    """The largest picture of an .ico whose pictures are PNGs (as tools/make_icon.py writes them), as PNG bytes, or
+    None. Tk on Linux cannot read an .ico, but it reads PNG."""
+    try:
+        with open(path, "rb") as f:
+            d = f.read()
+        best = None
+        for i in range(struct.unpack_from("<H", d, 4)[0]):
+            w, _h, _c, _r, _p, _b, size, off = struct.unpack_from("<BBBBHHII", d, 6 + 16 * i)
+            w = w or 256                    # 0 stands for 256
+            p = d[off:off + size]
+            if p[:8] == b"\x89PNG\r\n\x1a\n" and len(p) == size and (best is None or w > best[0]):
+                best = (w, p)
+        return best[1] if best else None
+    except (OSError, struct.error):
+        return None
+
+
+def set_window_icon(win, tk):
+    """Give the window (and its dialogs) the launcher's icon, if there is one; a failure leaves Tk's own."""
+    icon = icon_file()
+    if not icon:
+        return
+    try:
+        if WINDOWS:
+            win.iconbitmap(default=icon)    # the window, its dialogs and the taskbar
+        else:
+            png = icon_png(icon)
+            if png:
+                import base64
+                win.icon_image = tk.PhotoImage(data=base64.b64encode(png).decode("ascii"))   # kept: Tk needs it alive
+                win.iconphoto(True, win.icon_image)
+    except tk.TclError:
+        pass
+
+
 def default_root():
     if FROZEN:
         return os.path.dirname(os.path.abspath(sys.executable))
@@ -1403,12 +1439,7 @@ def gui(root_dir, pinned=False, notice=None):
     P.use(C.game)
     win = tk.Tk()
     win.title(APP_NAME)
-    icon = icon_file()
-    if WINDOWS and icon:
-        try:
-            win.iconbitmap(default=icon)    # the window, its dialogs and the taskbar get the launcher's icon
-        except tk.TclError:
-            pass
+    set_window_icon(win, tk)
     win.geometry("760x640")
     win.minsize(640, 520)
     q = queue.Queue()
