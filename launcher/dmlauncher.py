@@ -43,7 +43,8 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 REPO = "ADHD-TISM/Dave-Mirra-Recomp"
-LAUNCHER_VERSION = "10"
+LAUNCHER_VERSION = "11"
+APP_NAME = "Dave Mirra Freestyle BMX"   # the launcher's name: window, header and dialogs (packaged file "Dave Mirra Freestyle BMX.exe")
 
 # Build tools: llvm-mingw (clang + a MinGW-w64 UCRT sysroot), pinned and checked.
 LLVM_NAME = "llvm-mingw-20261104-ucrt-x86_64"
@@ -79,6 +80,14 @@ class Fail(Exception):
 
 
 # ---------------------------------------------------------------- paths/config
+
+def icon_file():
+    """The launcher's icon (launcher/icon.ico, drawn by tools/make_icon.py): packed into the exe, or next to this
+    script. None when it is not there, as for a script updated with update-launcher."""
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(base, "icon.ico")
+    return path if os.path.isfile(path) else None
+
 
 def default_root():
     if FROZEN:
@@ -1393,7 +1402,13 @@ def gui(root_dir, pinned=False, notice=None):
     migrate_note = migrate_layout(P)
     P.use(C.game)
     win = tk.Tk()
-    win.title("Dave Mirra BMX Recomp launcher")
+    win.title(APP_NAME)
+    icon = icon_file()
+    if WINDOWS and icon:
+        try:
+            win.iconbitmap(default=icon)    # the window, its dialogs and the taskbar get the launcher's icon
+        except tk.TclError:
+            pass
     win.geometry("760x640")
     win.minsize(640, 520)
     q = queue.Queue()
@@ -1451,7 +1466,7 @@ def gui(root_dir, pinned=False, notice=None):
 
     top = ttk.Frame(win, padding=(10, 8))
     top.pack(fill="x")
-    ttk.Label(top, text="Dave Mirra BMX", font=("Segoe UI", 14, "bold")).pack(side="left")
+    ttk.Label(top, text=APP_NAME, font=("Segoe UI", 14, "bold")).pack(side="left")
     game_var = tk.StringVar()
     game_box = ttk.Combobox(top, textvariable=game_var, state="readonly", width=42)
     game_box.pack(side="left", padx=(16, 0))
@@ -2022,7 +2037,7 @@ def gui(root_dir, pinned=False, notice=None):
                         bt.configure(state="normal")
                     if kind == "error":
                         log("ERROR: " + val)
-                        messagebox.showerror("Dave Mirra launcher", val)
+                        messagebox.showerror(APP_NAME, val)
                     else:
                         log(val)
                     refresh()
@@ -2037,7 +2052,7 @@ def gui(root_dir, pinned=False, notice=None):
     pump()
     if notice:
         log("ERROR: " + notice)
-        win.after(300, lambda: messagebox.showerror("Dave Mirra launcher", notice))
+        win.after(300, lambda: messagebox.showerror(APP_NAME, notice))
     def on_close():
         try:
             flush_settings()

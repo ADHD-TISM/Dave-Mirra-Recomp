@@ -150,7 +150,8 @@ folders next to the launcher, **Build** checks your disc image, translates the c
 the game, and **Settings** edits `game/<id>/dmrecomp.ini`. The launcher makes a **Dave Mirra BMX** folder next to itself: put your .cue and .bin there and they are found automatically. **Close the launcher when the game starts** is a checkbox on the Play tab. A **Dark mode** checkbox (it starts from your Windows setting) switches the window's colours. Updates never touch `game/`, so settings and
 saves are kept. `python launcher/dmlauncher.py status|download|update|build|play|update-launcher`
 does the same without a window. `sh launcher/build_exe.sh` (needs PyInstaller) packs it into one file,
-`launcher/dist/DaveMirraLauncher.exe`, which needs no Python installed and holds no game code,
+`launcher/dist/Dave Mirra Freestyle BMX.exe`, which needs no Python installed and holds no game code or art (its icon, `launcher/icon.ico`,
+is drawn by `tools/make_icon.py`),
 so it can be shared; put it in its own folder and run it. On Linux run the script, `python3 launcher/dmlauncher.py`
 (the window needs Tkinter, `python3-tk` on Debian/Ubuntu; `status`, `download`, `build` and `play` work without it). There it
 uses the system's compiler and SDL2 instead of downloading a compiler, and says what to install when they are missing.
