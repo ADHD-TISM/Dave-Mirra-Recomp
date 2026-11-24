@@ -985,6 +985,8 @@ class Chd:
         firstoffs = int.from_bytes(mh[4:10], "big")
         mapcrc = struct.unpack_from(">H", mh, 10)[0]
         lengthbits, selfbits, parentbits = mh[12], mh[13], mh[14]
+        if lengthbits > 24 or selfbits > 48 or parentbits > 48:   # more than a map entry's 3 and 6 bytes can hold
+            raise chd_damaged(self.path, ValueError("its map header is damaged"))
         if mapoffset + 16 + mapbytes > self.size:
             raise chd_damaged(self.path, EOFError("its map runs past the end of the file"))
         bits = ChdBits(self.f.read(mapbytes))
@@ -1039,8 +1041,10 @@ class Chd:
                 raise Fail("the .chd map is damaged (hunk type %d)" % c)
             if c == 5 and offset >= n:       # a copy must be of an earlier hunk (else reading it would never end)
                 raise chd_damaged(self.path, ValueError("hunk %d is a copy of hunk %d" % (n, offset)))
-            out.append((c, offset, length, crc))
             raw += bytes([c]) + length.to_bytes(3, "big") + offset.to_bytes(6, "big") + (crc & 0xFFFF).to_bytes(2, "big")
+            if c == 5 and out[offset][0] == 5:   # a copy of a copy: straight to the stored hunk, so reading never chains
+                offset = out[offset][1]
+            out.append((c, offset, length, crc))
         import binascii
         if binascii.crc_hqx(bytes(raw), 0xFFFF) != mapcrc:
             raise Fail("the .chd map is damaged (its check sum is wrong)")
@@ -1542,9 +1546,12 @@ def compile_game(P, C, log, progress=None):
     log("game built: %s" % P.exe)
 
 
-def write_out_chd(disc_path, log):
-    """A .chd not written out yet (never, or its copy in work/chd was deleted) is written out now, before the build."""
+def write_out_chd(disc_path, log, starting=None):
+    """A .chd not written out yet (never, or its copy in work/chd was deleted) is written out now, before the build.
+    starting() is called first when there is something to do (prepare's progress line)."""
     if is_chd(disc_path) and not chd_ready(disc_path):
+        if starting:
+            starting()
         log("writing %s out to a .bin and .cue for the game (once; about a minute)" % os.path.basename(disc_path))
         resolve_bin(disc_path)
 
@@ -2013,8 +2020,11 @@ def migrate_layout(P):
 
 # ---------------------------------------------------------------- status
 
+STATUS_KEYS = ("tools", "project", "disc", "chd", "gen", "built")   # every row status() can give, in order
+
+
 def status(P, C):
-    """(key, label, ok, tab_to_fix_it) for each requirement."""
+    """(key, label, ok, tab_to_fix_it) for each requirement; the "chd" row only for a .chd disc."""
     disc = C.get("disc")
     disc_ok = False
     try:
@@ -2038,9 +2048,8 @@ def status(P, C):
 
 def ready_to_play(P, C):
     st = {k: ok for k, _l, ok, _t in status(P, C)}
-    disc = C.get("disc")
     # a .chd not written out yet would be written out on Play, in the window's own thread: Build does it instead
-    return os.path.isfile(P.exe) and st["disc"] and not (is_chd(disc) and not chd_ready(disc))
+    return os.path.isfile(P.exe) and st["disc"] and st.get("chd", True)
 
 
 # ---------------------------------------------------------------- command line
@@ -2115,9 +2124,7 @@ def prepare(root, argv):
     for i, (gid, disc) in enumerate(picks):
         P, C, _note = open_session(root, disc, gid)
         lo, name = 0.3 + i * span, names.get(gid, gid)
-        if is_chd(disc) and not chd_ready(disc):
-            say(lo, "Writing out your disc image for %s" % name)
-            write_out_chd(disc, log)
+        write_out_chd(disc, log, lambda: say(lo, "Writing out your disc image for %s" % name))
         say(lo, "Translating %s from your disc" % name)
         generate(P, C, disc, log)
         say(lo + span * 0.2, "Building %s" % name)
@@ -2343,12 +2350,13 @@ def gui(root_dir, pinned=False, notice=None):
     # ---- Play tab
     p = tabs["Play"]
     ttk.Label(p, text="What is ready", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+    # One label for every row status() can give, made once; refresh() shows the ones the current disc has, in order
+    # (the "chd" row only for a .chd disc), so picking another kind of disc never needs a label that does not exist.
     rows = {}
-    for key, label, _ok, _tab in status(P, C):
-        l = ttk.Label(p, text=label, cursor="hand2", font=("Segoe UI", 11))
-        l.pack(anchor="w", pady=2)
-        rows[key] = l
-    ttk.Label(p, text="A ✗ can be clicked to go where it is fixed.", style="Muted.TLabel").pack(anchor="w", pady=(0, 10))
+    for key in STATUS_KEYS:
+        rows[key] = ttk.Label(p, text="", cursor="hand2", font=("Segoe UI", 11))
+    rows_end = ttk.Label(p, text="A ✗ can be clicked to go where it is fixed.", style="Muted.TLabel")
+    rows_end.pack(anchor="w", pady=(0, 10))
     play_btn = lock(ttk.Button(p, text="Play"))
     play_btn.pack(anchor="w", ipadx=24, ipady=6)
     close_var = tk.BooleanVar(value=C.get("close_on_play", False))
@@ -2743,15 +2751,18 @@ def gui(root_dir, pinned=False, notice=None):
             reload_settings()
             edits_lbl.configure(text="(edits %s)" % P.ini)
         gname = dict((i, n) for i, n, _e in game_list(P)).get(P.gid, P.gid)
-        disc_title.configure(text="Your disc image for %s (.cue or .bin)" % gname)
+        disc_title.configure(text="Your disc image for %s (.cue, .bin or .chd)" % gname)
         st = status(P, C)
         ok_all = True
         first_bad = None
+        for l in rows.values():
+            l.pack_forget()
         for key, label, ok, tab in st:
             rows[key].configure(text=("✓  " if ok else "✗  ") + label,
                                 foreground=pal["ok"] if ok else pal["bad"])
             rows[key].tab = tab
             rows[key].bind("<Button-1>", lambda e, t=tab: nb.select(tabs[t]))
+            rows[key].pack(anchor="w", pady=2, before=rows_end)
             if not ok:
                 ok_all = False
                 first_bad = first_bad or tab

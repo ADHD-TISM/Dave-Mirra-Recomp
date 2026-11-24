@@ -177,6 +177,33 @@ def driver(win, n=0):
           repr(ini("maxremix")))
     pick("Internal 3D resolution", "2")
     pump(1.0)
+    # a .chd picked with Browse after the window is open: its "Disc written out" row shows, nothing raises; a .cue
+    # picked after it hides the row again
+    import struct
+    from tkinter import filedialog
+    errors = []
+    real_report, real_ask = win.report_callback_exception, filedialog.askopenfilename
+    win.report_callback_exception = lambda *a: errors.append("%s: %s" % (a[0].__name__, a[1]))
+    fake_chd = os.path.join(T, "picked.chd")
+    open(fake_chd, "wb").write(b"MComprHD" + struct.pack(">II", 124, 5) + b"cdlz" + b"cdzl" + bytes(8)
+                               + struct.pack(">QQQ", 19584, 124, 0) + struct.pack(">II", 19584, 2448) + bytes(60))
+    fake_cue = os.path.join(T, "picked.cue")
+    open(fake_cue, "w").write('FILE "picked.bin" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n')
+    open(os.path.join(T, "picked.bin"), "wb").write(bytes(2352 * 20))
+    browse_btn = [w for w in walk(win) if isinstance(w, ttk.Button) and str(w.cget("text")) == "Browse..."]
+    def shown_row():
+        # packed on the Play tab (on screen once that tab is the one shown)
+        return any(isinstance(w, ttk.Label) and "Disc written out" in str(w.cget("text")) and w.winfo_manager() == "pack" for w in walk(win))
+    try:
+        filedialog.askopenfilename = lambda **kw: fake_chd
+        browse_btn[0].invoke(); pump(0.5)
+        check("a .chd picked after the window opens raises nothing", not errors, repr(errors))
+        check("and shows its 'Disc written out' row", shown_row())
+        filedialog.askopenfilename = lambda **kw: fake_cue
+        browse_btn[0].invoke(); pump(0.5)
+        check("a .cue picked after it hides that row again", not shown_row() and not errors, repr(errors))
+    finally:
+        filedialog.askopenfilename, win.report_callback_exception = real_ask, real_report
     pick("Graphics API", "vulkan")
     type_in("Window size", "800x600", False)                 # typed in full, the cursor still in the field
     win.tk.call(win.protocol("WM_DELETE_WINDOW"))            # the window is closed before the timer runs out
