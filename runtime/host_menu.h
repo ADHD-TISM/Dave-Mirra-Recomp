@@ -122,9 +122,9 @@ static void menu_change(int item, int dir) {   /* dir: +1 the next value, -1 the
 }
 
 /* the menu's box and its entry rows, shared by the drawing and the pointer: row i's text is at MENU_ROW_Y(i), and its
-   highlight bar is MENU_BAR_H high from 5 pixels above that, MENU_BAR_X in from each side of the box */
+   highlight bar is MENU_BAR_H high from MENU_BAR_UP pixels above that, MENU_BAR_X in from each side of the box */
 enum { MENU_PX = 72, MENU_PY = 44, MENU_PW = MENU_W - 144, MENU_PH = MENU_H - 88,
-       MENU_ROW_STEP = 27, MENU_BAR_H = 26, MENU_BAR_X = 12 };
+       MENU_ROW_STEP = 27, MENU_BAR_H = 26, MENU_BAR_X = 12, MENU_BAR_UP = 5 };
 #define MENU_ROW_Y(i) (MENU_PY + 56 + (i) * MENU_ROW_STEP)   /* 10 rows above the 3 lines of help */
 static void menu_draw(int sel) {
     memcpy(menu_px, menu_bg, (size_t)MENU_W * MENU_H * 4);
@@ -136,7 +136,7 @@ static void menu_draw(int sel) {
     menu_fill(px + 16, py + 40, pw - 32, 2, 0x5a7fb8);
     for (int i = 0; i < MI_COUNT; i++) {
         int y = MENU_ROW_Y(i);
-        if (i == sel) menu_fill(px + MENU_BAR_X, y - 5, pw - 2 * MENU_BAR_X, MENU_BAR_H, 0x2a5db0);
+        if (i == sel) menu_fill(px + MENU_BAR_X, y - MENU_BAR_UP, pw - 2 * MENU_BAR_X, MENU_BAR_H, 0x2a5db0);
         u32 col = i == sel ? 0xffffff : 0xc0c8d0;
         menu_text(px + 24, y, 2, menu_names[i], col);
         const char *v = menu_value(i, 0);
@@ -163,7 +163,7 @@ static int menu_row_at_pointer(void) {
     int mx, my, cw, ch, w, h;
     if (!plat_mouse_pos(&mx, &my) || !menu_place(&cw, &ch, &w, &h)) return -1;
     int x = (int)((long long)(mx - (cw - w) / 2) * MENU_W / w), y = (int)((long long)(my - (ch - h) / 2) * MENU_H / h);
-    const int top = MENU_ROW_Y(0) - 5;   /* the first highlight bar's top */
+    const int top = MENU_ROW_Y(0) - MENU_BAR_UP;   /* the first highlight bar's top */
     if (x < MENU_PX + MENU_BAR_X || x >= MENU_PX + MENU_PW - MENU_BAR_X || y < top) return -1;
     int i = (y - top) / MENU_ROW_STEP;
     return i < MI_COUNT && (y - top) % MENU_ROW_STEP < MENU_BAR_H ? i : -1;
@@ -261,7 +261,7 @@ static void menu_run(unsigned frame, const char *test) {
                with a value steps back one value, and a right click anywhere else is Back */
             /* a click counts once: as a button that is down now and was not last turn, or as one that went down and
                came up again inside this turn (a fast click, a touchpad tap), which mouse_held never sees */
-            int row = menu_row_at_pointer(), clicks = (mouse_held & ~prev_mouse) | plat_mouse_pressed();
+            int row = menu_row_at_pointer(), clicks = (mouse_held & ~prev_mouse) | (test_nopad ? 0 : plat_mouse_pressed());   /* nopad: as mouse_input */
             prev_mouse = mouse_held;
             /* The picture moving under a pointer that stays put is not a choice: a change of Fullscreen or Aspect
                resizes or re-centres it, and the window may take a few turns to get its new size. */
