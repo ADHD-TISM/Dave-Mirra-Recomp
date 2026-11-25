@@ -121,17 +121,22 @@ static void menu_change(int item, int dir) {   /* dir: +1 the next value, -1 the
     show_settings();
 }
 
+/* the menu's box and its entry rows, shared by the drawing and the pointer: row i's text is at MENU_ROW_Y(i), and its
+   highlight bar is MENU_BAR_H high from 5 pixels above that, MENU_BAR_X in from each side of the box */
+enum { MENU_PX = 72, MENU_PY = 44, MENU_PW = MENU_W - 144, MENU_PH = MENU_H - 88,
+       MENU_ROW_STEP = 27, MENU_BAR_H = 26, MENU_BAR_X = 12 };
+#define MENU_ROW_Y(i) (MENU_PY + 56 + (i) * MENU_ROW_STEP)   /* 10 rows above the 3 lines of help */
 static void menu_draw(int sel) {
     memcpy(menu_px, menu_bg, (size_t)MENU_W * MENU_H * 4);
-    const int px = 72, py = 44, pw = MENU_W - 144, ph = MENU_H - 88;
+    const int px = MENU_PX, py = MENU_PY, pw = MENU_PW, ph = MENU_PH;
     menu_fill(px - 2, py - 2, pw + 4, ph + 4, 0x5a7fb8);
     menu_fill(px, py, pw, ph, 0x10161f);
     const char *title = "GAME MENU";
     menu_text((MENU_W - (int)strlen(title) * 16) / 2, py + 14, 2, title, 0xffffff);
     menu_fill(px + 16, py + 40, pw - 32, 2, 0x5a7fb8);
     for (int i = 0; i < MI_COUNT; i++) {
-        int y = py + 56 + i * 27;   /* 10 rows above the 3 lines of help */
-        if (i == sel) menu_fill(px + 12, y - 5, pw - 24, 26, 0x2a5db0);
+        int y = MENU_ROW_Y(i);
+        if (i == sel) menu_fill(px + MENU_BAR_X, y - 5, pw - 2 * MENU_BAR_X, MENU_BAR_H, 0x2a5db0);
         u32 col = i == sel ? 0xffffff : 0xc0c8d0;
         menu_text(px + 24, y, 2, menu_names[i], col);
         const char *v = menu_value(i, 0);
@@ -151,17 +156,17 @@ static int menu_place(int *cw, int *ch, int *w, int *h) {
     if (*cw <= 0 || *ch <= 0) return 0;
     *w = *cw; *h = *ch;
     if (!g_aspect) { *h = *cw * 3 / 4; if (*h > *ch) { *h = *ch; *w = *ch * 4 / 3; } }
-    return 1;
+    return *w > 0 && *h > 0;   /* a window a pixel or two wide has no room for a 4:3 picture */
 }
 /* the entry under the pointer, -1 for none; a row is its highlight bar in menu_draw */
 static int menu_row_at_pointer(void) {
     int mx, my, cw, ch, w, h;
     if (!plat_mouse_pos(&mx, &my) || !menu_place(&cw, &ch, &w, &h)) return -1;
     int x = (int)((long long)(mx - (cw - w) / 2) * MENU_W / w), y = (int)((long long)(my - (ch - h) / 2) * MENU_H / h);
-    const int px = 72, py = 44, pw = MENU_W - 144;
-    if (x < px + 12 || x >= px + pw - 12 || y < py + 51) return -1;
-    int i = (y - py - 51) / 27;
-    return i < MI_COUNT && (y - py - 51) % 27 < 26 ? i : -1;
+    const int top = MENU_ROW_Y(0) - 5;   /* the first highlight bar's top */
+    if (x < MENU_PX + MENU_BAR_X || x >= MENU_PX + MENU_PW - MENU_BAR_X || y < top) return -1;
+    int i = (y - top) / MENU_ROW_STEP;
+    return i < MI_COUNT && (y - top) % MENU_ROW_STEP < MENU_BAR_H ? i : -1;
 }
 static void menu_show(void) {
     int cw, ch, w, h;
@@ -254,7 +259,9 @@ static void menu_run(unsigned frame, const char *test) {
             hit = b & ~prev; prev = b;
             /* the mouse: moving onto an entry chooses it; a left click works it like Cross, a right click on an entry
                with a value steps back one value, and a right click anywhere else is Back */
-            int row = menu_row_at_pointer(), clicks = mouse_held & ~prev_mouse;
+            /* a click counts once: as a button that is down now and was not last turn, or as one that went down and
+               came up again inside this turn (a fast click, a touchpad tap), which mouse_held never sees */
+            int row = menu_row_at_pointer(), clicks = (mouse_held & ~prev_mouse) | plat_mouse_pressed();
             prev_mouse = mouse_held;
             /* The picture moving under a pointer that stays put is not a choice: a change of Fullscreen or Aspect
                resizes or re-centres it, and the window may take a few turns to get its new size. */

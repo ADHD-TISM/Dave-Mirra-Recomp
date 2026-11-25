@@ -52,13 +52,15 @@ void plat_pump(void);               /* handle window events; may call host_hotke
 /* The mouse over the window: buttons held (bit 0 left, 1 right, 2 middle, 3 and 4 the side buttons) and wheel notches
    since the last call (+ is away from the player). Both zero without focus. */
 void plat_mouse(int *buttons, int *wheel);
+/* the buttons that went down since the last plat_pump, even if already up again (a click shorter than a menu turn) */
+int  plat_mouse_pressed(void);
 /* where the pointer is, in the drawable's pixels (as plat_client_size counts them); 0 without focus or outside the window */
 int  plat_mouse_pos(int *x, int *y);
 void plat_menu_cursor(int on);      /* the in-game menu is open: show the pointer, also in fullscreen */
 int  plat_focused(void);            /* the window has the keyboard (it is the one in front) */
 /* put the file "from" in the place of "to" in one step: there is no moment without "to". 1 when done. */
 int  plat_replace_file(const char *from, const char *to);
-int  plat_key(int code);            /* key held, and the window has the keyboard */
+int  plat_key(int code);            /* key held, or tapped since the last plat_pump; and the window has the keyboard */
 int  plat_pad(int n, HostPad *p);   /* gamepad n (0 or 1): fills p and returns 1 when it is connected */
 void plat_pad_rumble(int n, uint16_t large, uint16_t small);
 void plat_audio_init(void);

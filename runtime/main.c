@@ -104,7 +104,8 @@ static void consider(const char *n) {
     if (n[0] == '.') return;   /* a hidden file, such as the "._" copy a Mac leaves beside each file on a FAT or exFAT drive */
     if (has_ext(n, ".cue")) {
         if (!n_cue++) snprintf(lone_cue, sizeof lone_cue, "%s", n);
-        if (!by_serial[0] && has_text(n, GAME_SERIAL)) snprintf(by_serial, sizeof by_serial, "%s", n);
+        /* of several with the serial, the first by name: the same pick whatever order the folder lists them in */
+        if (has_text(n, GAME_SERIAL) && (!by_serial[0] || strcmp(n, by_serial) < 0)) snprintf(by_serial, sizeof by_serial, "%s", n);
     } else if (has_ext(n, ".bin") && !n_bin++) snprintf(lone_bin, sizeof lone_bin, "%s", n);
 }
 #ifdef _WIN32
@@ -113,9 +114,11 @@ static const char *find_image(void) {
     struct _finddata_t fd; intptr_t h = _findfirst("*", &fd);
     if (h != -1) { do if (!(fd.attrib & (_A_SUBDIR | _A_HIDDEN | _A_SYSTEM))) consider(fd.name); while (_findnext(h, &fd) == 0); _findclose(h); }
 #else
+#include <sys/stat.h>
 static const char *find_image(void) {
     DIR *d = opendir(".");
-    if (d) { for (struct dirent *e; (e = readdir(d)) != NULL;) consider(e->d_name); closedir(d); }
+    struct stat st;   /* files only: a folder named like an image (x.cue/) is not one */
+    if (d) { for (struct dirent *e; (e = readdir(d)) != NULL;) if (!stat(e->d_name, &st) && S_ISREG(st.st_mode)) consider(e->d_name); closedir(d); }
 #endif
     return by_serial[0] ? by_serial : n_cue == 1 ? lone_cue : !n_cue && n_bin == 1 ? lone_bin : NULL;
 }

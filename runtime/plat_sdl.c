@@ -146,6 +146,8 @@ static void pad_removed(SDL_JoystickID id) {
         if (pads[i] && SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pads[i])) == id) { SDL_GameControllerClose(pads[i]); pads[i] = NULL; }
 }
 static int mouse_buttons, mouse_wheel_acc;
+static int mouse_pressed;   /* buttons that went down since the last plat_pump (the menu reads clicks from these) */
+int plat_mouse_pressed(void) { return SDL_GetMouseFocus() == win && SDL_GetKeyboardFocus() == win ? mouse_pressed : 0; }
 void plat_mouse(int *buttons, int *wheel) {
     /* the pointer over the window is not enough: a window behind others gets wheel and button events too */
     if (SDL_GetMouseFocus() != win || SDL_GetKeyboardFocus() != win) { *buttons = *wheel = 0; mouse_wheel_acc = 0; return; }
@@ -172,6 +174,7 @@ static unsigned char tapped[SDL_NUM_SCANCODES];
 void plat_pump(void) {
     SDL_Event e;
     memset(tapped, 0, sizeof tapped);   /* a tap counts until the next pump: one frame */
+    mouse_pressed = 0;
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
         case SDL_QUIT: host_quit(); break;
@@ -185,13 +188,13 @@ void plat_pump(void) {
         case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: {
             int bit = e.button.button == SDL_BUTTON_LEFT ? 1 : e.button.button == SDL_BUTTON_RIGHT ? 2 : e.button.button == SDL_BUTTON_MIDDLE ? 4
                     : e.button.button == SDL_BUTTON_X1 ? 8 : e.button.button == SDL_BUTTON_X2 ? 16 : 0;
-            if (e.type == SDL_MOUSEBUTTONDOWN) mouse_buttons |= bit; else mouse_buttons &= ~bit;
+            if (e.type == SDL_MOUSEBUTTONDOWN) { mouse_buttons |= bit; mouse_pressed |= bit; } else mouse_buttons &= ~bit;
             break;
         }
         case SDL_MOUSEWHEEL: mouse_wheel_acc += e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.y : e.wheel.y; break;
         case SDL_WINDOWEVENT:
             if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST || e.window.event == SDL_WINDOWEVENT_LEAVE) mouse_buttons = 0;
-            if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) memset(tapped, 0, sizeof tapped);
+            if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) { memset(tapped, 0, sizeof tapped); mouse_pressed = 0; }
             break;
         }
     }

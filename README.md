@@ -60,6 +60,9 @@ and rumble, the launcher window on SteamOS, and sound out of the Deck.
 build/dmrecomp.exe "<your image>.cue"
 ```
 
+Without a disc on the command line, the game looks in its own folder: first for a .cue whose name has the game's serial
+in it (SLUS-01026, or SLUS-01347 for Maximum Remix; in any case), then for the only .cue there, then for the only .bin.
+
 Keys: arrows = d-pad, Z = Cross, X = Circle, A = Square, S = Triangle,
 Q/W = L1/R1, 1/3 = L2/R2, Enter = Start, Backspace = Select, Tab = fast-forward.
 An XInput gamepad also works. The mouse works too: the wheel steps up and down (hold left Shift to step left and right), left click is Cross (accept), right click is Triangle (back) and middle click is Start.
@@ -67,7 +70,9 @@ Every key and mouse button can be changed (see Settings; the launcher has a "Pre
 
 Escape opens a menu while playing (on a gamepad: hold Back and Start; `pad_menu` changes that). The game stands still while it is open. It changes the
 internal resolution, picture filter, aspect ratio, FSR, widescreen, fullscreen, volume and rumble, and it has Exit game. What is
-changed there is written to `dmrecomp.ini`.
+changed there is written to `dmrecomp.ini`. The menu works with the mouse too: moving onto an entry chooses it, left click
+selects it, and right click steps a setting back one value (anywhere else it closes the menu). In the menu the mouse
+buttons do only this; they go back to their game buttons once it is closed.
 
 ## Settings
 

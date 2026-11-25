@@ -337,19 +337,23 @@ static void mouse_input(u16 *b) {
 #define TAP_UP 4
 #define TAP_QUEUE 4
 static struct { u8 hold_for, waiting, up_for; } tap[16];   /* up_for: frames let go so far (stops at 255) */
-static void tap_reset(void) { for (int i = 0; i < 16; i++) { tap[i].hold_for = tap[i].waiting = 0; tap[i].up_for = 255; } }
+static u16 tap_was;   /* the keys down at the last poll_input */
+static void tap_reset(void) {   /* forget every press: the menu closes only once nothing is held */
+    for (int i = 0; i < 16; i++) { tap[i].hold_for = tap[i].waiting = 0; tap[i].up_for = 255; }
+    tap_was = 0;
+}
 static void poll_input(void) {
     static unsigned probe;
     u16 b[2] = { 0, 0 };   /* active-high while building */
     for (int i = 0; i < 16; i++) for (int j = 0; j < MAXKEYS && keymap[i][j]; j++) if (key(keymap[i][j])) { b[0] |= (u16)(1 << i); break; }
     {
-        static u16 was; static int ready;
+        static int ready;
         if (!ready) { tap_reset(); ready = 1; }
         u16 now = b[0];   /* the keys themselves */
         b[0] = 0;
         for (int i = 0; i < 16; i++) {
             u16 bit = (u16)(1 << i);
-            if ((now & bit) && !(was & bit)) {   /* it just went down */
+            if ((now & bit) && !(tap_was & bit)) {   /* it just went down */
                 if (tap[i].hold_for || tap[i].up_for < TAP_UP) { if (tap[i].waiting < TAP_QUEUE) tap[i].waiting++; }
                 else tap[i].hold_for = TAP_DOWN;
             }
@@ -360,7 +364,7 @@ static void poll_input(void) {
             if (on) { b[0] |= bit; tap[i].up_for = 0; }
             else if (tap[i].up_for < 255) tap[i].up_for++;
         }
-        was = now;
+        tap_was = now;
     }
     turbo = key(key_turbo);
     static int hot_down[6];   /* a display key acts once when it goes down */

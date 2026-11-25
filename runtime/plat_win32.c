@@ -147,6 +147,7 @@ void plat_set_fullscreen(int on, int fs_w, int fs_h) {
 void plat_set_title(const char *title) { SetWindowTextA(wnd, title); }
 int plat_wants_fullscreen(void) { return 0; }
 static int mouse_buttons, mouse_wheel_acc;
+static int mouse_pressed;   /* buttons that went down since the last plat_pump (the menu reads clicks from these) */
 static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_KEYDOWN: key_went_down(w, l); break;
@@ -158,7 +159,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN: case WM_XBUTTONDOWN: {
         int bit = m == WM_LBUTTONDOWN ? 1 : m == WM_RBUTTONDOWN ? 2 : m == WM_MBUTTONDOWN ? 4 : (HIWORD(w) == XBUTTON1 ? 8 : 16);
         if (!mouse_buttons) SetCapture(h);   /* the release arrives even when the pointer has left the window */
-        mouse_buttons |= bit;
+        mouse_buttons |= bit; mouse_pressed |= bit;
         return m == WM_XBUTTONDOWN ? TRUE : 0;
     }
     case WM_LBUTTONUP: case WM_RBUTTONUP: case WM_MBUTTONUP: case WM_XBUTTONUP: {
@@ -170,7 +171,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_MOUSEWHEEL:
         mouse_wheel_acc += GET_WHEEL_DELTA_WPARAM(w);
         return 0;
-    case WM_KILLFOCUS: mouse_buttons = 0; ReleaseCapture(); memset(tapped, 0, sizeof tapped); break;
+    case WM_KILLFOCUS: mouse_buttons = mouse_pressed = 0; ReleaseCapture(); memset(tapped, 0, sizeof tapped); break;
     case WM_CAPTURECHANGED: mouse_buttons = 0; break;   /* the capture was taken away: the releases will not arrive */
     case WM_MOUSEACTIVATE:   /* the click that brings the window to the front is not a press in the game */
         if (GetForegroundWindow() != h && LOWORD(l) == HTCLIENT) return MA_ACTIVATEANDEAT;
@@ -279,6 +280,7 @@ void plat_mouse(int *buttons, int *wheel) {
     *buttons = mouse_buttons;
     *wheel = mouse_wheel_acc / WHEEL_DELTA; mouse_wheel_acc -= *wheel * WHEEL_DELTA;
 }
+int plat_mouse_pressed(void) { return GetForegroundWindow() == wnd ? mouse_pressed : 0; }
 int plat_mouse_pos(int *x, int *y) {
     POINT pt; RECT cr;
     if (GetForegroundWindow() != wnd || !GetCursorPos(&pt) || !ScreenToClient(wnd, &pt) || !GetClientRect(wnd, &cr)) return 0;
@@ -289,6 +291,7 @@ int plat_mouse_pos(int *x, int *y) {
 void plat_pump(void) {
     MSG m;
     memset(tapped, 0, sizeof tapped);   /* a tap counts until the next pump: one frame */
+    mouse_pressed = 0;
     while (PeekMessageA(&m, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageA(&m); }
 }
 
