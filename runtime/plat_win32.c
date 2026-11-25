@@ -42,9 +42,20 @@ static const int vk_of[HK_COUNT - 256] = {
     [HK_F1 - 256] = VK_F1, [HK_F2 - 256] = VK_F2, [HK_F3 - 256] = VK_F3, [HK_F4 - 256] = VK_F4, [HK_F5 - 256] = VK_F5,
     [HK_F6 - 256] = VK_F6, [HK_F7 - 256] = VK_F7, [HK_F8 - 256] = VK_F8, [HK_F9 - 256] = VK_F9, [HK_F10 - 256] = VK_F10,
     [HK_F11 - 256] = VK_F11, [HK_F12 - 256] = VK_F12 };
+/* A key that went down since the last plat_pump, even if it is already up again: a tap shorter than a frame is not lost */
+static unsigned char tapped[256];
+static void key_went_down(WPARAM w, LPARAM l) {
+    UINT vk = (UINT)w;
+    int ext = (int)((l >> 24) & 1);
+    if (l & (1 << 30)) return;   /* auto-repeat: the key is held, which GetAsyncKeyState sees */
+    if (vk == VK_SHIFT) vk = MapVirtualKeyA((UINT)((l >> 16) & 0xff), MAPVK_VSC_TO_VK_EX);   /* the host asks for left or right */
+    else if (vk == VK_CONTROL) vk = ext ? VK_RCONTROL : VK_LCONTROL;
+    else if (vk == VK_MENU) vk = ext ? VK_RMENU : VK_LMENU;
+    if (vk < 256) tapped[vk] = 1;
+}
 int plat_key(int code) {
     int vk = code < 256 ? code : code < HK_COUNT ? vk_of[code - 256] : 0;   /* letters and digits are their own virtual-key codes */
-    return vk && GetForegroundWindow() == wnd && (GetAsyncKeyState(vk) & 0x8000) != 0;
+    return vk && GetForegroundWindow() == wnd && (tapped[vk] || (GetAsyncKeyState(vk) & 0x8000) != 0);
 }
 int plat_pad(int n, HostPad *p) {
     XState s;
@@ -127,8 +138,10 @@ int plat_wants_fullscreen(void) { return 0; }
 static int mouse_buttons, mouse_wheel_acc;
 static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
+    case WM_KEYDOWN: key_went_down(w, l); break;
     case WM_SYSKEYDOWN:
         if (w == VK_RETURN && !(l & (1 << 30))) { host_hotkey(HOT_FULLSCREEN); return 0; }
+        key_went_down(w, l);
         break;
     /* the mouse: the host reads these through plat_mouse */
     case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN: case WM_XBUTTONDOWN: {
@@ -146,7 +159,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_MOUSEWHEEL:
         mouse_wheel_acc += GET_WHEEL_DELTA_WPARAM(w);
         return 0;
-    case WM_KILLFOCUS: mouse_buttons = 0; ReleaseCapture(); break;
+    case WM_KILLFOCUS: mouse_buttons = 0; ReleaseCapture(); memset(tapped, 0, sizeof tapped); break;
     case WM_CAPTURECHANGED: mouse_buttons = 0; break;   /* the capture was taken away: the releases will not arrive */
     case WM_MOUSEACTIVATE:   /* the click that brings the window to the front is not a press in the game */
         if (GetForegroundWindow() != h && LOWORD(l) == HTCLIENT) return MA_ACTIVATEANDEAT;
@@ -257,6 +270,7 @@ void plat_mouse(int *buttons, int *wheel) {
 }
 void plat_pump(void) {
     MSG m;
+    memset(tapped, 0, sizeof tapped);   /* a tap counts until the next pump: one frame */
     while (PeekMessageA(&m, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageA(&m); }
 }
 

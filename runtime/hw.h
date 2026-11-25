@@ -4,7 +4,8 @@
 #include <stdio.h>
 #ifndef _WIN32
 #include <strings.h>
-#define _stricmp strcasecmp   /* the runtime uses the Windows name */
+#define _stricmp strcasecmp   /* the runtime uses the Windows names */
+#define _strnicmp strncasecmp
 #endif
 
 #define CLOCK_HZ 33868800u

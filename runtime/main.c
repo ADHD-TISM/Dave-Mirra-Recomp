@@ -91,6 +91,34 @@ static const char *default_images[] = {
     GAME_FILE " [" GAME_SERIAL "].cue",
     NULL };
 
+/* No default name is here: look through this folder. A .cue whose name has the serial in it wins (a region tag such as
+   "[U]" does not matter), then the only .cue, then the only .bin. Several of either with no serial is not a guess. */
+static int has_ext(const char *n, const char *ext) { size_t l = strlen(n); return l > 4 && !_stricmp(n + l - 4, ext); }
+static int has_text(const char *s, const char *sub) {
+    for (size_t n = strlen(sub); *s; s++) if (!_strnicmp(s, sub, n)) return 1;
+    return 0;
+}
+static char by_serial[1024], lone_cue[1024], lone_bin[1024];
+static int n_cue, n_bin;
+static void consider(const char *n) {
+    if (has_ext(n, ".cue")) {
+        if (!n_cue++) snprintf(lone_cue, sizeof lone_cue, "%s", n);
+        if (!by_serial[0] && has_text(n, GAME_SERIAL)) snprintf(by_serial, sizeof by_serial, "%s", n);
+    } else if (has_ext(n, ".bin") && !n_bin++) snprintf(lone_bin, sizeof lone_bin, "%s", n);
+}
+#ifdef _WIN32
+#include <io.h>
+static const char *find_image(void) {
+    struct _finddata_t fd; intptr_t h = _findfirst("*", &fd);
+    if (h != -1) { do if (!(fd.attrib & _A_SUBDIR)) consider(fd.name); while (_findnext(h, &fd) == 0); _findclose(h); }
+#else
+static const char *find_image(void) {
+    DIR *d = opendir(".");
+    if (d) { for (struct dirent *e; (e = readdir(d)) != NULL;) consider(e->d_name); closedir(d); }
+#endif
+    return by_serial[0] ? by_serial : n_cue == 1 ? lone_cue : !n_cue && n_bin == 1 ? lone_bin : NULL;
+}
+
 static int run(int argc, char **argv) {
     const char *img = NULL;
     int fs_given = 0;   /* a fullscreen choice on the command line */
@@ -133,9 +161,10 @@ static int run(int argc, char **argv) {
         FILE *f = fopen(default_images[i], "rb");
         if (f) { fclose(f); img = default_images[i]; break; }
     }
+    if (!img) img = find_image();
     host_init();
     if (!img) host_fatal("Pass the path to your " GAME_NAME " (" GAME_SERIAL ") .cue or .bin,\n"
-                         "or place it next to the executable as game.cue / game.bin.");
+                         "or place it next to the executable: game.cue, or the only .cue there.");
     char bin[1024]; resolve_image(img, bin, sizeof bin); fix_case(bin, sizeof bin);
     cd_init(bin);
 

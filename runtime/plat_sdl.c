@@ -8,6 +8,7 @@
 #include <SDL_vulkan.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <ctype.h>
 #include "host.h"
 
@@ -154,8 +155,11 @@ int plat_replace_file(const char *from, const char *to) { return MoveFileExA(fro
 #else
 int plat_replace_file(const char *from, const char *to) { return rename(from, to) == 0; }   /* rename replaces in one step here */
 #endif
+/* A key that went down since the last plat_pump, even if it is already up again: a tap shorter than a frame is not lost */
+static unsigned char tapped[SDL_NUM_SCANCODES];
 void plat_pump(void) {
     SDL_Event e;
+    memset(tapped, 0, sizeof tapped);   /* a tap counts until the next pump: one frame */
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
         case SDL_QUIT: host_quit(); break;
@@ -163,6 +167,7 @@ void plat_pump(void) {
         case SDL_CONTROLLERDEVICEREMOVED: pad_removed(e.cdevice.which); break;
         case SDL_KEYDOWN:
             if (e.key.repeat) break;
+            if ((unsigned)e.key.keysym.scancode < SDL_NUM_SCANCODES) tapped[e.key.keysym.scancode] = 1;
             if (e.key.keysym.sym == SDLK_RETURN && (e.key.keysym.mod & KMOD_ALT)) host_hotkey(HOT_FULLSCREEN);
             break;
         case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: {
@@ -174,6 +179,7 @@ void plat_pump(void) {
         case SDL_MOUSEWHEEL: mouse_wheel_acc += e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.y : e.wheel.y; break;
         case SDL_WINDOWEVENT:
             if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST || e.window.event == SDL_WINDOWEVENT_LEAVE) mouse_buttons = 0;
+            if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) memset(tapped, 0, sizeof tapped);
             break;
         }
     }
@@ -204,7 +210,7 @@ int plat_key(int code) {
     SDL_Scancode sc = code < 256 ? SDL_GetScancodeFromKey((SDL_Keycode)tolower(code))   /* the key that types this letter or digit */
                     : code < HK_COUNT ? sc_of[code - 256] : SDL_SCANCODE_UNKNOWN;
     int n; const Uint8 *st = SDL_GetKeyboardState(&n);
-    return sc != SDL_SCANCODE_UNKNOWN && (int)sc < n && st[sc];
+    return sc != SDL_SCANCODE_UNKNOWN && (int)sc < n && (st[sc] || tapped[sc]);
 }
 static int16_t flip(int v) { v = -v; return (int16_t)(v > 32767 ? 32767 : v); }   /* SDL sticks: +y is down */
 int plat_pad(int n, HostPad *p) {

@@ -44,8 +44,9 @@ cp build/dmrecomp.exe "$OUT/"
 cat > "$OUT/README.txt" <<EOF
 $GAME_NAME (PS1, $GAME_SERIAL) - static recompilation for Windows
 
-To play: put your disc image next to dmrecomp.exe as game.cue + its .bin (or
-game.bin), then run dmrecomp.exe. You can also drag the .cue onto the exe.
+To play: put your disc image (.cue + its .bin) next to dmrecomp.exe, then run
+dmrecomp.exe. With several images there, name this one game.cue. You can also
+drag the .cue onto the exe.
 
 Keyboard: arrows = d-pad, Z = Cross, X = Circle, A = Square, S = Triangle,
 Q/W = L1/R1, 1/3 = L2/R2, Enter = Start, Backspace = Select, Tab = fast-forward.
