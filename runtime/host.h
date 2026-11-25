@@ -61,6 +61,7 @@ int  plat_focused(void);            /* the window has the keyboard (it is the on
 /* put the file "from" in the place of "to" in one step: there is no moment without "to". 1 when done. */
 int  plat_replace_file(const char *from, const char *to);
 int  plat_key(int code);            /* key held, or tapped since the last plat_pump; and the window has the keyboard */
+extern int g_tap_hold;              /* ini tap_hold: 1 a short key tap is kept (above, and held 4 frames); 0 keys as held */
 int  plat_pad(int n, HostPad *p);   /* gamepad n (0 or 1): fills p and returns 1 when it is connected */
 void plat_pad_rumble(int n, uint16_t large, uint16_t small);
 void plat_audio_init(void);

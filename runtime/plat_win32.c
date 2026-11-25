@@ -55,7 +55,7 @@ static void key_went_down(WPARAM w, LPARAM l) {
 }
 int plat_key(int code) {
     int vk = code < 256 ? code : code < HK_COUNT ? vk_of[code - 256] : 0;   /* letters and digits are their own virtual-key codes */
-    return vk && GetForegroundWindow() == wnd && (tapped[vk] || (GetAsyncKeyState(vk) & 0x8000) != 0);
+    return vk && GetForegroundWindow() == wnd && ((g_tap_hold && tapped[vk]) || (GetAsyncKeyState(vk) & 0x8000) != 0);
 }
 int plat_pad(int n, HostPad *p) {
     XState s;

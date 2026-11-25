@@ -1655,6 +1655,8 @@ SETTINGS = [
     ("dualshock", "Gameplay", "DualShock pad (sticks, rumble)", "bool", B01, "1",
      "Controllers. dualshock = 0 makes the game see a plain digital pad (no sticks, no rumble)."),
     ("rumble", "Gameplay", "Rumble", "bool", B01, "1", None),
+    ("tap_hold", "Gameplay", "Keep quick key taps", "bool", B01, "1",
+     "1 = a quick key tap always reaches the game (each press lasts 4 frames at least), 0 = keys exactly as held"),
     ("player2", "Gameplay", "Second gamepad is player 2", "bool", B01, "1",
      "1 = a second gamepad, when plugged in, is player 2"),
 ]

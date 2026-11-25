@@ -35,6 +35,7 @@ static int pad_found[2];      /* a gamepad is plugged in for this player */
 static int log_input;         /* DM_LOG_INPUT is set (a test aid): every change of player 1's buttons is printed */
 static int test_nopad;        /* DMRECOMP_GFX_TEST has "nopad": gamepads are not read, so a scripted run cannot be disturbed by one */
 int g_rumble = 1, g_player2 = 1;
+int g_tap_hold = 1;   /* ini tap_hold (host.h): 0 gives the key timing from before e85b857 */
 static int g_volume = 100;    /* volume: percent, 0 to 100 */
 extern int g_pad_analog[2], g_dualshock;
 
@@ -155,6 +156,7 @@ int host_set_option(const char *name, const char *val) {
     if (!_stricmp(name, "cpu_assist")) { g_cpu_assist = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "skip_intro")) { g_skip_intro = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "rumble")) { g_rumble = atoi(val) != 0; return 1; }
+    if (!_stricmp(name, "tap_hold")) { g_tap_hold = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "volume")) { char *e; long v = strtol(val, &e, 10); if (e == val || *e || v < 0 || v > 100) return 0; g_volume = (int)v; return 1; }
     if (!_stricmp(name, "dualshock")) { g_dualshock = atoi(val) != 0; return 1; }
     if (!_stricmp(name, "player2")) { g_player2 = atoi(val); return 1; }   /* 2 = always present (tests) */
@@ -350,8 +352,8 @@ static void poll_input(void) {
         static int ready;
         if (!ready) { tap_reset(); ready = 1; }
         u16 now = b[0];   /* the keys themselves */
-        b[0] = 0;
-        for (int i = 0; i < 16; i++) {
+        if (g_tap_hold) b[0] = 0;   /* tap_hold 0: the keys go to the game as they are held */
+        for (int i = 0; g_tap_hold && i < 16; i++) {
             u16 bit = (u16)(1 << i);
             if ((now & bit) && !(tap_was & bit)) {   /* it just went down */
                 if (tap[i].hold_for || tap[i].up_for < TAP_UP) { if (tap[i].waiting < TAP_QUEUE) tap[i].waiting++; }

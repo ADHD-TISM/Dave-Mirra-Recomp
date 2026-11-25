@@ -101,6 +101,7 @@ the original console picture; delete the file to get them back.
 | `reverb` | `1` console echo effect, `0` dry | |
 | `dualshock` | `1` DualShock (sticks, rumble), `0` plain digital pad | |
 | `rumble` | `1`, `0` | |
+| `tap_hold` | `1` (default) a key tap shorter than a frame still counts, and each key press reaches the game for 4 frames at least, with 4 frames let go before the next (the game reads its pad only every second or third frame); `0` the keys go to the game exactly as they are held, as before | |
 | `volume` | `0` to `100` (percent) | in the menu while playing, in steps of 10 |
 | `player2` | `1` a second gamepad is player 2, `0` off | |
 | `key_up` ... `key_r2` | up to four keys each, separated by commas: letters, digits, `up down left right enter backspace tab space lshift rshift lctrl rctrl lalt ralt comma period slash semicolon minus equals lbracket rbracket backslash quote grave escape insert delete home end pageup pagedown capslock f1`..`f12 num0`..`num9 numadd numsub nummul numdiv numdot numenter none` | |

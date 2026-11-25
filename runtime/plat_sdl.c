@@ -225,7 +225,7 @@ int plat_key(int code) {
     SDL_Scancode sc = code < 256 ? SDL_GetScancodeFromKey((SDL_Keycode)tolower(code))   /* the key that types this letter or digit */
                     : code < HK_COUNT ? sc_of[code - 256] : SDL_SCANCODE_UNKNOWN;
     int n; const Uint8 *st = SDL_GetKeyboardState(&n);
-    return sc != SDL_SCANCODE_UNKNOWN && (int)sc < n && (st[sc] || tapped[sc]);
+    return sc != SDL_SCANCODE_UNKNOWN && (int)sc < n && (st[sc] || (g_tap_hold && tapped[sc]));
 }
 static int16_t flip(int v) { v = -v; return (int16_t)(v > 32767 ? 32767 : v); }   /* SDL sticks: +y is down */
 int plat_pad(int n, HostPad *p) {
