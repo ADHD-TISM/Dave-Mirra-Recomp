@@ -48,7 +48,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 REPO = "ADHD-TISM/Dave-Mirra-Recomp"
-LAUNCHER_VERSION = "11"
+LAUNCHER_VERSION = "12"
 APP_NAME = "Dave Mirra Freestyle BMX"   # the launcher's name: window, header and dialogs (packaged file "Dave Mirra Freestyle BMX.exe")
 
 # Build tools: llvm-mingw (clang + a MinGW-w64 UCRT sysroot), pinned and checked.
