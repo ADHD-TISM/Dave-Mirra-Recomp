@@ -60,8 +60,8 @@ and rumble, the launcher window on SteamOS, and sound out of the Deck.
 build/dmrecomp.exe "<your image>.cue"
 ```
 
-Without a disc on the command line, the game looks in the working directory (the game's folder when it is started from
-the launcher or by double-click). It tries `game.cue`, `game.bin` and the game's own name with its serial first. Otherwise
+Without a disc on the command line, the game looks in the working directory (the game's folder when it is started by
+double-click; the launcher always passes the disc it was given). It tries `game.cue`, `game.bin` and the game's own name with its serial first. Otherwise
 it takes a .cue whose name has the serial in it (SLUS-01026, or SLUS-01347 for Maximum Remix; in any case), then the only
 .cue there, then, if there is no .cue at all, the only .bin.
 
