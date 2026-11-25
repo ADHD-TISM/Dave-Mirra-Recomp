@@ -85,6 +85,9 @@ int plat_vk_surface(void *instance, uint64_t *surface) {
 void plat_set_title(const char *title) { SDL_SetWindowTitle(win, title); }
 /* Steam Deck Game Mode runs every app inside gamescope, which shows one fullscreen window: start in fullscreen there. */
 int plat_wants_fullscreen(void) { return getenv("SteamGamepadUI") != NULL || getenv("GAMESCOPE_WAYLAND_DISPLAY") != NULL; }
+/* the pointer is hidden in fullscreen, except while the in-game menu is open */
+static int fs_on, menu_cursor;
+static void cursor_update(void) { SDL_ShowCursor(fs_on && !menu_cursor ? SDL_DISABLE : SDL_ENABLE); }
 void plat_set_fullscreen(int on, int w, int h) {
     static int is_on;
     if (on == is_on) return;
@@ -102,8 +105,9 @@ void plat_set_fullscreen(int on, int w, int h) {
         }
     }
     is_on = on;
-    SDL_ShowCursor(on ? SDL_DISABLE : SDL_ENABLE);
+    fs_on = on; cursor_update();
 }
+void plat_menu_cursor(int on) { menu_cursor = on; cursor_update(); }
 void plat_client_size(int *w, int *h) {
     if (is_vk) SDL_Vulkan_GetDrawableSize(win, w, h);
     else if (glc) SDL_GL_GetDrawableSize(win, w, h);
@@ -149,6 +153,14 @@ void plat_mouse(int *buttons, int *wheel) {
     mouse_wheel_acc = 0;
 }
 int plat_focused(void) { return SDL_GetKeyboardFocus() == win; }
+int plat_mouse_pos(int *x, int *y) {
+    if (SDL_GetMouseFocus() != win || SDL_GetKeyboardFocus() != win) return 0;
+    int mx, my, ww, wh, dw, dh;
+    SDL_GetMouseState(&mx, &my); SDL_GetWindowSize(win, &ww, &wh); plat_client_size(&dw, &dh);
+    if (ww <= 0 || wh <= 0 || mx < 0 || my < 0 || mx >= ww || my >= wh) return 0;
+    *x = (int)((long long)mx * dw / ww); *y = (int)((long long)my * dh / wh);   /* a high-DPI window has more pixels than points */
+    return 1;
+}
 #ifdef _WIN32   /* this front end can be built on Windows too (-DDM_SDL=ON), and rename() there fails when the target exists */
 __declspec(dllimport) int __stdcall MoveFileExA(const char *from, const char *to, unsigned long flags);
 int plat_replace_file(const char *from, const char *to) { return MoveFileExA(from, to, 1 | 8) != 0; }   /* REPLACE_EXISTING | WRITE_THROUGH */

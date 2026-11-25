@@ -104,6 +104,14 @@ void plat_audio_push(const int16_t *lr, int frames) {
 }
 
 /* ------------------------------------------------------------ video --- */
+/* the pointer is hidden in fullscreen, except while the in-game menu is open. ShowCursor keeps a count, so it is
+   stepped until the count gives the state wanted. */
+static int fs_on, menu_cursor;
+static void cursor_update(void) {
+    if (fs_on && !menu_cursor) { while (ShowCursor(FALSE) >= 0) {} }
+    else while (ShowCursor(TRUE) < 0) {}
+}
+void plat_menu_cursor(int on) { menu_cursor = on; cursor_update(); }
 void plat_set_fullscreen(int on, int fs_w, int fs_h) {
     static WINDOWPLACEMENT saved = { sizeof saved };
     static int is_on;
@@ -131,7 +139,7 @@ void plat_set_fullscreen(int on, int fs_w, int fs_h) {
         SetWindowPos(wnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
     }
     is_on = on;
-    ShowCursor(!on);
+    fs_on = on; cursor_update();
 }
 void plat_set_title(const char *title) { SetWindowTextA(wnd, title); }
 int plat_wants_fullscreen(void) { return 0; }
@@ -267,6 +275,13 @@ void plat_mouse(int *buttons, int *wheel) {
     if (GetForegroundWindow() != wnd) { *buttons = *wheel = 0; mouse_wheel_acc = 0; return; }
     *buttons = mouse_buttons;
     *wheel = mouse_wheel_acc / WHEEL_DELTA; mouse_wheel_acc -= *wheel * WHEEL_DELTA;
+}
+int plat_mouse_pos(int *x, int *y) {
+    POINT pt; RECT cr;
+    if (GetForegroundWindow() != wnd || !GetCursorPos(&pt) || !ScreenToClient(wnd, &pt) || !GetClientRect(wnd, &cr)) return 0;
+    if (pt.x < 0 || pt.y < 0 || pt.x >= cr.right || pt.y >= cr.bottom) return 0;
+    *x = pt.x; *y = pt.y;
+    return 1;
 }
 void plat_pump(void) {
     MSG m;

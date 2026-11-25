@@ -306,13 +306,14 @@ static int pad_menu_held(const HostPad *p) { return pad_menu[0] && xsrc(p, pad_m
 static u8 axis(int v, int flip) { v = (flip ? -v : v) / 256 + 128; return (u8)(v < 0 ? 0 : v > 255 ? 255 : v); }
 
 static int wheel_waiting[2];   /* wheel notches (up, down) not yet turned into a press */
+static int mouse_clicks_own;   /* the in-game menu reads the buttons itself: they are not turned into pad buttons */
 /* mouse -> pad buttons for player 1 (added to b, active-high) */
 static void mouse_input(u16 *b) {
     int mb, wheel;
     plat_mouse(&mb, &wheel);
     if (test_nopad) mb = wheel = 0;   /* a scripted run: a pointer over the window must not disturb it */
     mouse_held = mb;
-    for (int i = 0; i < 5; i++) if ((mb & (1 << i)) && mousemap[i] >= 0) *b |= (u16)(1 << mousemap[i]);
+    for (int i = 0; i < 5; i++) if (!mouse_clicks_own && (mb & (1 << i)) && mousemap[i] >= 0) *b |= (u16)(1 << mousemap[i]);
     /* Each notch is a short press of its own: 6 frames down, then 4 up, so that the game sees every one. Notches that
        come faster than that wait their turn (8 at most). side: the press was started with left Shift held, and goes
        left or right instead. */

@@ -141,15 +141,31 @@ static void menu_draw(int sel) {
         }
     }
     /* at most 56 characters fit in a line of this size */
-    menu_text(px + 24, py + ph - 58, 1, "Up / Down: choose        Left / Right: change", 0x9aa4b0);
+    menu_text(px + 24, py + ph - 58, 1, "Up / Down or the mouse: choose    Left / Right: change", 0x9aa4b0);
     menu_text(px + 24, py + ph - 44, 1, "Cross or Enter: select   Triangle or the menu key: back", 0x9aa4b0);
     menu_text(px + 24, py + ph - 24, 1, "Changes are saved. More settings are in the launcher.", 0x6f7a88);
 }
+/* where the menu picture is in the window: w x h, centred (every backend places it so) */
+static int menu_place(int *cw, int *ch, int *w, int *h) {
+    plat_client_size(cw, ch);
+    if (*cw <= 0 || *ch <= 0) return 0;
+    *w = *cw; *h = *ch;
+    if (!g_aspect) { *h = *cw * 3 / 4; if (*h > *ch) { *h = *ch; *w = *ch * 4 / 3; } }
+    return 1;
+}
+/* the entry under the pointer, -1 for none; a row is its highlight bar in menu_draw */
+static int menu_row_at_pointer(void) {
+    int mx, my, cw, ch, w, h;
+    if (!plat_mouse_pos(&mx, &my) || !menu_place(&cw, &ch, &w, &h)) return -1;
+    int x = (int)((long long)(mx - (cw - w) / 2) * MENU_W / w), y = (int)((long long)(my - (ch - h) / 2) * MENU_H / h);
+    const int px = 72, py = 44, pw = MENU_W - 144;
+    if (x < px + 12 || x >= px + pw - 12 || y < py + 51) return -1;
+    int i = (y - py - 51) / 27;
+    return i < MI_COUNT && (y - py - 51) % 27 < 26 ? i : -1;
+}
 static void menu_show(void) {
-    int cw, ch; plat_client_size(&cw, &ch);
-    if (cw <= 0 || ch <= 0) return;
-    int w = cw, h = ch;
-    if (!g_aspect) { h = cw * 3 / 4; if (h > ch) { h = ch; w = ch * 4 / 3; } }
+    int cw, ch, w, h;
+    if (!menu_place(&cw, &ch, &w, &h)) return;
     GfxFrame f; memset(&f, 0, sizeof f);
     f.fb = menu_px; f.fb_w = MENU_W; f.fb_h = MENU_H;
     f.cw = cw; f.ch = ch; f.w = w; f.h = h;
@@ -184,6 +200,7 @@ static u32 menu_buttons(void) {
         menu_pad_one = (pad_menu[0] && xsrc(&s, pad_menu[0])) || (pad_menu[1] && xsrc(&s, pad_menu[1]));
     }
     r = b;
+    if (mouse_held) r |= MB_HELD;   /* a click that closed the menu must be let go before the game runs again */
     if (key(HK_UP)) r |= MB_UP;
     if (key(HK_DOWN)) r |= MB_DOWN;
     if (key(HK_LEFT)) r |= MB_LEFT;
@@ -210,7 +227,10 @@ static void menu_run(unsigned frame, const char *test) {
     for (int y = 0; y < MENU_H; y++) for (int x = 0; x < MENU_W; x++)
         menu_bg[y * MENU_W + x] = (fb[(y * fb_h / MENU_H) * fb_w + x * fb_w / MENU_W] >> 2) & 0x3f3f3fu;
     int sel = 0, quit = 0;
+    mouse_clicks_own = 1;
+    if (!test) plat_menu_cursor(1);
     u32 prev = test ? 0 : menu_buttons();   /* what is held now does not count as a press */
+    int prev_mouse = mouse_held, last_row = test ? -1 : menu_row_at_pointer();   /* a pointer resting on a row does not take the choice */
     for (;;) {
         u32 hit;
         if (test) {
@@ -230,6 +250,17 @@ static void menu_run(unsigned frame, const char *test) {
             plat_pump();
             u32 b = menu_buttons();
             hit = b & ~prev; prev = b;
+            /* the mouse: moving onto an entry chooses it; a left click works it like Cross, a right click on an entry
+               with a value steps back one value, and a right click anywhere else is Back */
+            int row = menu_row_at_pointer(), clicks = mouse_held & ~prev_mouse;
+            prev_mouse = mouse_held;
+            if (row >= 0 && row != last_row) sel = row;
+            last_row = row;
+            if ((clicks & 1) && row >= 0) { sel = row; hit |= MB_CROSS; }
+            if (clicks & 2) {
+                if (row >= 0 && menu_ini[row]) { sel = row; hit |= MB_LEFT; }
+                else hit |= MB_TRIANGLE;
+            }
         }
         if (hit & MB_MENU) break;   /* before anything else: the press that closes the menu selects nothing */
         if (hit & MB_UP) sel = (sel + MI_COUNT - 1) % MI_COUNT;
@@ -247,4 +278,6 @@ static void menu_run(unsigned frame, const char *test) {
     if (quit) host_quit();
     /* the button that closed the menu must not reach the game: wait until nothing is held (2 seconds at most) */
     for (int n = 0; !test && n < 120 && menu_buttons(); n++) { plat_pump(); plat_sleep_ms(16); }
+    mouse_clicks_own = 0;
+    if (!test) plat_menu_cursor(0);
 }
