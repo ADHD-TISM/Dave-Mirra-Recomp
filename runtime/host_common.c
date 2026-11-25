@@ -329,19 +329,34 @@ static void mouse_input(u16 *b) {
     }
 }
 
-static u8 key_left[16];   /* frames a short key press is still held for (poll_input) */
+/* Key presses as the game gets them, per pad button (poll_input). The game reads its pad every second or third frame,
+   so a tap the front end holds for one frame could fall between two reads, and so could a let-go of one frame between
+   two quick taps. So a press lasts TAP_DOWN frames at least, and is let go for TAP_UP frames at least before the next
+   one: a tap that comes sooner waits its turn (TAP_QUEUE at most). A longer press, or a longer let-go, is not changed. */
+#define TAP_DOWN 4
+#define TAP_UP 4
+#define TAP_QUEUE 4
+static struct { u8 down_left, waiting, up_for; } tap[16];   /* up_for: frames let go so far (stops at 255) */
+static void tap_reset(void) { for (int i = 0; i < 16; i++) { tap[i].down_left = tap[i].waiting = 0; tap[i].up_for = 255; } }
 static void poll_input(void) {
     static unsigned probe;
     u16 b[2] = { 0, 0 };   /* active-high while building */
     for (int i = 0; i < 16; i++) for (int j = 0; j < MAXKEYS && keymap[i][j]; j++) if (key(keymap[i][j])) { b[0] |= (u16)(1 << i); break; }
-    {   /* A key press lasts 4 frames at least. The game reads its pad every second or third frame, so a tap that the
-           front end holds for one frame only could fall between two reads. A longer press is not made longer. */
-        static u16 was; u8 *left = key_left;
-        u16 now = b[0];   /* the keys themselves, without the presses made longer here */
+    {
+        static u16 was; static int ready;
+        if (!ready) { tap_reset(); ready = 1; }
+        u16 now = b[0];   /* the keys themselves */
+        b[0] = 0;
         for (int i = 0; i < 16; i++) {
             u16 bit = (u16)(1 << i);
-            if ((now & bit) && !(was & bit)) left[i] = 4;   /* it just went down */
-            if (left[i]) { left[i]--; b[0] |= bit; }
+            if ((now & bit) && !(was & bit)) {   /* it just went down */
+                if (tap[i].down_left || tap[i].up_for < TAP_UP) { if (tap[i].waiting < TAP_QUEUE) tap[i].waiting++; }
+                else tap[i].down_left = TAP_DOWN;
+            }
+            if (!tap[i].down_left && tap[i].waiting && tap[i].up_for >= TAP_UP) { tap[i].waiting--; tap[i].down_left = TAP_DOWN; }
+            int on = tap[i].down_left ? (tap[i].down_left--, 1) : (now & bit) && !tap[i].waiting;   /* a waiting press goes first */
+            if (on) { b[0] |= bit; tap[i].up_for = 0; }
+            else if (tap[i].up_for < 255) tap[i].up_for++;
         }
         was = now;
     }
@@ -764,7 +779,7 @@ void host_frame(void) {
         menu_run(frame_no, asked ? NULL : menu_test_keys);
         menu_want = 0; wheel_waiting[0] = wheel_waiting[1] = 0; last_frame = t_enter = plat_now_ms();   /* the pause is neither game time nor host time */
         pad_state[0] = pad_state[1] = 0xffff;   /* what was held when the menu opened was let go long ago: the game must not get it now */
-        memset(key_left, 0, sizeof key_left);
+        tap_reset();
     }
     t_last_exit = plat_now_ms(); t_host += t_last_exit - t_enter;
     if (turbo) { last_frame = plat_now_ms(); return; }
