@@ -215,6 +215,18 @@ static u32 menu_buttons(void) {
     if (menu_pad_one) r |= MB_HELD;
     return r;
 }
+/* The four directions from the keyboard alone (the arrows and the keys mapped to them), not the menu key */
+static u32 menu_arrow_keys(void) {
+    static const int hk[4] = { HK_UP, HK_RIGHT, HK_DOWN, HK_LEFT };   /* pad bits 4 to 7: MB_UP MB_RIGHT MB_DOWN MB_LEFT */
+    u32 r = 0;
+    for (int i = 4; i < 8; i++) {
+        int on = hk[i - 4] != key_menu && key(hk[i - 4]);   /* key_menu may be an arrow (key_parse) */
+        for (int j = 0; !on && j < MAXKEYS && keymap[i][j]; j++)
+            on = keymap[i][j] != key_menu && keymap[i][j] != HK_ESCAPE && key(keymap[i][j]);
+        if (on) r |= 1u << i;
+    }
+    return r;
+}
 
 /* --menu-at FRAME:KEYS (a test aid): the menu opens at that frame and gets these presses, one a turn: u d l r, x (select),
    t (back) and m (the menu controls). After the last one menu_<frame>.png is written and the menu closes, unless a press already closed it. */
@@ -235,6 +247,10 @@ static void menu_run(unsigned frame, const char *test) {
     mouse_clicks_own = 1;
     if (!test) plat_menu_cursor(1);
     u32 prev = test ? 0 : menu_buttons();   /* what is held now does not count as a press */
+    /* ...but a direction tapped in the same frame as the menu key, down and up already, is a press: the menu's first
+       plat_pump forgets it (plat_key), so it counts in the first turn. Escape and Down at once: Down was lost. */
+    u32 early = 0;
+    if (!test && g_tap_hold) { early = menu_arrow_keys(); g_tap_hold = 0; early &= ~menu_arrow_keys(); g_tap_hold = 1; }
     int prev_mouse = mouse_held, last_row = test ? -1 : menu_row_at_pointer();   /* a pointer resting on a row does not take the choice */
     int last_cw = 0, last_ch = 0, last_aspect = g_aspect;
     if (!test) plat_client_size(&last_cw, &last_ch);
@@ -256,7 +272,7 @@ static void menu_run(unsigned frame, const char *test) {
         } else {
             plat_pump();
             u32 b = menu_buttons();
-            hit = b & ~prev; prev = b;
+            hit = (b & ~prev) | early; prev = b; early = 0;
             /* the mouse: moving onto an entry chooses it; a left click works it like Cross, a right click on an entry
                with a value steps back one value, and a right click anywhere else is Back */
             /* a click counts once: as a button that is down now and was not last turn, or as one that went down and
