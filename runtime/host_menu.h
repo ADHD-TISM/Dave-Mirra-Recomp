@@ -231,6 +231,8 @@ static void menu_run(unsigned frame, const char *test) {
     if (!test) plat_menu_cursor(1);
     u32 prev = test ? 0 : menu_buttons();   /* what is held now does not count as a press */
     int prev_mouse = mouse_held, last_row = test ? -1 : menu_row_at_pointer();   /* a pointer resting on a row does not take the choice */
+    int last_cw = 0, last_ch = 0, last_aspect = g_aspect;
+    if (!test) plat_client_size(&last_cw, &last_ch);
     for (;;) {
         u32 hit;
         if (test) {
@@ -254,8 +256,11 @@ static void menu_run(unsigned frame, const char *test) {
                with a value steps back one value, and a right click anywhere else is Back */
             int row = menu_row_at_pointer(), clicks = mouse_held & ~prev_mouse;
             prev_mouse = mouse_held;
-            if (row >= 0 && row != last_row) sel = row;
-            last_row = row;
+            /* The picture moving under a pointer that stays put is not a choice: a change of Fullscreen or Aspect
+               resizes or re-centres it, and the window may take a few turns to get its new size. */
+            int cw, ch; plat_client_size(&cw, &ch);
+            if (cw == last_cw && ch == last_ch && g_aspect == last_aspect && row >= 0 && row != last_row) sel = row;
+            last_row = row; last_cw = cw; last_ch = ch; last_aspect = g_aspect;
             if ((clicks & 1) && row >= 0) { sel = row; hit |= MB_CROSS; }
             if (clicks & 2) {
                 if (row >= 0 && menu_ini[row]) { sel = row; hit |= MB_LEFT; }
@@ -271,7 +276,10 @@ static void menu_run(unsigned frame, const char *test) {
             if (sel == MI_EXIT) { quit = 1; break; }
             dir = 1;
         }
-        if (dir && menu_ini[sel]) { menu_change(sel, dir); config_store(menu_ini[sel], menu_value(sel, 1)); }   /* saved at once */
+        if (dir && menu_ini[sel]) {
+            menu_change(sel, dir); config_store(menu_ini[sel], menu_value(sel, 1));   /* saved at once */
+            if (!test) last_row = menu_row_at_pointer();   /* the change may have moved the picture (above) */
+        }
         if (hit & (MB_TRIANGLE | MB_SELECT)) break;
         if (!test) { menu_draw(sel); menu_show(); plat_sleep_ms(16); }
     }

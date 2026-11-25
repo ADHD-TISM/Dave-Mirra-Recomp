@@ -55,7 +55,7 @@ void plat_mouse(int *buttons, int *wheel);
 /* where the pointer is, in the drawable's pixels (as plat_client_size counts them); 0 without focus or outside the window */
 int  plat_mouse_pos(int *x, int *y);
 void plat_menu_cursor(int on);      /* the in-game menu is open: show the pointer, also in fullscreen */
-int  plat_focused(void);           /* the window has the keyboard (it is the one in front) */
+int  plat_focused(void);            /* the window has the keyboard (it is the one in front) */
 /* put the file "from" in the place of "to" in one step: there is no moment without "to". 1 when done. */
 int  plat_replace_file(const char *from, const char *to);
 int  plat_key(int code);            /* key held, and the window has the keyboard */

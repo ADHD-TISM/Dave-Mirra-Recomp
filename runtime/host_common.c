@@ -329,10 +329,22 @@ static void mouse_input(u16 *b) {
     }
 }
 
+static u8 key_left[16];   /* frames a short key press is still held for (poll_input) */
 static void poll_input(void) {
     static unsigned probe;
     u16 b[2] = { 0, 0 };   /* active-high while building */
     for (int i = 0; i < 16; i++) for (int j = 0; j < MAXKEYS && keymap[i][j]; j++) if (key(keymap[i][j])) { b[0] |= (u16)(1 << i); break; }
+    {   /* A key press lasts 4 frames at least. The game reads its pad every second or third frame, so a tap that the
+           front end holds for one frame only could fall between two reads. A longer press is not made longer. */
+        static u16 was; u8 *left = key_left;
+        u16 now = b[0];   /* the keys themselves, without the presses made longer here */
+        for (int i = 0; i < 16; i++) {
+            u16 bit = (u16)(1 << i);
+            if ((now & bit) && !(was & bit)) left[i] = 4;   /* it just went down */
+            if (left[i]) { left[i]--; b[0] |= bit; }
+        }
+        was = now;
+    }
     turbo = key(key_turbo);
     static int hot_down[6];   /* a display key acts once when it goes down */
     for (int i = 0; i < 6; i++) { int d = key(hotkeys[i]); if (d && !hot_down[i]) host_hotkey(i); hot_down[i] = d; }
@@ -752,6 +764,7 @@ void host_frame(void) {
         menu_run(frame_no, asked ? NULL : menu_test_keys);
         menu_want = 0; wheel_waiting[0] = wheel_waiting[1] = 0; last_frame = t_enter = plat_now_ms();   /* the pause is neither game time nor host time */
         pad_state[0] = pad_state[1] = 0xffff;   /* what was held when the menu opened was let go long ago: the game must not get it now */
+        memset(key_left, 0, sizeof key_left);
     }
     t_last_exit = plat_now_ms(); t_host += t_last_exit - t_enter;
     if (turbo) { last_frame = plat_now_ms(); return; }

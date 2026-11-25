@@ -104,12 +104,15 @@ void plat_audio_push(const int16_t *lr, int frames) {
 }
 
 /* ------------------------------------------------------------ video --- */
-/* the pointer is hidden in fullscreen, except while the in-game menu is open. ShowCursor keeps a count, so it is
-   stepped until the count gives the state wanted. */
-static int fs_on, menu_cursor;
+/* the pointer is hidden in fullscreen, except while the in-game menu is open. ShowCursor keeps a count: it is
+   stepped only when the state changes, until the count gives the state wanted. */
+static int fs_on, menu_cursor, cursor_hidden;
 static void cursor_update(void) {
-    if (fs_on && !menu_cursor) { while (ShowCursor(FALSE) >= 0) {} }
+    int hide = fs_on && !menu_cursor;
+    if (hide == cursor_hidden) return;
+    if (hide) { while (ShowCursor(FALSE) >= 0) {} }
     else while (ShowCursor(TRUE) < 0) {}
+    cursor_hidden = hide;
 }
 void plat_menu_cursor(int on) { menu_cursor = on; cursor_update(); }
 void plat_set_fullscreen(int on, int fs_w, int fs_h) {

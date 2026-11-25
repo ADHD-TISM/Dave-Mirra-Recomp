@@ -101,6 +101,7 @@ static int has_text(const char *s, const char *sub) {
 static char by_serial[1024], lone_cue[1024], lone_bin[1024];
 static int n_cue, n_bin;
 static void consider(const char *n) {
+    if (n[0] == '.') return;   /* a hidden file, such as the "._" copy a Mac leaves beside each file on a FAT or exFAT drive */
     if (has_ext(n, ".cue")) {
         if (!n_cue++) snprintf(lone_cue, sizeof lone_cue, "%s", n);
         if (!by_serial[0] && has_text(n, GAME_SERIAL)) snprintf(by_serial, sizeof by_serial, "%s", n);
@@ -110,7 +111,7 @@ static void consider(const char *n) {
 #include <io.h>
 static const char *find_image(void) {
     struct _finddata_t fd; intptr_t h = _findfirst("*", &fd);
-    if (h != -1) { do if (!(fd.attrib & _A_SUBDIR)) consider(fd.name); while (_findnext(h, &fd) == 0); _findclose(h); }
+    if (h != -1) { do if (!(fd.attrib & (_A_SUBDIR | _A_HIDDEN | _A_SYSTEM))) consider(fd.name); while (_findnext(h, &fd) == 0); _findclose(h); }
 #else
 static const char *find_image(void) {
     DIR *d = opendir(".");
