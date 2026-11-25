@@ -35,7 +35,7 @@ static int pad_found[2];      /* a gamepad is plugged in for this player */
 static int log_input;         /* DM_LOG_INPUT is set (a test aid): every change of player 1's buttons is printed */
 static int test_nopad;        /* DMRECOMP_GFX_TEST has "nopad": gamepads are not read, so a scripted run cannot be disturbed by one */
 int g_rumble = 1, g_player2 = 1;
-int g_tap_hold = 1;   /* ini tap_hold (host.h): 0 gives the key timing from before e85b857 */
+int g_tap_hold = 1;   /* ini tap_hold (host.h): 0 gives the key timing from before 936cf23 */
 static int g_volume = 100;    /* volume: percent, 0 to 100 */
 extern int g_pad_analog[2], g_dualshock;
 
@@ -240,6 +240,8 @@ static void config_write_default(const char *path) {
                "# Controllers. dualshock = 0 makes the game see a plain digital pad (no sticks, no rumble).\n"
                "dualshock = 1\n"
                "rumble = 1\n"
+               "# 1 = a quick key tap always reaches the game (each press lasts 4 frames at least), 0 = keys exactly as held\n"
+               "tap_hold = 1\n"
                "# 1 = a second gamepad, when plugged in, is player 2\n"
                "player2 = 1\n"
                "# Gamepad buttons (both players): a b x y lb rb lt rt start back ls rs up down left right none\n");
