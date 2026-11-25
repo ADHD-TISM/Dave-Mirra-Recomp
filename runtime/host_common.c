@@ -336,8 +336,8 @@ static void mouse_input(u16 *b) {
 #define TAP_DOWN 4
 #define TAP_UP 4
 #define TAP_QUEUE 4
-static struct { u8 down_left, waiting, up_for; } tap[16];   /* up_for: frames let go so far (stops at 255) */
-static void tap_reset(void) { for (int i = 0; i < 16; i++) { tap[i].down_left = tap[i].waiting = 0; tap[i].up_for = 255; } }
+static struct { u8 hold_for, waiting, up_for; } tap[16];   /* up_for: frames let go so far (stops at 255) */
+static void tap_reset(void) { for (int i = 0; i < 16; i++) { tap[i].hold_for = tap[i].waiting = 0; tap[i].up_for = 255; } }
 static void poll_input(void) {
     static unsigned probe;
     u16 b[2] = { 0, 0 };   /* active-high while building */
@@ -350,11 +350,13 @@ static void poll_input(void) {
         for (int i = 0; i < 16; i++) {
             u16 bit = (u16)(1 << i);
             if ((now & bit) && !(was & bit)) {   /* it just went down */
-                if (tap[i].down_left || tap[i].up_for < TAP_UP) { if (tap[i].waiting < TAP_QUEUE) tap[i].waiting++; }
-                else tap[i].down_left = TAP_DOWN;
+                if (tap[i].hold_for || tap[i].up_for < TAP_UP) { if (tap[i].waiting < TAP_QUEUE) tap[i].waiting++; }
+                else tap[i].hold_for = TAP_DOWN;
             }
-            if (!tap[i].down_left && tap[i].waiting && tap[i].up_for >= TAP_UP) { tap[i].waiting--; tap[i].down_left = TAP_DOWN; }
-            int on = tap[i].down_left ? (tap[i].down_left--, 1) : (now & bit) && !tap[i].waiting;   /* a waiting press goes first */
+            if (!tap[i].hold_for && tap[i].waiting && tap[i].up_for >= TAP_UP) { tap[i].waiting--; tap[i].hold_for = TAP_DOWN; }
+            int on;
+            if (tap[i].hold_for) { tap[i].hold_for--; on = 1; }
+            else on = (now & bit) && !tap[i].waiting;   /* a waiting press goes first */
             if (on) { b[0] |= bit; tap[i].up_for = 0; }
             else if (tap[i].up_for < 255) tap[i].up_for++;
         }
