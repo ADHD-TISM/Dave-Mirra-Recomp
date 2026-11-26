@@ -193,7 +193,10 @@ The game carries [Recomp Achievements](https://github.com/elripalda/RecompAchiev
 library in `third_party/rl_achievements` under its own license, see `SOURCE.txt` there): when RecompLauncher starts it,
 the launcher's list of memory rules for the game is checked once a frame against the PlayStation's RAM (addresses as
 rcheevos counts them: main RAM from `0x000000`, the scratchpad from `0x200000`), and a memory-card file read from its start
-counts as a save loaded. Started any other way, the library does nothing. The lists themselves are kept by RecompLauncher.
+counts as a save loaded. Started any other way, the library does nothing. The lists themselves are kept by RecompLauncher;
+the ones for these games are in `achievements/` (`dmbmx.json`: 18, `maxremix.json`: 12, on ProQuest progress, Pro Tour
+medals and run scores), written by `tools/mkachievements.py`, which notes the RAM layout they read. `tools/achtest.c`
+runs a list against `--ramdump` files with the same rcheevos code and says which rules fire on each.
 
 ## Packaging
 
