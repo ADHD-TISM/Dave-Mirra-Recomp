@@ -6,17 +6,19 @@
   "inputs": [
     {
       "id": "bmx",
-      "label": "Your Dave Mirra Freestyle BMX disc image (USA, SLUS-01026): pick the .cue file (with its .bin beside it) or a .chd.",
+      "label": "Your Dave Mirra Freestyle BMX disc image (USA, SLUS-01026, the original release): pick the .cue file (with its .bin tracks beside it) or a .chd.",
       "formats": [{ "type": "file", "extensions": ["cue", "bin", "chd"] }],
       "check": { "ids": ["SLUS-01026"] },
-      "dumps": [{ "name": "USA (Redump 64061)", "size": 289942800, "crc32": "6271de8b" }]
+      "dumps": [{ "name": "USA", "size": 289942800, "crc32": "6271de8b" },
+                { "name": "USA", "size": 322106400, "crc32": "fa58cac4" }]
     },
     {
       "id": "remix",
-      "label": "Your Dave Mirra Freestyle BMX: Maximum Remix disc image (USA, SLUS-01347): pick the .cue file (with its .bin beside it) or a .chd.",
+      "label": "Your Dave Mirra Freestyle BMX: Maximum Remix disc image (USA, SLUS-01347): pick the .cue file (with its .bin tracks beside it) or a .chd.",
       "formats": [{ "type": "file", "extensions": ["cue", "bin", "chd"] }],
       "check": { "ids": ["SLUS-01347"] },
-      "dumps": [{ "name": "USA (Redump 2309)", "size": 299734176, "crc32": "c2e6c57c" }]
+      "dumps": [{ "name": "USA", "size": 299734176, "crc32": "c2e6c57c" },
+                { "name": "USA", "size": 331897776, "crc32": "69653757" }]
     }
   ],
   "games": [
