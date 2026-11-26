@@ -398,6 +398,10 @@ def new_paths():
     N = os.path.join(T, "rl-notbuilt"); os.makedirs(N, exist_ok=True)
     rc = dml.cli(["--root", N, "run", "--game", "dmbmx", "--disc", fake])
     check("run: a game not built yet gives exit 4", rc == dml.RUN_NOT_STARTED == 4, repr(rc))
+    rc = dml.cli(["--root", N, "run", "--game", "dmbmx", "--disc", os.path.join(N, "moved", "gone.cue")])
+    check("run: a disc image that has moved gives exit 4", rc == 4, repr(rc))
+    rc = dml.cli(["--root", N, "status", "--game", "dmbmx", "--disc", os.path.join(N, "moved", "gone.cue")])
+    check("other words with a disc that has moved still give exit 1", rc == 1, repr(rc))
 
 def helpers():
     """The small helpers the release and the CHD write-out rest on."""

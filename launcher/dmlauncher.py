@@ -2170,7 +2170,7 @@ def cli(argv):
         P, C, note = open_session(root, disc, game)
     except Fail as e:
         print("error: %s" % e)
-        return 1
+        return RUN_NOT_STARTED if cmd[:1] == ["run"] else 1   # run: the game did not start (a disc that has moved)
     if data:                           # the game's settings, memory cards and logs in DATA/<game> (RecompLauncher's {data})
         P.data = os.path.abspath(data)
         P.use(P.gid)

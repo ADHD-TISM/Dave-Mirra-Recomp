@@ -35,6 +35,14 @@ static int pad_found[2];      /* a gamepad is plugged in for this player */
 static int log_input;         /* DM_LOG_INPUT is set (a test aid): every change of player 1's buttons is printed */
 static int test_nopad;        /* DMRECOMP_GFX_TEST has "nopad": gamepads are not read, so a scripted run cannot be disturbed by one */
 static int pads_need_focus;   /* started by RecompLauncher: gamepads count only while the window is in front (host_init) */
+/* Gamepads left to RecompLauncher's overlay: its window took the front from the game's. Only once the game has been in
+   front: a window that never got the front (a launcher start Windows kept behind) still has its gamepad. */
+static int pads_away(void) {
+    static int was_in_front;
+    if (!pads_need_focus) return 0;
+    if (plat_focused()) { was_in_front = 1; return 0; }
+    return was_in_front;
+}
 int g_rumble = 1, g_player2 = 1;
 int g_tap_hold = 1;   /* ini tap_hold (host.h): 0 gives the key timing from before 936cf23 */
 static int g_volume = 100;    /* volume: percent, 0 to 100 */
@@ -382,7 +390,7 @@ static void poll_input(void) {
         HostPad s;
         memset(pad_axes[n], 128, 4);
         if (test_nopad || (n == 1 && !g_player2)) { pad_found[n] = 0; continue; }
-        if (pads_need_focus && !plat_focused()) continue;   /* RecompLauncher's overlay has the controller then */
+        if (pads_away()) continue;   /* RecompLauncher's overlay has the controller then */
         if (!pad_found[n] && !look) continue;
         pad_found[n] = plat_pad(n, &s);
         if (!pad_found[n]) continue;
@@ -430,7 +438,7 @@ int host_pad_connected(int port) { return port == 0 || (port == 1 && (pad_found[
 void host_pad_read(int port, u16 *buttons, u8 axes[4]) { *buttons = pad_state[port & 1]; memcpy(axes, pad_axes[port & 1], 4); }
 void host_pad_rumble(int port, int small_on, int large) {
     static int last[2] = { -1, -1 };
-    int v = g_rumble && !turbo ? ((small_on ? 1 : 0) << 8) | (large & 0xff) : 0;
+    int v = g_rumble && !turbo && !pads_away() ? ((small_on ? 1 : 0) << 8) | (large & 0xff) : 0;   /* not under the overlay */
     if (port < 0 || port > 1 || v == last[port] || !pad_found[port]) return;
     last[port] = v;
     plat_pad_rumble(port, (u16)((v & 0xff) * 257), (u16)((v >> 8) ? 0xffff : 0));   /* large motor, small motor */
@@ -528,7 +536,7 @@ void host_init(void) {
     gfx_vk_no_software = g_renderer == 2;   /* auto: OpenGL on the graphics card is better than Vulkan on the CPU */
     for (int i = 0; order[i]; i++) {
         if (order[i]->init(win_w, win_h, GAME_NAME " (static recomp)")) { gfx = order[i]; break; }
-        if (!order[i + 1]) { plat_message("Cannot open a window."); plat_exit(1); }
+        if (!order[i + 1]) { fprintf(stderr, "FATAL: Cannot open a window.\n"); plat_message("Cannot open a window."); plat_exit(1); }
         fprintf(stderr, "[video] renderer = %s: %s cannot be used here; trying %s\n", rname[g_renderer], order[i]->name, order[i + 1]->name);
     }
     fprintf(stderr, "[video] renderer = %s: using %s\n", rname[g_renderer], gfx->name);

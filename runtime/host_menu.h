@@ -190,7 +190,7 @@ static u32 menu_buttons(void) {
     mouse_input(&b);
     HostPad s;
     menu_pad_combo = 0; int menu_pad_one = 0;
-    if (!test_nopad && (pad_found[0] || probe++ % 60 == 0) && (pad_found[0] = plat_pad(0, &s)) != 0) {
+    if (!test_nopad && !pads_away() && (pad_found[0] || probe++ % 60 == 0) && (pad_found[0] = plat_pad(0, &s)) != 0) {
         /* The controls that open the menu (pad_menu) mean only that in here, alone or together: with back+start, Start
            would otherwise select the highlighted entry on the way to closing the menu, and that entry may be Exit. */
         for (int i = 0; i < 16; i++)
