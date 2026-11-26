@@ -25,7 +25,8 @@ Released under the MIT license (see `LICENSE`), except `third_party/rl_achieveme
 2. In RecompLauncher: find the game, pick your disc image on its page, and press Play. The first time, it builds the
    game from your disc (a few minutes; on Windows it downloads a C compiler and a small Python, about 200 MB).
 3. Without RecompLauncher: download the launcher from the
-   [releases page](https://github.com/ADHD-TISM/Dave-Mirra-Recomp/releases), start it, pick your disc image and press Play.
+   [releases page](https://github.com/ADHD-TISM/Dave-Mirra-Recomp/releases), start it and pick your disc image. The
+   first time, press Download on the Update tab, then Build; after that, Play.
 
 ## Games
 
@@ -189,11 +190,15 @@ The player picks their disc image there; its setup step runs
 `"Dave Mirra Freestyle BMX.exe" prepare --dmbmx=<.cue> --maxremix=<.cue> --accept-downloads`, which downloads the
 compiler and the project only with `--accept-downloads` (a tick on the setup screen), builds the games without a
 window and prints `progress <0 to 1> <text>` lines. Play runs `"Dave Mirra Freestyle BMX.exe" run --game <id>
---disc <.cue> --data <folder> [game options]`, which starts the game and waits for it. Its settings are passed as
+--disc <.cue> --data <folder> [game options]`, which starts the game, waits for it and exits with the game's own code
+(0 when quit, 1 on a fatal error), or with 4 when it cannot start the game (not built, or the disc image has moved).
+Its settings are passed as
 `--set name=value`. With `--data`, the game keeps its settings, memory cards and logs in `<folder>/<game id>/` instead of
 `game/<game id>/`; the first time, the ones already in `game/<game id>/` are copied there (never moved). In
 RecompLauncher's Big Picture mode (`RECOMPLAUNCHER_MODE=bigpicture`) the game starts full screen unless a fullscreen
-setting is passed on its command line.
+setting is passed on its command line. Started by RecompLauncher (any `RECOMPLAUNCHER_MODE`), the game leaves the
+gamepad alone (no buttons, no rumble) while another window has taken the front from it, such as RecompLauncher's overlay;
+started any other way, a gamepad also works with the window behind others, as before.
 Started without these words, the launcher opens its window as before.
 
 ### Recomp Achievements
