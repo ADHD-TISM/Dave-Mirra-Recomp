@@ -74,6 +74,7 @@ PY_SHA256 = "8d3f33be9eb810f23c102f08475af2854e50484b8e4e06275e937be61ce3d2fb"
 FROZEN = bool(getattr(sys, "frozen", False))
 WINDOWS = sys.platform == "win32"
 RUN_LOG, RUN_LOG_BEFORE = "last-run.log", "previous-run.log"   # in the game folder: see play
+RUN_NOT_STARTED = 4   # "run" exits with this when it could not start the game (recomplauncher.json exit_codes)
 NO_WINDOW = 0x08000000 if WINDOWS else 0
 NEW_CONSOLE = 0x00000010 if WINDOWS else 0
 EXE_FILE = "dmrecomp.exe" if WINDOWS else "dmrecomp"
@@ -2198,7 +2199,11 @@ def cli(argv):
         elif what == "play":
             play(P, C, C.get("disc"), log)
         elif what == "run":            # like play, but stays until the game ends; the words after it go to the game
-            return play(P, C, C.get("disc"), log, extra=cmd[1:], wait=True) or 0
+            try:
+                return play(P, C, C.get("disc"), log, extra=cmd[1:], wait=True) or 0
+            except (Fail, OSError) as e:   # the game did not start: 4, so it is not taken for the game's own exit 1
+                print("error: %s" % e)
+                return RUN_NOT_STARTED
         elif what == "shortcut":
             make_shortcut(P, C, log)
         else:

@@ -394,6 +394,10 @@ def new_paths():
     check("run: with --data the game runs in the data folder", os.path.normcase(seen.get("cwd") or "") == os.path.normcase(P.home),
           repr(seen.get("cwd")))
     check("run: the log is copied to the top of the data folder", os.path.isfile(os.path.join(P.data, dml.RUN_LOG)))
+    # a game that cannot be started gives exit 4 (recomplauncher.json says what it means), never the game's own 1
+    N = os.path.join(T, "rl-notbuilt"); os.makedirs(N, exist_ok=True)
+    rc = dml.cli(["--root", N, "run", "--game", "dmbmx", "--disc", fake])
+    check("run: a game not built yet gives exit 4", rc == dml.RUN_NOT_STARTED == 4, repr(rc))
 
 def helpers():
     """The small helpers the release and the CHD write-out rest on."""

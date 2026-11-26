@@ -47,7 +47,7 @@ int main(int argc, char **argv) {
     long len; char *text = slurp(argv[1], &len);
     if (!text) { fprintf(stderr, "cannot read %s\n", argv[1]); return 2; }
     cJSON *doc = cJSON_Parse(text);
-    cJSON *list = doc ? cJSON_GetObjectItem(doc, "achievements") : NULL;
+    cJSON *list = doc ? cJSON_GetObjectItemCaseSensitive(doc, "achievements") : NULL;
     if (!cJSON_IsArray(list)) { fprintf(stderr, "%s: no achievements array\n", argv[1]); return 2; }
     rc_runtime_t rt; rc_runtime_init(&rt);
     int bad = 0, n = 0;
@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
     cJSON_ArrayForEach(a, list) {
         cJSON *idj = cJSON_GetObjectItemCaseSensitive(a, "id");   /* as the runtime reads the list */
         cJSON *tr = cJSON_GetObjectItemCaseSensitive(a, "trigger");
-        if (!cJSON_IsNumber(idj) || !cJSON_IsString(tr)) continue;
+        if (!cJSON_IsNumber(idj) || !cJSON_IsString(tr) || !tr->valuestring[0]) continue;   /* the runtime skips these */
         int id = idj->valueint;
         if (id < 0 || id >= MAX_ID) { printf("rule %d: id outside 0..%d, not checked\n", id, MAX_ID - 1); bad++; continue; }
         int r = rc_runtime_activate_achievement(&rt, (uint32_t)id, tr->valuestring, NULL, 0);

@@ -34,6 +34,7 @@ static u8 pad_axes[2][4] = { { 128, 128, 128, 128 }, { 128, 128, 128, 128 } };
 static int pad_found[2];      /* a gamepad is plugged in for this player */
 static int log_input;         /* DM_LOG_INPUT is set (a test aid): every change of player 1's buttons is printed */
 static int test_nopad;        /* DMRECOMP_GFX_TEST has "nopad": gamepads are not read, so a scripted run cannot be disturbed by one */
+static int pads_need_focus;   /* started by RecompLauncher: gamepads count only while the window is in front (host_init) */
 int g_rumble = 1, g_player2 = 1;
 int g_tap_hold = 1;   /* ini tap_hold (host.h): 0 gives the key timing from before 936cf23 */
 static int g_volume = 100;    /* volume: percent, 0 to 100 */
@@ -381,6 +382,7 @@ static void poll_input(void) {
         HostPad s;
         memset(pad_axes[n], 128, 4);
         if (test_nopad || (n == 1 && !g_player2)) { pad_found[n] = 0; continue; }
+        if (pads_need_focus && !plat_focused()) continue;   /* RecompLauncher's overlay has the controller then */
         if (!pad_found[n] && !look) continue;
         pad_found[n] = plat_pad(n, &s);
         if (!pad_found[n]) continue;
@@ -508,6 +510,10 @@ void host_init(void) {
     plat_init();
     setvbuf(stdout, NULL, _IONBF, 0);   /* the game's own text (BIOS putchar, puts) must be in a log file even when the game is killed */
     { const char *tst = getenv("DMRECOMP_GFX_TEST"); test_nopad = tst && strstr(tst, "nopad"); }   /* read once, here */
+    /* Started by RecompLauncher (it sets RECOMPLAUNCHER_MODE): a gamepad counts only while the game is in front, as
+       its guide asks, since the launcher's own overlay uses the controller. Started any other way, as before: a
+       gamepad also works with the window behind others. */
+    pads_need_focus = getenv("RECOMPLAUNCHER_MODE") != NULL;
     log_input = getenv("DM_LOG_INPUT") != NULL;
     last_frame = plat_now_ms();
     fb = calloc((size_t)1024 * 4 * 512 * 4, 4);   /* room for the largest internal resolution */
