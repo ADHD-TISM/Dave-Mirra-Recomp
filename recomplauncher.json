@@ -123,6 +123,15 @@
       ]
     },
     {
+      "id": "taps", "label": "Quick key taps", "in": "args", "group": "Game",
+      "help": "Keyboard only. Keep them: a quick tap always reaches the game, each press lasting 4 frames at least. Keys as held: the game gets the keys exactly as they are held.",
+      "choices": [
+        { "label": "Game's option", "args": [] },
+        { "label": "Keep them", "args": ["--set", "tap_hold=1"] },
+        { "label": "Keys as held", "args": ["--set", "tap_hold=0"] }
+      ]
+    },
+    {
       "id": "volume", "label": "Volume", "in": "args", "group": "Game",
       "help": "The game's sound, from 0 to 100.",
       "slider": { "min": 0, "max": 100, "step": 10, "format": "%.0f" },
@@ -136,6 +145,11 @@
   "actions": [
     { "id": "saves", "label": "Saves and settings", "help": "Each game's memory cards, settings and last-run.log.", "open": "saves" }
   ],
+  "exit_codes": {
+    "0": "ok",
+    "1": "The game stopped with an error. The reason is at the end of last-run.log, under Saves and settings.",
+    "4": "The game could not be started: it is not built yet, or its disc image has moved. Set it up again on the game's page."
+  },
   "looks": {
     "allowed": false,
     "reason": "The game is started by the project's own launcher, so the filters can't reach it. Use the game's own Smooth filter and FSR settings."

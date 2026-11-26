@@ -18,6 +18,15 @@ No BIOS file is needed.
 Released under the MIT license (see `LICENSE`), except `third_party/rl_achievements`, which keeps its own license (see
 `SOURCE.txt` there).
 
+## How to play
+
+1. You need your own disc image of the USA release: Dave Mirra Freestyle BMX (SLUS-01026, the original release; the
+   Greatest Hits release has not been tried) or Maximum Remix (SLUS-01347), as a .cue with its .bin tracks, or a .chd.
+2. In RecompLauncher: find the game, pick your disc image on its page, and press Play. The first time, it builds the
+   game from your disc (a few minutes; on Windows it downloads a C compiler and a small Python, about 200 MB).
+3. Without RecompLauncher: download the launcher from the
+   [releases page](https://github.com/ADHD-TISM/Dave-Mirra-Recomp/releases), start it, pick your disc image and press Play.
+
 ## Games
 
 Each supported game has a profile in `games/<id>.json` (its executable, overlays, overlay load address, the one
