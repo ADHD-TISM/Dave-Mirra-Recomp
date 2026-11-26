@@ -2,9 +2,9 @@
    runtime the game itself uses. Every rule starts on zeroed memory, as at boot, then sees each dump in turn for a few
    frames. Prints the rules that do not parse, and the ones that fire on each dump.
    usage: achtest <list.json> <ram.bin>...      (each dump is the 2 MB main RAM; addresses are PS1 RAM offsets)
-   Build (from the project folder; R=third_party/rl_achievements/third_party/rcheevos):
-     gcc -O1 -o achtest tools/achtest.c $R/src/runtime/*.c $R/src/util/*.c \
-         third_party/rl_achievements/third_party/cjson/cJSON.c -I$R/include -I$R/src -Ithird_party/rl_achievements/third_party/cjson
+   Build (from the project folder; R=third_party/rl_achievements/third_party/rcheevos): compile this file with every
+   .c file in $R/src/runtime and $R/src/util and third_party/rl_achievements/third_party/cjson/cJSON.c, with
+   -I$R/include -I$R/src -Ithird_party/rl_achievements/third_party/cjson.
    RAM dumps come from the game's --ramdump option, and tools/mkachievements.py writes the lists. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,18 +14,22 @@
 #include "cJSON.h"
 
 #define RAM_SIZE 0x200000
-static unsigned char ram[RAM_SIZE];
-static int fired[1024], dump_no;
+#define MAX_ID 1024
+static unsigned char ram[RAM_SIZE], scratch[0x400];   /* main RAM from 0x000000, the scratchpad from 0x200000 */
+static int fired[MAX_ID], dump_no;
 
-static uint32_t peek(uint32_t address, uint8_t *buf, uint32_t n, void *ud) {
+static uint32_t peek(uint32_t address, uint8_t *buf, uint32_t n, void *ud) {   /* as runtime/achievements.c reads */
     (void)ud;
-    if (address + n > RAM_SIZE) return 0;   /* an address the console does not have */
-    memcpy(buf, ram + address, n);
-    return n;
+    if (address < RAM_SIZE && n <= RAM_SIZE - address) { memcpy(buf, ram + address, n); return n; }
+    if (address >= RAM_SIZE && address - RAM_SIZE < sizeof scratch && n <= sizeof scratch - (address - RAM_SIZE)) {
+        memcpy(buf, scratch + (address - RAM_SIZE), n);   /* the dumps hold no scratchpad: it reads as zero */
+        return n;
+    }
+    return 0;   /* an address the console does not have */
 }
 
 static void event(const rc_runtime_event_t *e) {
-    if (e->type == RC_RUNTIME_EVENT_ACHIEVEMENT_TRIGGERED && e->id < 1024 && !fired[e->id]) fired[e->id] = dump_no;
+    if (e->type == RC_RUNTIME_EVENT_ACHIEVEMENT_TRIGGERED && e->id < MAX_ID && !fired[e->id]) fired[e->id] = dump_no;
 }
 
 static char *slurp(const char *path, long *len) {
@@ -49,9 +53,11 @@ int main(int argc, char **argv) {
     int bad = 0, n = 0;
     cJSON *a;
     cJSON_ArrayForEach(a, list) {
-        int id = cJSON_GetObjectItem(a, "id")->valueint;
-        cJSON *tr = cJSON_GetObjectItem(a, "trigger");
-        if (!cJSON_IsString(tr)) continue;
+        cJSON *idj = cJSON_GetObjectItemCaseSensitive(a, "id");   /* as the runtime reads the list */
+        cJSON *tr = cJSON_GetObjectItemCaseSensitive(a, "trigger");
+        if (!cJSON_IsNumber(idj) || !cJSON_IsString(tr)) continue;
+        int id = idj->valueint;
+        if (id < 0 || id >= MAX_ID) { printf("rule %d: id outside 0..%d, not checked\n", id, MAX_ID - 1); bad++; continue; }
         int r = rc_runtime_activate_achievement(&rt, (uint32_t)id, tr->valuestring, NULL, 0);
         if (r != RC_OK) { printf("rule %d does not parse: %s\n", id, rc_error_str(r)); bad++; }
         n++;
@@ -65,7 +71,7 @@ int main(int argc, char **argv) {
         dump_no = i - 1;
         for (int k = 0; k < 3; k++) rc_runtime_do_frame(&rt, event, peek, NULL, NULL);
         printf("%s:", argv[i]);
-        for (int id = 0; id < 1024; id++) if (fired[id] == dump_no) printf(" %d", id);
+        for (int id = 0; id < MAX_ID; id++) if (fired[id] == dump_no) printf(" %d", id);
         printf("\n");
     }
     printf("%d rules, %d do not parse\n", n, bad);

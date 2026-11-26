@@ -3,10 +3,12 @@
 Memory rules (rcheevos conditions) on PlayStation RAM, found with --ramdump/--poke runs and checked on the rider
 card and the level select (see the commit that adds this file). Both games keep ProQuest in rider records:
   record + 0x0c + 39*L   level L's tier: 0 none, 1 amateur, 2 pro, 3 hardcore challenges done
-                          (then 12 challenges of 3 bytes; bit 7 of a challenge's first byte = done)
+                          (each level block starts a byte before it; after it come a byte, then 12 challenges of
+                          3 bytes; bit 7 of a challenge's first byte = done)
   record + MEDALS + i    Pro Tour competition i: 0 none, 1 bronze, 2 silver, 3 gold
 The records stay put during a level; the "selected rider" byte does not (it is reused in a level), so every rule
-looks at every record. Each value is held to 0..3 so leftover memory early in boot cannot fire a rule.
+looks at every record. A value above 3 never fires a rule. Boot is safe because RAM starts zeroed and rcheevos waits
+for a rule to be false for a frame; a rule can fire when a save with progress loads, which the game reports.
 The HUD score is a 32-bit word (checked by writing a number there and seeing it on the HUD).
 usage: python tools/mkachievements.py   (from the project folder)"""
 import json
@@ -29,7 +31,9 @@ def h(addr):
 
 
 def rng(addr, cmp):
-    """addr compared as cmp, and never above 3 (a real tier or medal)."""
+    """addr compared as cmp, and never above 3 (a real tier or medal); =3 needs no upper bound."""
+    if cmp in ("=3", ">=3"):
+        return "%s=3" % h(addr)
     return "%s%s_%s<=3" % (h(addr), cmp, h(addr))
 
 
@@ -74,7 +78,7 @@ def make(g):
                        ("Six Figures", "Score 100,000 points in one run", 25, 100000)):
         a.append((t, d, p, None, "0xX%06x>=%d_0xX%06x<=9999999" % (s, v, s)))
     out = {"format": 1, "game": g["game"], "source": "memory", "console": "psx", "copies": [g["serial"]],
-           "versions": ">=1.2.4", "achievements": []}
+           "versions": ">=1.2.3", "achievements": []}   # v1.2.3 is the first with the achievements runtime
     for i, (t, d, p, ty, tr) in enumerate(a, 1):
         e = {"id": i, "title": t, "description": d, "points": p}
         if ty:
